@@ -384,7 +384,8 @@ CustomFrameLayout CalculateCustomFrameLayout(
 	UINT dpi,
 	int preferredMenuWidth,
 	int updateButtonWidth,
-	bool showActivityBarGlobalActions) noexcept
+	bool showActivityBarGlobalActions,
+	int minimumMenuWidth) noexcept
 {
 	const int width = std::max(0, clientWidth);
 	const int titleHeight = ScaleCustomFrameDip(34, dpi);
@@ -404,6 +405,13 @@ CustomFrameLayout CalculateCustomFrameLayout(
 	const int buttonsWidth = buttonWidth * 2 + closeWidth;
 	const int buttonLeft = std::max(0, width - buttonsWidth);
 	const int menuLeft = std::min(width, systemWidth);
+	// The menubar can always fall back to its overflow button, so the layout owes
+	// it `minimumMenuWidth` pixels before the compact controls or the caption
+	// clearance may claim the space. The caption buttons stay the outer bound:
+	// when the floor itself no longer fits, the strip narrows instead of drawing
+	// over the system buttons.
+	const int guaranteedMenuRight = std::min(
+		buttonLeft, menuLeft + std::max(0, minimumMenuWidth));
 	const int titleControlsWidth = titleControlWidth * titleControlCount + updateWidth;
 	// Never partially draw a title control or let it overlap the system menu. When
 	// an ordinary four-control run would crowd out a readable centred caption, reclaim
@@ -412,9 +420,9 @@ CustomFrameLayout CalculateCustomFrameLayout(
 	// An actionable update indicator keeps its own visibility contract: its complete
 	// run appears whenever it fits physically.
 	const int titleControlsCaptionClearance = ScaleCustomFrameDip(80, dpi);
-	const bool titleControlsFit = buttonLeft >= systemWidth + titleControlsWidth;
+	const bool titleControlsFit = buttonLeft >= guaranteedMenuRight + titleControlsWidth;
 	const auto centeredCaptionWidthWithControlsAt = [&](int controlsLeft) noexcept {
-		const int prospectiveMaximumMenuRight = std::max(menuLeft, controlsLeft - titleControlsCaptionClearance);
+		const int prospectiveMaximumMenuRight = std::max(guaranteedMenuRight, controlsLeft - titleControlsCaptionClearance);
 		const int prospectiveMenuRight = std::min(
 			prospectiveMaximumMenuRight, menuLeft + std::max(0, preferredMenuWidth));
 		const int prospectiveCaptionSafeLeft = std::clamp(prospectiveMenuRight + captionPadding, 0, width);
@@ -430,7 +438,7 @@ CustomFrameLayout CalculateCustomFrameLayout(
 		&& centeredCaptionWidthWithControlsAt(buttonLeft) >= minimumCenteredCaptionWidth;
 	const bool showTitleControls = titleControlsFit && !reclaimControlsForCaption;
 	const int titleControlsLeft = showTitleControls ? buttonLeft - titleControlsWidth : buttonLeft;
-	const int maximumMenuRight = std::max(menuLeft, titleControlsLeft - titleControlsCaptionClearance);
+	const int maximumMenuRight = std::max(guaranteedMenuRight, titleControlsLeft - titleControlsCaptionClearance);
 	const int menuRight = std::min(maximumMenuRight, menuLeft + std::max(0, preferredMenuWidth));
 	const int captionSafeLeft = std::clamp(menuRight + captionPadding, 0, width);
 	const int captionSafeRight = std::clamp(titleControlsLeft - captionPadding, 0, width);
@@ -914,12 +922,28 @@ void CCustomFrameController::RefreshLayout() noexcept
 	}
 	RECT client{};
 	::GetClientRect(m_window, &client);
+	const int clientWidth = client.right - client.left;
 	const int menuWidth = m_menuBar.MeasurePreferredWidth(m_window, m_menuFont.Get(), m_dpi);
+	const int updateWidth = MeasureUpdateIndicatorWidth();
+	// Upstream keeps the `overflow-menu-only` hamburger even after every menu is
+	// hidden, so the strip always owns its collapsed width ahead of the compact
+	// title controls. Reserving it on the first pass also keeps the layout
+	// monotonic: the floor cannot disappear and reappear across adjacent widths.
+	const int minimumMenuWidth = std::min(menuWidth, ClientMenuBarOverflowWidth(m_dpi));
 	m_layout = CalculateCustomFrameLayout(
-		client.right - client.left, m_dpi, menuWidth, MeasureUpdateIndicatorWidth(),
-		m_activityBarGlobalActionsInTitleBar);
+		clientWidth, m_dpi, menuWidth, updateWidth,
+		m_activityBarGlobalActionsInTitleBar, minimumMenuWidth);
 	m_menuBar.SetBounds(m_layout.menu);
-	m_menuBar.UpdateItemLayout(m_window, m_menuFont.Get());
+	m_menuBar.UpdateItemLayout(m_window, m_menuFont.Get(), m_dpi);
+	if (m_menuBar.IsOverflowMenuOnly()) {
+		// `.menubar.overflow-menu-only` narrows the bar to the hamburger's 38px
+		// and returns the rest of the reserved menubar span to the caption.
+		m_layout = CalculateCustomFrameLayout(
+			clientWidth, m_dpi, ClientMenuBarOverflowWidth(m_dpi), updateWidth,
+			m_activityBarGlobalActionsInTitleBar, ClientMenuBarOverflowWidth(m_dpi));
+		m_menuBar.SetBounds(m_layout.menu);
+		m_menuBar.UpdateItemLayout(m_window, m_menuFont.Get(), m_dpi);
+	}
 	// A resize can collapse the complete compact run without going through one of
 	// the visibility setters. Do not retain hover/press/UIA state for a rectangle
 	// that the newly committed layout no longer exposes.
@@ -935,6 +959,12 @@ void CCustomFrameController::RefreshLayout() noexcept
 	}
 	const CustomFrameControl focusedControl = TitleControlFromNode(m_accessibilityFocusedNode);
 	if (focusedControl != CustomFrameControl::None && !titleControlVisible(focusedControl)) {
+		ClearAccessibilityFocus();
+	}
+	// The same collapse applies to menubar items folded into the overflow: a
+	// focused UIA node for a menu that is no longer rendered must not survive.
+	if (m_accessibilityFocusedNode >= kMenuItemBaseNode
+		&& m_accessibilityFocusedNode >= kMenuItemBaseNode + m_menuBar.AccessibilityItemCount()) {
 		ClearAccessibilityFocus();
 	}
 }

@@ -4765,6 +4765,7 @@ BEGIN
     STR_WORKBENCH_ACCESSIBILITY_MAXIMIZE "Maximize"
     STR_WORKBENCH_ACCESSIBILITY_RESTORE "Restore"
     STR_WORKBENCH_ACCESSIBILITY_CLOSE "Close"
+    STR_WORKBENCH_ACCESSIBILITY_MENUBAR_MORE "More"
     STR_DLGOPNFL_MACROS "Macros"
     STR_DLGOPNFL_KEY_MACRO "Key Macro"
     STR_MAXWINDOW "The maximum number of editor windows is %d.\nNo more windows can be opened at the same time."

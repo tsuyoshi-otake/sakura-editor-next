@@ -54,6 +54,160 @@ TEST(CustomFrame, PopupHotTrackingUsesTheWhMsgFilterCodeContract)
 	EXPECT_FALSE(IsClientMenuMouseMoveFilter(MSGF_MENU, WM_LBUTTONDOWN));
 }
 
+TEST(CustomFrameOverflow, ScalesTheMoreButtonToThirtyEightDip)
+{
+	EXPECT_EQ(38, ClientMenuBarOverflowWidth(96));
+	EXPECT_EQ(48, ClientMenuBarOverflowWidth(120));
+	EXPECT_EQ(57, ClientMenuBarOverflowWidth(144));
+	EXPECT_EQ(76, ClientMenuBarOverflowWidth(192));
+}
+
+TEST(CustomFrameOverflow, KeepsEveryMenuVisibleWhileTheirCumulativeWidthFits)
+{
+	const int widths[] = { 50, 60, 40, 70 };
+	const auto plan = PlanClientMenuOverflow(widths, 220, 38);
+	EXPECT_EQ(4, plan.shownCount);
+	EXPECT_FALSE(plan.overflowVisible);
+	EXPECT_FALSE(plan.hamburgerOnly);
+
+	// The fit pass compares with `>`, so four items land exactly on the edge; the
+	// drop loop still removes the fourth so the More button has a place (upstream
+	// runs the same unconditional pass once `full` is set).
+	const int edge[] = { 50, 50, 50, 50, 50 };
+	const auto exact = PlanClientMenuOverflow(edge, 200, 38);
+	EXPECT_EQ(3, exact.shownCount);
+	EXPECT_TRUE(exact.overflowVisible);
+}
+
+TEST(CustomFrameOverflow, DropsTrailingMenusUntilTheOverflowButtonAlsoFits)
+{
+	const int widths[] = { 50, 50, 50, 50, 50, 50, 50, 50, 50, 50 };
+	// 288px fits five menus but not six; the five shown (250) plus the 38px
+	// button land exactly on the edge, so nothing further is removed.
+	const auto fits = PlanClientMenuOverflow(widths, 288, 38);
+	EXPECT_EQ(5, fits.shownCount);
+	EXPECT_TRUE(fits.overflowVisible);
+	EXPECT_FALSE(fits.hamburgerOnly);
+
+	// At 270 the same five menus leave the button overhanging, so upstream's
+	// drop loop removes one more menu (250 + 38 > 270 -> 200 + 38 <= 270).
+	const auto dropped = PlanClientMenuOverflow(widths, 270, 38);
+	EXPECT_EQ(4, dropped.shownCount);
+	EXPECT_TRUE(dropped.overflowVisible);
+	EXPECT_FALSE(dropped.hamburgerOnly);
+}
+
+TEST(CustomFrameOverflow, CollapsesToTheHamburgerBelowTheQuarterThreshold)
+{
+	const int widths[] = { 50, 50, 50, 50, 50, 50, 50, 50 };
+	// Upstream collapses once `numMenusShown - 1 <= count / 4`. With eight menus
+	// a fit of four stays above the threshold (3 > 2), but the drop loop then
+	// still removes one more menu so the More button itself fits (200 + 38 > 200).
+	const auto partial = PlanClientMenuOverflow(widths, 200, 38);
+	EXPECT_EQ(3, partial.shownCount);
+	EXPECT_TRUE(partial.overflowVisible);
+	EXPECT_FALSE(partial.hamburgerOnly);
+
+	const auto collapsed = PlanClientMenuOverflow(widths, 150, 38);
+	EXPECT_EQ(0, collapsed.shownCount);
+	EXPECT_TRUE(collapsed.overflowVisible);
+	EXPECT_TRUE(collapsed.hamburgerOnly);
+
+	// The exact threshold is inclusive upstream: 3 - 1 <= 9 / 4 (2.25).
+	const int nine[] = { 50, 50, 50, 50, 50, 50, 50, 50, 50 };
+	const auto edge = PlanClientMenuOverflow(nine, 150, 38);
+	EXPECT_EQ(0, edge.shownCount);
+	EXPECT_TRUE(edge.hamburgerOnly);
+
+	// One menu below threshold collapses even when it would have fit; upstream's
+	// `showableMenus.length / 4` boundary keeps a lone menu inside the hamburger.
+	const int one[] = { 40 };
+	const auto single = PlanClientMenuOverflow(one, 400, 38);
+	EXPECT_EQ(0, single.shownCount);
+	EXPECT_TRUE(single.overflowVisible);
+	EXPECT_TRUE(single.hamburgerOnly);
+}
+
+TEST(CustomFrameOverflow, RestoresMenusInOrderAsTheBarWidens)
+{
+	const int widths[] = { 50, 50, 50, 50, 50, 50, 50, 50 };
+	int previousShown = -1;
+	for (int available = 38; available <= 450; available += 37) {
+		const auto plan = PlanClientMenuOverflow(widths, available, 38);
+		EXPECT_GE(plan.shownCount, previousShown) << "available = " << available;
+		previousShown = plan.shownCount;
+	}
+	EXPECT_EQ(8, previousShown);
+	const auto full = PlanClientMenuOverflow(widths, 400, 38);
+	EXPECT_EQ(8, full.shownCount);
+	EXPECT_FALSE(full.overflowVisible);
+}
+
+TEST(CustomFrameOverflow, StaysDimensionlessAcrossOneToTwoHundredPercentScaling)
+{
+	// The algorithm consumes measured physical widths, so scaling every width and
+	// the available span by the DPI factor must produce the identical plan.
+	const int base[] = { 50, 50, 50, 50, 50, 50, 50, 50 };
+	for (const UINT dpi : { 96u, 144u, 192u }) {
+		std::vector<int> widths;
+		for (const int width : base) widths.push_back(::MulDiv(width, dpi, 96));
+		const auto plan = PlanClientMenuOverflow(widths, ::MulDiv(270, dpi, 96),
+			ClientMenuBarOverflowWidth(dpi));
+		EXPECT_EQ(4, plan.shownCount) << "dpi = " << dpi;
+		EXPECT_TRUE(plan.overflowVisible) << "dpi = " << dpi;
+		EXPECT_FALSE(plan.hamburgerOnly) << "dpi = " << dpi;
+	}
+}
+
+TEST(CustomFrameOverflow, HandlesEmptyMenusAndZeroWidthSpans)
+{
+	const auto empty = PlanClientMenuOverflow({}, 300, 38);
+	EXPECT_EQ(0, empty.shownCount);
+	EXPECT_FALSE(empty.overflowVisible);
+	EXPECT_FALSE(empty.hamburgerOnly);
+
+	// Even when nothing fits, the hamburger is still offered so every command
+	// remains reachable; the caller clips the button cell to its own bounds.
+	const int widths[] = { 50, 50 };
+	const auto clipped = PlanClientMenuOverflow(widths, 20, 38);
+	EXPECT_EQ(0, clipped.shownCount);
+	EXPECT_TRUE(clipped.overflowVisible);
+	EXPECT_TRUE(clipped.hamburgerOnly);
+}
+
+TEST(CustomFrameOverflow, ReservesTheCollapsedMenubarFloorAheadOfTitleControls)
+{
+	// At this width the four compact controls fit only by taking the menubar's
+	// strip. Upstream keeps the overflow-menu-only hamburger ahead of them, so
+	// the floor wins the strip and the controls yield as a whole.
+	const auto layout = CalculateCustomFrameLayout(328, 96, 500, 0, false, 38);
+	EXPECT_GE(layout.menu.right - layout.menu.left, 38);
+	EXPECT_TRUE(::IsRectEmpty(&layout.layoutButton));
+	EXPECT_TRUE(::IsRectEmpty(&layout.secondarySidebarButton));
+}
+
+TEST(CustomFrameOverflow, MenubarFloorNeverCrossesTheCaptionButtons)
+{
+	// The floor is bounded by the caption buttons: when even the hamburger can
+	// no longer sit beside them the strip narrows instead of overlapping.
+	const auto narrow = CalculateCustomFrameLayout(200, 96, 500, 0, false, 38);
+	EXPECT_LE(narrow.menu.right, narrow.minimizeButton.left);
+	EXPECT_LE(narrow.menu.left, narrow.menu.right);
+
+	const auto collapsed = CalculateCustomFrameLayout(250, 96, 500, 0, false, 38);
+	EXPECT_EQ(38, collapsed.menu.right - collapsed.menu.left);
+	EXPECT_LE(collapsed.menu.right, collapsed.minimizeButton.left);
+}
+
+TEST(CustomFrameOverflow, ZeroMenuFloorKeepsTheCompactControlPriority)
+{
+	// Callers that declare no minimum keep the legacy priority where the
+	// controls crowd the strip out entirely.
+	const auto layout = CalculateCustomFrameLayout(328, 96, 500);
+	EXPECT_FALSE(::IsRectEmpty(&layout.layoutButton));
+	EXPECT_TRUE(::IsRectEmpty(&layout.menu));
+}
+
 TEST(CustomFrame, ScalesFixedTitleMetricsPerDpi)
 {
 	EXPECT_EQ(34, ScaleCustomFrameDip(34, 96));

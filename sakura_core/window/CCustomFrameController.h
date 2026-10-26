@@ -52,12 +52,18 @@ struct CustomFrameLayout {
 //! `updateButtonWidth` is the measured physical width of the Update indicator, or
 //! zero when the update state is not actionable. Zero must leave every other
 //! rectangle exactly where it would be without the indicator.
+//! `minimumMenuWidth` is the span the menubar needs even at maximum collapse --
+//! upstream keeps its `overflow-menu-only` 38px hamburger ahead of the compact
+//! title controls, so the controls must yield before the strip loses that floor.
+//! The caption buttons remain the outer bound: when even the floor no longer
+//! physically fits, the menu rect narrows instead of overlapping them.
 [[nodiscard]] CustomFrameLayout CalculateCustomFrameLayout(
 	int clientWidth,
 	UINT dpi,
 	int preferredMenuWidth,
 	int updateButtonWidth = 0,
-	bool showActivityBarGlobalActions = false
+	bool showActivityBarGlobalActions = false,
+	int minimumMenuWidth = 0
 ) noexcept;
 //! Compatibility-shaped overload for callers that provide the Activity Bar
 //! presentation before the optional Update measurement. The controller keeps

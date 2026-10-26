@@ -800,6 +800,70 @@ workspace names its own folder as the workspace identity, and only a real
 prove a settings read works by changing the value and observing the window, never
 by reading the code path.
 
+## Menubar overflow (More / hamburger) (#385)
+
+`CClientMenuBar` ports VS Code's `MenuBar.updateOverflowAction()`
+(`src/vs/base/browser/ui/menu/menubar.ts`) so a narrowing title bar folds
+trailing top-level menus into one overflow button instead of clipping them.
+The whole feature is decided in one pure function,
+`PlanClientMenuOverflow(itemWidths, availableWidth, overflowWidth)`, which
+returns a `ClientMenuOverflowPlan` (`shownCount`, `overflowVisible`,
+`hamburgerOnly`) and is unit-tested in `src/test/cpp/tests1/window/CustomFrameTest.cpp`.
+
+- Layout order is the upstream order: measure every top-level item, fit
+  left-to-right while the cumulative width stays inside the menu rectangle,
+  collapse to the lone hamburger once `numMenusShown - 1 <= count / 4`
+  (expressed as `4 * (shown - 1) <= count` so the boundary is exact in
+  integers — including the corner where a single fitting menu still
+  collapses), otherwise drop trailing items until the visible run plus the
+  overflow button fits.
+- The rendered index space is `[0, m_numMenusShown)` menu items plus the
+  overflow slot at `m_numMenusShown`; every consumer (paint, hit-test, hot /
+  pressed / keyboard state, popup hover-switch, and the UIA child list) reads
+  `m_itemBounds`, so hidden menus have no bounds and no UIA node. UIA exposes
+  exactly the visible items plus the overflow button, which reports the
+  localized `STR_WORKBENCH_ACCESSIBILITY_MENUBAR_MORE` name.
+- The overflow button is `ClientMenuBarOverflowWidth(dpi)` = 38 DIP wide —
+  upstream's `.menubar.overflow-menu-only` / `.toolbar-toggle-more` (22px
+  glyph cell + 8px horizontal padding). It paints the `more` codicon when some
+  menus stay visible and the `menu` (hamburger) codicon when it is the only
+  child, both from the bundled `codicon.ttf` at 16 DIP. When `IsOverflowMenuOnly()`
+  reports the hamburger state, `CCustomFrameController::RefreshLayout()`
+  recomputes the frame with the 38-DIP preferred width so the freed strip
+  becomes caption drag surface, matching upstream's 38px container.
+- The menubar floor outranks the compact title controls.
+  `CalculateCustomFrameLayout`'s `minimumMenuWidth` argument guarantees the
+  strip `min(preferred, ClientMenuBarOverflowWidth)` pixels before the
+  title-control run or the caption clearance may claim the space, mirroring
+  upstream where the hamburger is the last affordance left standing. The
+  caption buttons are still the outer bound: when even the floor cannot
+  physically fit beside them the strip narrows rather than overlapping.
+  Callers pass `0` to keep the legacy priority (controls crowd the strip out).
+- The overflow popup is a temporary `CreatePopupMenu` holding one `MF_POPUP`
+  row per hidden top-level menu in order, each borrowing the live submenu
+  from `CEditWnd`'s `HMENU` (rows detach before the container is destroyed —
+  ownership is never taken). Hidden submenus are pre-initialized through the
+  same real-index `WM_INITMENUPOPUP` send `OpenItem` uses, so recent-file and
+  other lazy contents build identically; `WM_COMMAND` dispatch is unchanged.
+- Keyboard: Alt/F10 focuses the overflow button once `numMenusShown == 0`,
+  Left/Right cycle over the rendered index space (shown menus + overflow),
+  and a mnemonic that lands on a hidden menu opens the overflow with that
+  menu's row triggered — queued `VK_DOWN` x (offset + 1) followed by
+  `VK_RIGHT` (cascade) or `VK_RETURN` (leaf) reproduce upstream
+  `menuWidget.trigger(index)`; plain arrow keys need no modifier state, so
+  the modal menu loop consumes them directly.
+- `UpdateItemLayout` runs inside `RefreshLayout()` on every resize,
+  DPI/UI-scale, string, and menu-model change, and `ClearHiddenItemState`
+  drops hot/pressed/keyboard state for indices the new layout removed, the
+  same contract the frame already applies to collapsed title controls.
+
+**Divergence worth recording:** when the whole bar collapses to the
+hamburger, the overflow trigger key is delivered through queued arrow keys
+the native menu loop consumes, because `TrackPopupMenuEx` has no initial-
+selection parameter. Upstream selects and runs the row inside its own menu
+widget instead; the user-visible result (overflow opens with the hidden
+menu's cascade already expanded) is the same.
+
 ## Custom title paint coherence (#311)
 
 The title is client-area paint owned by `CCustomFrameController`, including

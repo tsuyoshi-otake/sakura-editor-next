@@ -8,8 +8,14 @@
 #include "StdAfx.h"
 #include "window/CClientMenuBar.h"
 
+#include "CSelectLang.h"
+#include "workbench/IconMetrics.h"
+#include "workbench/icons/CCodiconFont.h"
+#include "workbench/icons/CodiconGlyphTable.h"
+
 #include <algorithm>
 #include <cwctype>
+#include <optional>
 
 namespace {
 
@@ -17,6 +23,13 @@ int ScaleDip(int value, UINT dpi) noexcept
 {
 	return ::MulDiv(value, static_cast<int>(dpi == 0 ? 96 : dpi), 96);
 }
+
+// The overflow button renders a single codicon inside the 22x22 DIP box
+// `toolbar-toggle-more` reserves; the 16 DIP glyph matches the title controls.
+constexpr int kOverflowIconDip = 16;
+
+constexpr wchar_t kOverflowPartialGlyphName[] = L"more"; // Codicon.menuBarMore
+constexpr wchar_t kOverflowHamburgerGlyphName[] = L"menu"; // --vscode-icon-menu-content
 
 bool Contains(const RECT& rect, POINT point) noexcept
 {
@@ -44,6 +57,58 @@ int NextClientMenuPopupItem(int activeItem, int hoveredItem) noexcept
 bool IsClientMenuMouseMoveFilter(int hookCode, UINT message) noexcept
 {
 	return hookCode == MSGF_MENU && message == WM_MOUSEMOVE;
+}
+
+ClientMenuOverflowPlan PlanClientMenuOverflow(
+	std::span<const int> itemWidths,
+	int availableWidth,
+	int overflowWidth
+) noexcept
+{
+	ClientMenuOverflowPlan plan{};
+	const int count = static_cast<int>(itemWidths.size());
+	if (count == 0) {
+		return plan;
+	}
+	const int available = std::max(0, availableWidth);
+	int currentSize = 0;
+	int shown = 0;
+	bool full = false;
+	for (const int width : itemWidths) {
+		if (!full) {
+			if (currentSize + std::max(0, width) > available) {
+				full = true;
+			} else {
+				currentSize += std::max(0, width);
+				++shown;
+			}
+		}
+	}
+	// Upstream collapses to the lone hamburger when
+	// `numMenusShown - 1 <= showableMenus.length / 4`; multiplying through keeps
+	// the boundary exact in integers, including the single-menu corner where a
+	// fitting menu still collapses.
+	if (4 * (shown - 1) <= count) {
+		shown = 0;
+		currentSize = 0;
+		full = true;
+	}
+	if (full) {
+		const int overflow = std::max(0, overflowWidth);
+		while (currentSize + overflow > available && shown > 0) {
+			--shown;
+			currentSize -= std::max(0, itemWidths[shown]);
+		}
+		plan.overflowVisible = true;
+	}
+	plan.shownCount = shown;
+	plan.hamburgerOnly = plan.overflowVisible && shown == 0;
+	return plan;
+}
+
+int ClientMenuBarOverflowWidth(UINT dpi) noexcept
+{
+	return ScaleDip(38, dpi);
 }
 
 struct CClientMenuBar::PopupTrackingState final {
@@ -88,6 +153,45 @@ private:
 	PopupTrackingState m_state;
 };
 
+CClientMenuBar::~CClientMenuBar() noexcept
+{
+	ReleaseCodiconFont();
+}
+
+HFONT CClientMenuBar::AcquireCodiconFont(int height) const noexcept
+{
+	if (height <= 0) return nullptr;
+	const auto faceName = workbench::icons::CCodiconFont::Instance().FaceName();
+	if (faceName.empty() || faceName.size() >= LF_FACESIZE) {
+		ReleaseCodiconFont();
+		return nullptr;
+	}
+	if (m_codiconFont != nullptr && m_codiconFontHeight == height) return m_codiconFont;
+
+	ReleaseCodiconFont();
+	LOGFONTW logFont{};
+	logFont.lfHeight = -height;
+	logFont.lfWeight = FW_NORMAL;
+	logFont.lfCharSet = DEFAULT_CHARSET;
+	logFont.lfOutPrecision = OUT_TT_PRECIS;
+	logFont.lfClipPrecision = CLIP_DEFAULT_PRECIS;
+	logFont.lfQuality = CLEARTYPE_QUALITY;
+	logFont.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
+	std::copy(faceName.begin(), faceName.end(), std::begin(logFont.lfFaceName));
+	logFont.lfFaceName[faceName.size()] = L'\0';
+
+	m_codiconFont = ::CreateFontIndirectW(&logFont);
+	if (m_codiconFont != nullptr) m_codiconFontHeight = height;
+	return m_codiconFont;
+}
+
+void CClientMenuBar::ReleaseCodiconFont() const noexcept
+{
+	if (m_codiconFont != nullptr) ::DeleteObject(m_codiconFont);
+	m_codiconFont = nullptr;
+	m_codiconFontHeight = 0;
+}
+
 std::wstring FormatClientMenuDisplayText(std::wstring_view text)
 {
 	// Japanese resources conventionally append "(&F)" to a localized label.
@@ -117,6 +221,8 @@ void CClientMenuBar::SetMenu(HMENU menu) noexcept
 {
 	m_menu = menu;
 	m_itemBounds.clear();
+	m_numMenusShown = 0;
+	m_overflowVisible = false;
 	m_hotItem = -1;
 	m_pressedItem = -1;
 	m_keyboardItem = -1;
@@ -185,35 +291,57 @@ int CClientMenuBar::MeasurePreferredWidth(HWND owner, HFONT font, UINT dpi) cons
 	return width;
 }
 
-void CClientMenuBar::UpdateItemLayout(HWND owner, HFONT font) noexcept
+void CClientMenuBar::UpdateItemLayout(HWND owner, HFONT font, UINT dpi) noexcept
 {
 	m_itemBounds.clear();
+	m_numMenusShown = 0;
+	m_overflowVisible = false;
+	const auto finish = [this, owner]() noexcept { ClearHiddenItemState(owner); };
 	if (m_menu == nullptr || owner == nullptr || ::IsRectEmpty(&m_bounds)) {
+		finish();
 		return;
 	}
 	const HDC dc = ::GetDC(owner);
 	if (dc == nullptr) {
+		finish();
 		return;
 	}
 	const HGDIOBJ oldFont = font == nullptr ? nullptr : ::SelectObject(dc, font);
-	const UINT dpi = ::GetDpiForWindow(owner);
 	const int horizontalPadding = ScaleDip(8, dpi);
 	const int count = ::GetMenuItemCount(m_menu);
-	int left = m_bounds.left;
-	for (int index = 0; index < count && left < m_bounds.right; ++index) {
+	std::vector<int> itemWidths(static_cast<std::size_t>(std::max(0, count)), 0);
+	for (int index = 0; index < count; ++index) {
 		const std::wstring text = DisplayItemText(index);
 		SIZE extent{};
 		if (!text.empty()) {
 			::GetTextExtentPoint32W(dc, text.c_str(), static_cast<int>(text.size()), &extent);
 		}
-		const int right = std::min(m_bounds.right, left + extent.cx + horizontalPadding * 2);
-		m_itemBounds.push_back({ left, m_bounds.top, right, m_bounds.bottom });
-		left = right;
+		itemWidths[static_cast<std::size_t>(index)] = extent.cx + horizontalPadding * 2;
 	}
 	if (oldFont != nullptr) {
 		::SelectObject(dc, oldFont);
 	}
 	::ReleaseDC(owner, dc);
+
+	const int available = m_bounds.right - m_bounds.left;
+	const int overflowWidth = ClientMenuBarOverflowWidth(dpi);
+	const ClientMenuOverflowPlan plan = PlanClientMenuOverflow(itemWidths, available, overflowWidth);
+	m_numMenusShown = plan.shownCount;
+	m_overflowVisible = plan.overflowVisible;
+	LONG left = m_bounds.left;
+	for (int index = 0; index < plan.shownCount; ++index) {
+		const LONG right = std::min<LONG>(m_bounds.right,
+			left + itemWidths[static_cast<std::size_t>(index)]);
+		m_itemBounds.push_back({ left, m_bounds.top, right, m_bounds.bottom });
+		left = right;
+	}
+	if (plan.overflowVisible) {
+		// The overflow button is inserted directly after the last shown menu,
+		// exactly where upstream moves it in the DOM.
+		const LONG right = std::min<LONG>(m_bounds.right, left + overflowWidth);
+		m_itemBounds.push_back({ left, m_bounds.top, right, m_bounds.bottom });
+	}
+	ClearHiddenItemState(owner);
 }
 
 void CClientMenuBar::Paint(
@@ -227,24 +355,58 @@ void CClientMenuBar::Paint(
 	if (m_menu == nullptr || dc == nullptr) {
 		return;
 	}
+	const int overflowIndex = OverflowItemIndex();
+	const UINT dpi = ::GetDeviceCaps(dc, LOGPIXELSX);
+	const HFONT codiconFont = overflowIndex >= 0
+		? AcquireCodiconFont(ScaleDip(kOverflowIconDip, dpi)) : nullptr;
 	const HGDIOBJ oldFont = font == nullptr ? nullptr : ::SelectObject(dc, font);
 	::SetBkMode(dc, TRANSPARENT);
 	::SetTextColor(dc, (active ? palette.primaryText : palette.secondaryText).ToColorRef());
 	for (std::size_t index = 0; index < m_itemBounds.size(); ++index) {
-		const bool highlighted = static_cast<int>(index) == m_hotItem
-			|| static_cast<int>(index) == m_pressedItem
-			|| (m_keyboardMode && static_cast<int>(index) == m_keyboardItem);
+		const int itemIndex = static_cast<int>(index);
+		const bool highlighted = itemIndex == m_hotItem
+			|| itemIndex == m_pressedItem
+			|| (m_keyboardMode && itemIndex == m_keyboardItem);
 		if (highlighted) {
 			const HBRUSH brush = ::CreateSolidBrush(palette.raised.ToColorRef());
 			::FillRect(dc, &m_itemBounds[index], brush);
 			::DeleteObject(brush);
 		}
 		RECT textRect = m_itemBounds[index];
-		const UINT format = DT_CENTER | DT_VCENTER | DT_SINGLELINE
-			| (m_keyboardMode ? 0 : DT_HIDEPREFIX);
-		const std::wstring text = DisplayItemText(static_cast<int>(index));
-		::DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &textRect, format);
-		if (m_keyboardMode && static_cast<int>(index) == m_keyboardItem) {
+		if (itemIndex == overflowIndex) {
+			// Upstream CSS swaps the `Codicon.menuBarMore` glyph for the
+			// hamburger `--vscode-icon-menu-content` once it is the bar's only
+			// child. Both glyphs come from the bundled codicon font.
+			const std::wstring_view glyphName = m_numMenusShown == 0
+				? std::wstring_view(kOverflowHamburgerGlyphName)
+				: std::wstring_view(kOverflowPartialGlyphName);
+			const wchar_t codePoint =
+				workbench::icons::FindCodiconGlyph(glyphName).value_or(L'\0');
+			const auto iconBox = workbench::icons::CenteredIconBounds(
+				{ textRect.left, textRect.top, textRect.right, textRect.bottom },
+				kOverflowIconDip, dpi);
+			RECT glyphRect{ iconBox.left, iconBox.top, iconBox.right, iconBox.bottom };
+			bool painted = false;
+			if (codiconFont != nullptr && codePoint != L'\0') {
+				const wchar_t text[] = { codePoint, L'\0' };
+				::SelectObject(dc, codiconFont);
+				painted = ::DrawTextW(dc, text, 1, &glyphRect,
+					DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX) != 0;
+				::SelectObject(dc, font);
+			}
+			if (!painted) {
+				// Degraded fallback: still a visible affordance that opens the popup.
+				static const wchar_t kFallback[] = L"...";
+				::DrawTextW(dc, kFallback, 3, &textRect,
+					DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			}
+		} else {
+			const UINT format = DT_CENTER | DT_VCENTER | DT_SINGLELINE
+				| (m_keyboardMode ? 0 : DT_HIDEPREFIX);
+			const std::wstring text = DisplayItemText(itemIndex);
+			::DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &textRect, format);
+		}
+		if (m_keyboardMode && itemIndex == m_keyboardItem) {
 			const HPEN pen = ::CreatePen(PS_SOLID, 1, palette.accent.ToColorRef());
 			const HGDIOBJ oldPen = ::SelectObject(dc, pen);
 			const HGDIOBJ oldBrush = ::SelectObject(dc, ::GetStockObject(NULL_BRUSH));
@@ -271,11 +433,17 @@ int CClientMenuBar::HitTestItem(POINT clientPoint) const noexcept
 
 int CClientMenuBar::AccessibilityItemCount() const noexcept
 {
-	return m_menu == nullptr ? 0 : ::GetMenuItemCount(m_menu);
+	// Only the rendered items are exposed: the shown menus plus the overflow
+	// button. Hidden menus stay reachable through that button's popup and must
+	// not appear as stray UIA peers at stale coordinates.
+	return static_cast<int>(m_itemBounds.size());
 }
 
 std::wstring CClientMenuBar::AccessibilityItemText(int index) const
 {
+	if (index == OverflowItemIndex()) {
+		return LS(STR_WORKBENCH_ACCESSIBILITY_MENUBAR_MORE);
+	}
 	return DisplayItemText(index);
 }
 
@@ -286,7 +454,10 @@ RECT CClientMenuBar::AccessibilityItemBounds(int index) const noexcept
 
 bool CClientMenuBar::AccessibilityItemEnabled(int index) const noexcept
 {
-	if (m_menu == nullptr || index < 0 || index >= ::GetMenuItemCount(m_menu)) return false;
+	if (index == OverflowItemIndex()) {
+		return true;
+	}
+	if (m_menu == nullptr || index < 0 || index >= m_numMenusShown) return false;
 	const UINT state = ::GetMenuState(m_menu, static_cast<UINT>(index), MF_BYPOSITION);
 	return state != static_cast<UINT>(-1) && (state & (MF_DISABLED | MF_GRAYED)) == 0;
 }
@@ -319,48 +490,59 @@ void CClientMenuBar::SetHotItem(HWND owner, int index) noexcept
 	}
 }
 
-bool CClientMenuBar::OpenItem(HWND owner, int index, bool fromKeyboard) noexcept
+bool CClientMenuBar::OpenItem(HWND owner, int index, bool fromKeyboard, int overflowTriggerIndex) noexcept
 {
 	if (owner == nullptr || m_menu == nullptr || index < 0
-		|| index >= ::GetMenuItemCount(m_menu)) {
+		|| index >= static_cast<int>(m_itemBounds.size())) {
 		return false;
 	}
 	int currentItem = index;
+	int pendingTrigger = overflowTriggerIndex;
 	UINT command = 0;
 	for (;;) {
-		const HMENU submenu = ::GetSubMenu(m_menu, currentItem);
-		if (submenu == nullptr) {
-			const UINT itemCommand = ::GetMenuItemID(m_menu, currentItem);
-			if (itemCommand != static_cast<UINT>(-1)) {
-				::SendMessageW(owner, WM_COMMAND, MAKEWPARAM(itemCommand, 0), 0);
-				return true;
-			}
-			return false;
-		}
-
-		m_pressedItem = currentItem;
-		m_keyboardItem = currentItem;
-		Invalidate(owner);
 		const RECT anchor = currentItem < static_cast<int>(m_itemBounds.size()) ? m_itemBounds[currentItem] : m_bounds;
-		POINT origin{ anchor.left, anchor.bottom };
-		::ClientToScreen(owner, &origin);
-		::SetForegroundWindow(owner);
-		// TrackPopupMenuEx treats the supplied submenu as a standalone popup and
-		// reports position zero in WM_INITMENUPOPUP. Sakura builds each top-level
-		// submenu lazily from that position, so explicitly initialize it with its
-		// real root-menu index before entering the modal popup loop. Without this,
-		// only the first (File) menu receives contents and every later menu is empty.
-		::SendMessageW(owner, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(submenu), MAKELPARAM(currentItem, FALSE));
-		PopupTrackingScope tracking(*this, owner, currentItem);
-		command = ::TrackPopupMenuEx(
-			submenu,
-			TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
-			origin.x,
-			origin.y,
-			owner,
-			nullptr
-		);
-		const int nextItem = tracking.PendingItem();
+		int nextItem = -1;
+		if (currentItem == OverflowItemIndex()) {
+			m_pressedItem = currentItem;
+			m_keyboardItem = currentItem;
+			Invalidate(owner);
+			PopupTrackingScope tracking(*this, owner, currentItem);
+			command = TrackOverflowPopup(owner, anchor, pendingTrigger);
+			pendingTrigger = -1;
+			nextItem = tracking.PendingItem();
+		} else {
+			const HMENU submenu = ::GetSubMenu(m_menu, currentItem);
+			if (submenu == nullptr) {
+				const UINT itemCommand = ::GetMenuItemID(m_menu, currentItem);
+				if (itemCommand != static_cast<UINT>(-1)) {
+					::SendMessageW(owner, WM_COMMAND, MAKEWPARAM(itemCommand, 0), 0);
+					return true;
+				}
+				return false;
+			}
+			m_pressedItem = currentItem;
+			m_keyboardItem = currentItem;
+			Invalidate(owner);
+			POINT origin{ anchor.left, anchor.bottom };
+			::ClientToScreen(owner, &origin);
+			::SetForegroundWindow(owner);
+			// TrackPopupMenuEx treats the supplied submenu as a standalone popup and
+			// reports position zero in WM_INITMENUPOPUP. Sakura builds each top-level
+			// submenu lazily from that position, so explicitly initialize it with its
+			// real root-menu index before entering the modal popup loop. Without this,
+			// only the first (File) menu receives contents and every later menu is empty.
+			::SendMessageW(owner, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(submenu), MAKELPARAM(currentItem, FALSE));
+			PopupTrackingScope tracking(*this, owner, currentItem);
+			command = ::TrackPopupMenuEx(
+				submenu,
+				TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
+				origin.x,
+				origin.y,
+				owner,
+				nullptr
+			);
+			nextItem = tracking.PendingItem();
+		}
 		if (command != 0 || nextItem < 0) {
 			break;
 		}
@@ -376,6 +558,98 @@ bool CClientMenuBar::OpenItem(HWND owner, int index, bool fromKeyboard) noexcept
 	}
 	Invalidate(owner);
 	return true;
+}
+
+UINT CClientMenuBar::TrackOverflowPopup(HWND owner, const RECT& anchor, int triggerIndex) noexcept
+{
+	const int count = ::GetMenuItemCount(m_menu);
+	if (m_numMenusShown >= count) {
+		return 0;
+	}
+	const HMENU popup = ::CreatePopupMenu();
+	if (popup == nullptr) {
+		return 0;
+	}
+	// One SubmenuAction per hidden top-level menu, in order. The submenus stay
+	// owned by CEditWnd's HMENU; the popup only borrows them for the duration of
+	// the track and detaches them before it is destroyed.
+	int triggerIsCascade = 0;
+	for (int index = m_numMenusShown; index < count; ++index) {
+		const std::wstring text = ItemText(index);
+		const HMENU submenu = ::GetSubMenu(m_menu, index);
+		if (submenu != nullptr) {
+			// Same lazy-build contract as OpenItem: initialize each hidden
+			// submenu with its real root-menu index so recent-file lists and
+			// other dynamic contents exist. The modal loop's own INITMENUPOPUP
+			// later reports the popup-relative position and only refreshes
+			// enable/check states.
+			::SendMessageW(owner, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(submenu), MAKELPARAM(index, FALSE));
+			if (::AppendMenuW(popup, MF_POPUP, reinterpret_cast<UINT_PTR>(submenu), text.c_str()) == FALSE) {
+				continue;
+			}
+			if (index - m_numMenusShown == triggerIndex) {
+				triggerIsCascade = 1;
+			}
+		} else {
+			const UINT itemCommand = ::GetMenuItemID(m_menu, index);
+			if (itemCommand == static_cast<UINT>(-1)
+				|| ::AppendMenuW(popup, MF_STRING, itemCommand, text.c_str()) == FALSE) {
+				continue;
+			}
+		}
+	}
+	if (::GetMenuItemCount(popup) <= 0) {
+		::DestroyMenu(popup);
+		return 0;
+	}
+	POINT origin{ anchor.left, anchor.bottom };
+	::ClientToScreen(owner, &origin);
+	::SetForegroundWindow(owner);
+	// menuWidget.trigger(index): a mnemonic on a hidden menu opens the overflow
+	// with that menu's row selected and its cascade run. Plain arrow keys need
+	// no modifier state, so the modal loop consumes the queued keys directly.
+	if (triggerIndex >= 0) {
+		for (int step = 0; step <= triggerIndex; ++step) {
+			::PostMessageW(owner, WM_KEYDOWN, VK_DOWN, 0);
+		}
+		::PostMessageW(owner, WM_KEYDOWN, triggerIsCascade ? VK_RIGHT : VK_RETURN, 0);
+	}
+	const UINT command = ::TrackPopupMenuEx(
+		popup,
+		TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
+		origin.x,
+		origin.y,
+		owner,
+		nullptr
+	);
+	// Detach every borrowed submenu before the container dies; DestroyMenu would
+	// otherwise recurse into and destroy CEditWnd's live submenus.
+	while (::RemoveMenu(popup, 0, MF_BYPOSITION) != FALSE) {
+	}
+	::DestroyMenu(popup);
+	return command;
+}
+
+void CClientMenuBar::ClearHiddenItemState(HWND owner) noexcept
+{
+	const int rendered = static_cast<int>(m_itemBounds.size());
+	bool invalidated = false;
+	if (m_hotItem >= rendered) {
+		m_hotItem = -1;
+		invalidated = true;
+	}
+	if (m_pressedItem >= rendered) {
+		m_pressedItem = -1;
+		invalidated = true;
+	}
+	if (m_keyboardItem >= rendered) {
+		m_keyboardItem = -1;
+		m_keyboardMode = false;
+		invalidated = true;
+	}
+	if (invalidated) {
+		Invalidate(owner);
+	}
 }
 
 LRESULT CALLBACK CClientMenuBar::PopupMenuMessageFilter(int code, WPARAM wParam, LPARAM lParam) noexcept
@@ -501,7 +775,12 @@ bool CClientMenuBar::PreTranslateMessage(HWND owner, MSG& message) noexcept
 	if (m_menu == nullptr) {
 		return false;
 	}
-	const int count = ::GetMenuItemCount(m_menu);
+	const int rendered = static_cast<int>(m_itemBounds.size());
+	// Alt/F10 lands on the overflow button once every menu is hidden, matching
+	// upstream `focusedMenu.index = numMenusShown > 0 ? 0 : OVERFLOW_INDEX`.
+	const auto firstFocusable = [this]() noexcept {
+		return m_numMenusShown > 0 ? 0 : OverflowItemIndex();
+	};
 	if (message.message == WM_SYSKEYDOWN && message.wParam == VK_MENU) {
 		m_altDown = true;
 		m_altChord = false;
@@ -514,9 +793,9 @@ bool CClientMenuBar::PreTranslateMessage(HWND owner, MSG& message) noexcept
 		const bool activate = m_altDown && !m_altChord;
 		m_altDown = false;
 		m_altChord = false;
-		if (activate && count > 0) {
+		if (activate && rendered > 0) {
 			m_keyboardMode = !m_keyboardMode;
-			m_keyboardItem = m_keyboardMode ? 0 : -1;
+			m_keyboardItem = m_keyboardMode ? firstFocusable() : -1;
 			Invalidate(owner);
 			return true;
 		}
@@ -524,7 +803,7 @@ bool CClientMenuBar::PreTranslateMessage(HWND owner, MSG& message) noexcept
 	}
 	if (message.message == WM_KEYDOWN && message.wParam == VK_F10) {
 		m_keyboardMode = !m_keyboardMode;
-		m_keyboardItem = m_keyboardMode && count > 0 ? 0 : -1;
+		m_keyboardItem = m_keyboardMode && rendered > 0 ? firstFocusable() : -1;
 		Invalidate(owner);
 		return true;
 	}
@@ -532,20 +811,26 @@ bool CClientMenuBar::PreTranslateMessage(HWND owner, MSG& message) noexcept
 		const int mnemonic = FindMnemonic(static_cast<wchar_t>(message.wParam));
 		if (mnemonic >= 0) {
 			m_keyboardMode = true;
-			m_keyboardItem = mnemonic;
-			return OpenItem(owner, mnemonic, true);
+			if (mnemonic < m_numMenusShown) {
+				m_keyboardItem = mnemonic;
+				return OpenItem(owner, mnemonic, true);
+			}
+			// A hidden menu's mnemonic opens the overflow and triggers the
+			// matching row, as upstream `menuWidget.trigger(menuIndex)`.
+			m_keyboardItem = OverflowItemIndex();
+			return OpenItem(owner, m_keyboardItem, true, mnemonic - m_numMenusShown);
 		}
 	}
-	if (!m_keyboardMode || message.message != WM_KEYDOWN || count <= 0) {
+	if (!m_keyboardMode || message.message != WM_KEYDOWN || rendered <= 0) {
 		return false;
 	}
 	switch (message.wParam) {
 	case VK_LEFT:
-		m_keyboardItem = (m_keyboardItem + count - 1) % count;
+		m_keyboardItem = (m_keyboardItem + rendered - 1) % rendered;
 		Invalidate(owner);
 		return true;
 	case VK_RIGHT:
-		m_keyboardItem = (m_keyboardItem + 1) % count;
+		m_keyboardItem = (m_keyboardItem + 1) % rendered;
 		Invalidate(owner);
 		return true;
 	case VK_DOWN:
