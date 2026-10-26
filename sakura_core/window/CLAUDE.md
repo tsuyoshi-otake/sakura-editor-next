@@ -608,6 +608,28 @@ wiring.
   `sakura.status.macroRecording`; do not disguise them under unrelated VS Code
   IDs merely to make the customization menu look canonical.
 
+## Repository name and visibility status entry (#386)
+
+- `sakura.status.scm.repository` (LEFT) shows `owner/repo` and Public / Private /
+  Internal beside the `status.scm` commands, before `status.problems`. Text is
+  `$(repo) owner/repo  Public`, or `$(lock) owner/repo  Private|Internal`; the
+  tooltip is `github.com/owner/repo (Visibility)`. It has no click command.
+- **Documented divergence:** VS Code has no always-on repository-name or
+  visibility entry. Its `status.scm.provider` appears only with more than one
+  repository, so the ID is product-owned, like `sakura.status.macroRecording`,
+  and is hideable through the status bar customization menu. Do not reuse
+  `status.scm.provider` for it.
+- Name: `git remote get-url origin`, parsed locally; only github.com
+  (https, ssh://, scp-like). No remote or another host shows no entry.
+- Visibility: one bounded `gh repo view ... --json visibility`, run only when a
+  signature-verified `gh.exe` exists (the same trust gate as account discovery).
+  Without gh, or on any failure, the entry shows the name alone: visibility is
+  never guessed and no "unknown" marker is drawn.
+- Load rules: `CGitHubRepositoryStatusService` keeps one worker, cancels a probe
+  on a new root, fences stale results by generation, never retries on its own,
+  and ignores `Refresh()` for the same root within 120 s. The worker only posts
+  `MYWM_WORKBENCH_REPOSITORY_STATUS_CHANGED`; the UI thread reads `Current()`.
+
 ## Problems status entries and marker navigation (#382)
 
 - `status.problems` (LEFT, priority 50) paints between `status.scm` (10000)

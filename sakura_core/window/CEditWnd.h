@@ -154,6 +154,7 @@ class COutlineWorkbenchTool;
 }
 namespace scm {
 class CScmWorkbenchTool;
+class CGitHubRepositoryStatusService;
 }
 namespace search {
 class CSearchWorkbenchTool;
@@ -1206,6 +1207,8 @@ private:
 	//! Rebuilds the `status.problems*` state from the MarkerService snapshot and
 	//! pushes it to the native status bar. Pure feed, never a marker authority.
 	void UpdateProblemsStatusbar();
+	//! Feeds `sakura.status.scm.repository` from the background GitHub status service.
+	void OnRepositoryStatusChanged();
 	[[nodiscard]] minimap::Options ReadMiniMapSettings() const;
 	//! Resolves VS Code's editor-owned `editor.guides.indentation` setting and
 	//! applies it to every editor pane; SENP decoration state is not consulted.
@@ -1287,6 +1290,10 @@ private:
 	//! without retaining or dereferencing CEditWnd from a model callback thread.
 	struct WorkbenchServiceProjectionGate;
 	std::shared_ptr<WorkbenchServiceProjectionGate> m_workbenchServiceProjectionGate;
+	//! Resolves `owner/repo` and Public/Private off the UI thread; it only posts a message.
+	std::unique_ptr<workbench::scm::CGitHubRepositoryStatusService> m_repositoryStatusService;
+	//! Whether the status service currently names a repository (the entry's provider visibility).
+	bool m_repositoryStatusPresent = false;
 	//! Configuration callbacks never touch CEditWnd directly; they coalesce a
 	//! message through this gate and are disconnected before workbench teardown.
 	struct ThemeConfigurationGate;

@@ -34,6 +34,9 @@ constexpr UINT_PTR kSakuraStatusBarSubclassId = 1;
 constexpr std::string_view kNotificationStatusId = "status.notifications";
 constexpr std::string_view kRemoteHostStatusId = "status.host";
 constexpr std::string_view kProblemsStatusId = "status.problems";
+//! No VS Code counterpart (documented divergence in window/CLAUDE.md), so the id is
+//! product-owned rather than borrowed from `status.scm.*`.
+constexpr std::string_view kRepositoryStatusId = "sakura.status.scm.repository";
 constexpr std::string_view kProblemsVisibilityStatusId = "status.problemsVisibility";
 constexpr std::string_view kCurrentProblemStatusId = "statusbar.currentProblem";
 constexpr std::string_view kRemoteShowMenuCommand = "workbench.action.remote.showMenu";
@@ -261,6 +264,13 @@ void CMainStatusBar::SetProblemsStatus(ProblemsStatusbarState state)
 	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
 }
 
+void CMainStatusBar::SetRepositoryStatus(RepositoryStatusbarState state)
+{
+	if (m_repositoryStatus == state) return;
+	m_repositoryStatus = std::move(state);
+	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
+}
+
 bool CMainStatusBar::IsStatusbarEntryVisible(std::string_view id, bool providerVisible) const noexcept
 {
 	if (!providerVisible || !workbench::statusbar::StatusbarViewModel::IsValidId(id)) return false;
@@ -484,6 +494,24 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 			const RECT itemRect{ scmWidth, 0, right, height };
 			drawLabelRuns(runs, itemRect, scmIconSide);
 			m_statusbarHitTargets.push_back({ "status.scm", itemRect, command.command });
+			scmWidth = right;
+		}
+	}
+
+	// Repository name and visibility sit right after the branch/sync commands, so the
+	// answer to "which repository, public or private" is read next to the branch.
+	if (IsStatusbarEntryVisible(kRepositoryStatusId) && !m_repositoryStatus.text.empty()) {
+		const int iconSide = InlineStatusIconSide(height, dpi);
+		const auto runs = workbench::icons::ParseLabelWithIcons(
+			m_repositoryStatus.text, workbench::icons::CCodiconFont::Instance().FaceName());
+		const int itemWidth = workbench::icons::StatusItemPartWidthPixels(
+			measureLabelRuns(runs, iconSide), dpi);
+		const int right = std::min(width, scmWidth + itemWidth);
+		if (right > scmWidth) {
+			const RECT itemRect{ scmWidth, 0, right, height };
+			drawLabelRuns(runs, itemRect, iconSide);
+			m_statusbarHitTargets.push_back({
+				std::string(kRepositoryStatusId), itemRect, {}, {}, m_repositoryStatus.tooltip });
 			scmWidth = right;
 		}
 	}

@@ -147,6 +147,7 @@
 #include "workbench/scm/GitHistoryModel.h"
 #include "workbench/scm/GitOutputChannel.h"
 #include "workbench/scm/GitScmPublisher.h"
+#include "workbench/scm/CGitHubRepositoryStatusService.h"
 #include "workbench/scm/GitStageCommands.h"
 #include "workbench/scm/GitSyncCommands.h"
 #include "workbench/problems/MarkerNavigationModel.h"
@@ -3183,6 +3184,9 @@ bool CEditWnd::InitializeWorkbench()
 	const auto workspaceRoot = GetSemanticWorkspaceRoot();
 	m_explorerTool->SetRoot(workspaceRoot);
 	m_scmTool->SetRoot(workspaceRoot);
+	m_repositoryStatusService = std::make_unique<workbench::scm::CGitHubRepositoryStatusService>(
+		[window = GetHwnd()]() { ::PostMessageW(window, MYWM_WORKBENCH_REPOSITORY_STATUS_CHANGED, 0, 0); });
+	m_repositoryStatusService->SetWorkspaceRoot(workspaceRoot);
 	m_searchTool->SetRoot(workspaceRoot);
 	m_searchTool->SetMatchActivationCallback([this](std::wstring_view path, std::int64_t line,
 		int column, int) { OpenSearchMatch(path, line, column); });
@@ -3238,6 +3242,8 @@ bool CEditWnd::InitializeWorkbench()
 	// shown in the status bar would then be able to disagree.
 	m_scmTool->SetStatusBarCommandsCallback([this](const std::vector<workbench::scm::ScmCommand>& commands) {
 		m_cStatusBar.SetScmStatusCommands(commands);
+		// Rate-limited inside the service, so a publication storm cannot become a gh loop.
+		if (m_repositoryStatusService) m_repositoryStatusService->Refresh();
 		// The same publication the status bar renders is what the Activity Bar
 		// badge counts, so both follow one notification instead of two.
 		SyncScmActivityBadge();
@@ -6249,6 +6255,8 @@ void CEditWnd::RefreshStatusbarPresentation()
 	std::vector<StatusbarEntry> entries{
 		{ "status.host", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_REMOTE_HOST), EStatusbarEntryAlignment::Left, true },
 		{ "status.scm", LocalizedWorkbenchString(STR_WORKBENCH_SOURCE_CONTROL_TITLE), EStatusbarEntryAlignment::Left, true },
+		// Product-owned (no VS Code counterpart): listed only while a github.com `origin` is known.
+		{ "sakura.status.scm.repository", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_REPOSITORY), EStatusbarEntryAlignment::Left, m_repositoryStatusPresent },
 		{ "status.problems", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_PROBLEMS), EStatusbarEntryAlignment::Left, true },
 		// upstream は問題がオフの間だけ entry を足す: providerVisible に出すのと同じ。
 		{ "status.problemsVisibility", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_PROBLEMS_VISIBILITY), EStatusbarEntryAlignment::Left, !m_problemsVisibility },
@@ -6586,6 +6594,9 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_themeConfigurationSubscription.reset();
 	m_themeConfigurationGate.reset();
 	CloseWorkbenchServiceProjection();
+	// Joins the worker (terminating a running git/gh child) so no message is posted afterwards.
+	if (m_repositoryStatusService) m_repositoryStatusService->Shutdown();
+	m_repositoryStatusService.reset();
 	// The update worker can be mid-download. Closing its gate and joining the
 	// worker here is what makes the registry executors below safe to destroy: an
 	// update notification after this point has nowhere to arrive.
@@ -8514,6 +8525,7 @@ void CEditWnd::ApplySemanticWorkspaceContext()
 	if (m_scmTool) {
 		m_scmTool->SetRoot(root);
 	}
+	if (m_repositoryStatusService) m_repositoryStatusService->SetWorkspaceRoot(root);
 	UpdateWorkbenchWelcomeState();
 	// The caption carries the folder's name, so opening or closing one changes it.
 	UpdateCaption();
@@ -10336,6 +10348,33 @@ void CEditWnd::UpdateProblemsStatusbar()
 		::OutputDebugStringW(L"Sakura Editor NEXT: Problems statusbar projection failed.\n");
 	}
 	m_cStatusBar.SetProblemsStatus(std::move(state));
+}
+
+void CEditWnd::OnRepositoryStatusChanged()
+{
+	CMainStatusBar::RepositoryStatusbarState state;
+	bool present = false;
+	if (m_repositoryStatusService) {
+		try {
+			const auto status = m_repositoryStatusService->Current();
+			present = status.repository.has_value();
+			const workbench::scm::GitHubRepositoryLabelText words{
+				LocalizedWorkbenchString(STR_WORKBENCH_STATUS_REPOSITORY_PUBLIC),
+				LocalizedWorkbenchString(STR_WORKBENCH_STATUS_REPOSITORY_PRIVATE),
+				LocalizedWorkbenchString(STR_WORKBENCH_STATUS_REPOSITORY_INTERNAL),
+			};
+			state.text = workbench::scm::BuildGitHubRepositoryLabel(status, words);
+			state.tooltip = workbench::scm::BuildGitHubRepositoryTooltip(status, words);
+		}
+		catch (...) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: repository status projection failed.\n");
+		}
+	}
+	m_cStatusBar.SetRepositoryStatus(std::move(state));
+	if (present != m_repositoryStatusPresent) {
+		m_repositoryStatusPresent = present;
+		RefreshStatusbarPresentation();
+	}
 }
 
 void CEditWnd::OnEditorCaretMoved()
@@ -13327,6 +13366,9 @@ LRESULT CEditWnd::DispatchEvent(
 		return 0;
 	case MYWM_WORKBENCH_SERVICE_PROJECTION_CHANGED:
 		OnWorkbenchServiceProjectionChanged();
+		return 0;
+	case MYWM_WORKBENCH_REPOSITORY_STATUS_CHANGED:
+		OnRepositoryStatusChanged();
 		return 0;
 	case MYWM_WORKBENCH_UPDATE_STATE_CHANGED:
 		OnWorkbenchUpdateStateChanged();

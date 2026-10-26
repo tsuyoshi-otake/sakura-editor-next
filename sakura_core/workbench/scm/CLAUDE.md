@@ -1467,6 +1467,17 @@ divergence is a bug.
   commands are absent rather than merged into the first provider's row. Revisit
   when a provider actually publishes a second set.
 
+## GitHub repository status (#386)
+
+`GitHubRepositoryStatus.h/.cpp` (pure parse/label, plus two blocking queries)
+and `CGitHubRepositoryStatusService` (worker, generation fence, 120 s refresh
+throttle) feed the product-owned `sakura.status.scm.repository` status entry.
+It is not an SCM authority and publishes nothing to `SourceControlService`.
+Only `origin` on github.com is recognised. The origin read uses
+`PassiveRepositoryRead`; visibility comes from a signature-verified `gh.exe`
+and is `Unknown` on any failure. See `../../window/CLAUDE.md` for the entry's
+divergence record.
+
 ## Running git
 
 `RunGit` is the only way this subsystem starts a git process. It is bounded and

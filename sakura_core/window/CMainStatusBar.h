@@ -77,6 +77,14 @@ public:
 		[[nodiscard]] bool operator==(const ProblemsStatusbarState&) const noexcept = default;
 	};
 	void SetProblemsStatus(ProblemsStatusbarState state);
+	//! Product-owned `sakura.status.scm.repository`: the `$(codicon) owner/repo  Visibility`
+	//! label and its tooltip, already resolved. Empty text means there is no entry to paint.
+	struct RepositoryStatusbarState {
+		std::wstring text;
+		std::wstring tooltip;
+		[[nodiscard]] bool operator==(const RepositoryStatusbarState&) const noexcept = default;
+	};
+	void SetRepositoryStatus(RepositoryStatusbarState state);
 	[[nodiscard]] bool IsStatusbarEntryVisible(std::string_view id, bool providerVisible = true) const noexcept;
 	[[nodiscard]] int ReservedRightWidth() const noexcept;
 	[[nodiscard]] static std::string_view LegacyEntryIdForPart(int part) noexcept;
@@ -137,6 +145,7 @@ private:
 	mutable std::vector<StatusbarHitTarget> m_statusbarHitTargets;
 	workbench::statusbar::StatusbarViewSnapshot m_statusbarViewSnapshot;
 	ProblemsStatusbarState m_problemsStatus;
+	RepositoryStatusbarState m_repositoryStatus;
 	std::vector<StatusbarTooltipTool> m_statusbarTooltipTools;
 	std::size_t m_notificationPendingCount = 0;
 	std::size_t m_notificationUnreadCount = 0;

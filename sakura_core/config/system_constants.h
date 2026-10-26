@@ -771,4 +771,6 @@ enum e_PM_SETCARETPOS_SELECTSTATE {
 #define MYWM_WORKBENCH_THEME_CHANGED (WM_APP+243)
 //! Committed update state changed; the UI thread must re-read `IUpdateService::State()`.
 #define MYWM_WORKBENCH_UPDATE_STATE_CHANGED (WM_APP+244)
+//! The GitHub repository status (name / visibility) was resolved; the UI thread must re-read it.
+#define MYWM_WORKBENCH_REPOSITORY_STATUS_CHANGED (WM_APP+245)
 #endif /* SAKURA_SYSTEM_CONSTANTS_DACC287C_DAC4_4FC7_8AEC_8DB5BE6BFB8B_H_ */

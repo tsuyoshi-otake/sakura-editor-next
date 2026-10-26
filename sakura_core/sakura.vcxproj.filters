@@ -1301,6 +1301,12 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmPublisher.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\CGitHubRepositoryStatusService.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitHubRepositoryStatus.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\GitHistoryModel.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -3558,6 +3564,12 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmPublisher.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\CGitHubRepositoryStatusService.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitHubRepositoryStatus.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\GitHistoryModel.cpp">
