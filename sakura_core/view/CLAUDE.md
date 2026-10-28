@@ -79,3 +79,11 @@ Lines merely staying invalid without either trigger never repaint.
 The minimap overview counts as token-ready only when the cache is fully
 resolved (`IsTextMateFullyResolved`), not merely when the final line holds
 stale tokens.
+
+## File-drop ownership
+
+The view owns each posted file-drop allocation until its own UI-thread message
+is dispatched. An unrecognized handle is ignored; window destruction or Close
+releases all pending allocations. During menu handling the view owns the drop,
+except when transferring it to the live edit window's WM_DROPFILES handler,
+which then releases it. Do not free the same drop after that transfer (#391).

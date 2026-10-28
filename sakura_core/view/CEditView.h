@@ -32,8 +32,10 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "cxx/ResourceHolder.hpp"
 #include "CTextMetrics.h"
 #include "CTextDrawer.h"
 #include "view/CCaret.h"
@@ -431,6 +433,7 @@ public: /* テスト用にアクセス属性を変更 */
 	STDMETHODIMP Drop(LPDATAOBJECT pDataObject, DWORD dwKeyState, POINTL pt, LPDWORD pdwEffect);
 	STDMETHODIMP PostMyDropFiles( LPDATAOBJECT pDataObject );		/* 独自ドロップファイルメッセージをポストする */	// 2008.06.20 ryoji
 	void OnMyDropFiles( HDROP hDrop );								/* 独自ドロップファイルメッセージ処理 */	// 2008.06.20 ryoji
+	void ExecuteFileDropMenuAction(HDROP hDrop, int menuId); // Takes ownership of hDrop.
 	CLIPFORMAT GetAvailableClipFormat( LPDATAOBJECT pDataObject );
 	DWORD TranslateDropEffect( CLIPFORMAT cf, DWORD dwKeyState, POINTL pt, DWORD dwEffect );
 	bool IsDragSource( void );
@@ -744,12 +747,12 @@ public:
 
 public:
 	//画面バッファ
-	HDC				m_hdcCompatDC;		/* 再描画用コンパチブルＤＣ */
-	HBITMAP			m_hbmpCompatBMP;	/* 再描画用メモリＢＭＰ */
-	HBITMAP			m_hbmpCompatBMPOld;	/* 再描画用メモリＢＭＰ(OLD) */
+	HDC				m_hdcCompatDC = nullptr;		/* 再描画用コンパチブルＤＣ */
+	HBITMAP			m_hbmpCompatBMP = nullptr;	/* 再描画用メモリＢＭＰ */
+	HBITMAP			m_hbmpCompatBMPOld = nullptr;	/* 再描画用メモリＢＭＰ(OLD) */
 	HDC				m_hdcBackImage = nullptr;	/* 背景画像用コンパチブルＤＣ */
-	int				m_nCompatBMPWidth;  /* 再作画用メモリＢＭＰの幅 */	// 2007.09.09 Moca 互換BMPによる画面バッファ
-	int				m_nCompatBMPHeight; /* 再作画用メモリＢＭＰの高さ */	// 2007.09.09 Moca 互換BMPによる画面バッファ
+	int				m_nCompatBMPWidth = -1;  /* 再作画用メモリＢＭＰの幅 */	// 2007.09.09 Moca 互換BMPによる画面バッファ
+	int				m_nCompatBMPHeight = -1; /* 再作画用メモリＢＭＰの高さ */	// 2007.09.09 Moca 互換BMPによる画面バッファ
 
 public:
 	//D&D
@@ -820,7 +823,10 @@ public:
 
 	// IME
 private:
-	HWND			m_hWnd;
+	HWND			m_hWnd = nullptr;
+	// UI-thread ownership until the posted drop is dispatched or the view is destroyed.
+	bool m_acceptingDropFiles = false;
+	std::unordered_map<HGLOBAL, cxx::ResourceHolder<&::GlobalFree>> m_pendingDropFiles;
 	std::unique_ptr<editor::rendering::CEditViewRenderState> m_pRenderState;
 	workbench::rendering::FrameNativeSurfacePayloadAdapter m_nativeSurface;
 	std::optional<NativeSurfaceTarget> m_nativeSurfaceTarget;

@@ -6,6 +6,7 @@
 */
 #include "pch.h"
 #include <array>
+#include <cstddef>
 #include <cstring>
 #include <functional>
 #include <future>
@@ -158,6 +159,34 @@ private:
 	IStream* stream;
 };
 
+struct DropReceiverState {
+	HGLOBAL received = nullptr;
+	HGLOBAL replacement = nullptr;
+};
+
+LRESULT CALLBACK DropReceiverWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	if (message == WM_NCCREATE) {
+		const auto* create = reinterpret_cast<CREATESTRUCTW*>(lParam);
+		::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+	}
+	if (message == WM_DROPFILES) {
+		auto* state = reinterpret_cast<DropReceiverState*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+		state->received = reinterpret_cast<HGLOBAL>(wParam);
+		const auto size = ::GlobalSize(state->received);
+		::DragFinish(static_cast<HDROP>(state->received));
+		state->replacement = ::GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, size);
+		return 0;
+	}
+	return ::DefWindowProcW(hwnd, message, wParam, lParam);
+}
+
+struct ScopedEditWindowHandle {
+	CEditWnd& window;
+	HWND previous;
+	~ScopedEditWindowHandle() { window.AttachMainWindowEarly(previous); }
+};
+
 struct ClipboardDropView : ::testing::Test, window::EditorTestSuite, window::UiaTestSuite {
 	static void SetUpTestSuite() { SetUpUia(); SetUpEditor(); }
 	static void TearDownTestSuite() { TearDownEditor(); TearDownUia(); }
@@ -192,23 +221,114 @@ TEST_F(ClipboardDropView, EmptyFileDropIsRejectedAndItsMemoryReleased)
 	EXPECT_EQ(GMEM_INVALID_HANDLE, ::GlobalFlags(memory));
 }
 
-TEST_F(ClipboardDropView, ValidFileDropPostsAnIndependentOwnedCopy)
+TEST_F(ClipboardDropView, UncreatedViewRejectsFileDropWithoutPostingThreadMessage)
 {
+	alignas(CEditView) std::array<std::byte, sizeof(CEditView)> storage;
+	storage.fill(std::byte{0xA5});
+	auto fresh = std::unique_ptr<CEditView, void(*)(CEditView*)>(
+		std::construct_at(reinterpret_cast<CEditView*>(storage.data())),
+		[](CEditView* instance) { std::destroy_at(instance); });
+	ASSERT_EQ(nullptr, fresh->GetHwnd());
+	EXPECT_EQ(nullptr, fresh->m_hdcCompatDC);
+	EXPECT_EQ(nullptr, fresh->m_hbmpCompatBMP);
+	EXPECT_EQ(nullptr, fresh->m_hbmpCompatBMPOld);
+	EXPECT_EQ(-1, fresh->m_nCompatBMPWidth);
+	EXPECT_EQ(-1, fresh->m_nCompatBMPHeight);
+	auto& view = pcEditWnd->GetActiveView();
+	ASSERT_EQ(nullptr, view.GetHwnd());
+	MSG message{};
+	(void)::PeekMessageW(&message, reinterpret_cast<HWND>(-1), MYWM_DROPFILES, MYWM_DROPFILES, PM_NOREMOVE);
 	const std::array files = { std::filesystem::path(L"C:\\example.txt") };
 	auto original = cxx::MakeDropFiles(files);
 	ASSERT_NE(original.Get(), nullptr);
 	const auto source = original.Get();
 	OwnedMediumDataObject data(CF_HDROP, original.release());
-	ASSERT_EQ(S_OK, pcEditWnd->GetActiveView().PostMyDropFiles(&data));
+	EXPECT_EQ(E_FAIL, view.PostMyDropFiles(&data));
+	EXPECT_EQ(GMEM_INVALID_HANDLE, ::GlobalFlags(source));
+	const BOOL posted = ::PeekMessageW(&message, reinterpret_cast<HWND>(-1), MYWM_DROPFILES, MYWM_DROPFILES, PM_REMOVE);
+	EXPECT_FALSE(posted);
+}
+
+TEST_F(ClipboardDropView, MenuActionTransfersDropOwnershipOnce)
+{
+	auto& view = pcEditWnd->GetActiveView();
+	const std::array files = { std::filesystem::path(L"C:\\example.txt") };
+	auto cancelled = cxx::MakeDropFiles(files);
+	ASSERT_NE(cancelled.Get(), nullptr);
+	const auto cancelledHandle = cancelled.Get();
+	view.ExecuteFileDropMenuAction(static_cast<HDROP>(cancelled.release()), IDCANCEL);
+	EXPECT_EQ(GMEM_INVALID_HANDLE, ::GlobalFlags(cancelledHandle));
+
+	auto noWindow = cxx::MakeDropFiles(files);
+	ASSERT_NE(noWindow.Get(), nullptr);
+	const auto noWindowHandle = noWindow.Get();
+	view.ExecuteFileDropMenuAction(static_cast<HDROP>(noWindow.release()), 110);
+	EXPECT_EQ(GMEM_INVALID_HANDLE, ::GlobalFlags(noWindowHandle));
+
+	static constexpr auto className = L"SakuraDropOwnershipTestWindow";
+	WNDCLASSW windowClass{};
+	windowClass.lpfnWndProc = DropReceiverWindowProc;
+	windowClass.hInstance = G_AppInstance();
+	windowClass.lpszClassName = className;
+	const auto registered = ::RegisterClassW(&windowClass);
+	ASSERT_TRUE(registered || ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS);
+	DropReceiverState state;
+	using WindowHolder = cxx::ResourceHolder<&::DestroyWindow>;
+	WindowHolder receiver{ ::CreateWindowExW(0, className, L"", WS_OVERLAPPED,
+		0, 0, 100, 100, nullptr, nullptr, G_AppInstance(), &state) };
+	ASSERT_TRUE(receiver);
+	ScopedEditWindowHandle attachment{ *pcEditWnd, pcEditWnd->GetHwnd() };
+	pcEditWnd->AttachMainWindowEarly(receiver.get());
+
+	auto transferred = cxx::MakeDropFiles(files);
+	ASSERT_NE(transferred.Get(), nullptr);
+	const auto transferredHandle = transferred.Get();
+	view.ExecuteFileDropMenuAction(static_cast<HDROP>(transferred.release()), 110);
+	EXPECT_EQ(transferredHandle, state.received);
+	cxx::GlobalMemory replacement(state.replacement);
+	ASSERT_NE(replacement.Get(), nullptr);
+	RecordProperty("drop_handle_reused", replacement.Get() == transferredHandle ? "true" : "false");
+	EXPECT_NE(GMEM_INVALID_HANDLE, ::GlobalFlags(replacement.Get()));
+}
+
+TEST_F(ClipboardDropView, ValidFileDropPostsAnIndependentOwnedCopy)
+{
+	using WindowHolder = cxx::ResourceHolder<&::DestroyWindow>;
+	WindowHolder parent{ ::CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED,
+		0, 0, 100, 100, nullptr, nullptr, G_AppInstance(), nullptr) };
+	ASSERT_TRUE(parent);
+	auto& view = pcEditWnd->GetActiveView();
+	ASSERT_TRUE(view.Create(parent.get(), pcEditDoc, 0, FALSE, false));
+	ASSERT_NE(nullptr, view.GetHwnd());
+	const std::array files = { std::filesystem::path(L"C:\\example.txt") };
+	auto original = cxx::MakeDropFiles(files);
+	ASSERT_NE(original.Get(), nullptr);
+	const auto source = original.Get();
+	OwnedMediumDataObject data(CF_HDROP, original.release());
+	ASSERT_EQ(S_OK, view.PostMyDropFiles(&data));
 	EXPECT_EQ(GMEM_INVALID_HANDLE, ::GlobalFlags(source));
 	MSG message{};
-	ASSERT_TRUE(::PeekMessageW(&message, nullptr, MYWM_DROPFILES, MYWM_DROPFILES, PM_REMOVE));
-	cxx::GlobalMemory posted(reinterpret_cast<HGLOBAL>(message.wParam));
-	ASSERT_NE(posted.Get(), nullptr);
+	ASSERT_TRUE(::PeekMessageW(&message, view.GetHwnd(), MYWM_DROPFILES, MYWM_DROPFILES, PM_REMOVE));
+	EXPECT_EQ(view.GetHwnd(), message.hwnd);
+	const auto first = reinterpret_cast<HGLOBAL>(message.wParam);
+	ASSERT_NE(first, nullptr);
 	WCHAR path[MAX_PATH]{};
-	EXPECT_EQ(1u, ::DragQueryFileW(static_cast<HDROP>(posted.Get()), 0xFFFFFFFF, nullptr, 0));
-	EXPECT_GT(::DragQueryFileW(static_cast<HDROP>(posted.Get()), 0, path, MAX_PATH), 0u);
+	EXPECT_EQ(1u, ::DragQueryFileW(static_cast<HDROP>(first), 0xFFFFFFFF, nullptr, 0));
+	EXPECT_GT(::DragQueryFileW(static_cast<HDROP>(first), 0, path, MAX_PATH), 0u);
 	EXPECT_STREQ(L"C:\\example.txt", path);
+
+	auto another = cxx::MakeDropFiles(files);
+	ASSERT_NE(another.Get(), nullptr);
+	OwnedMediumDataObject pending(CF_HDROP, another.release());
+	ASSERT_EQ(S_OK, view.PostMyDropFiles(&pending));
+	ASSERT_TRUE(::PeekMessageW(&message, view.GetHwnd(), MYWM_DROPFILES, MYWM_DROPFILES, PM_NOREMOVE));
+	const auto second = reinterpret_cast<HGLOBAL>(message.wParam);
+	ASSERT_NE(first, second);
+	ASSERT_NE(GMEM_INVALID_HANDLE, ::GlobalFlags(first));
+	ASSERT_NE(GMEM_INVALID_HANDLE, ::GlobalFlags(second));
+	ASSERT_TRUE(::DestroyWindow(view.GetHwnd()));
+	EXPECT_EQ(GMEM_INVALID_HANDLE, ::GlobalFlags(first));
+	EXPECT_EQ(GMEM_INVALID_HANDLE, ::GlobalFlags(second));
 }
 
 TEST(CClipboard, SharedDropMediumIsCopiedAndReleasedOnSuccessAndFailure)

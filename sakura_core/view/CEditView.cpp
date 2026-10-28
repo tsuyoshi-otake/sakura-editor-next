@@ -287,6 +287,7 @@ BOOL CEditView::Create(
 	if( nullptr == GetHwnd() ){
 		return FALSE;
 	}
+	m_acceptingDropFiles = true;
 	const auto stableSurfaceId = editor::rendering::EditorViewSurfaceId(
 		static_cast<std::uint32_t>(m_nMyIndex < 0 ? 0 : m_nMyIndex), m_bMiniMap);
 	if( !m_pRenderState || m_pRenderState->StableSurfaceId() != stableSurfaceId ){
@@ -387,6 +388,7 @@ void CEditView::UpdateWorkbenchTheme() noexcept
 
 void CEditView::Close()
 {
+	m_acceptingDropFiles = false;
 	(void)m_nativeSurface.Close();
 	m_nativeSurface.SetSink({});
 	m_nativeSurfaceTarget.reset();
@@ -396,6 +398,7 @@ void CEditView::Close()
 	if( GetHwnd() != nullptr ){
 		::DestroyWindow( GetHwnd() );
 	}
+	m_pendingDropFiles.clear();
 
 	/* 再描画用コンパチブルＤＣ */
 	//	2007.09.30 genta 関数化
@@ -908,6 +911,8 @@ LRESULT CEditView::DispatchEvent(
 		::DestroyWindow( hwnd );
 		return 0L;
 	case WM_DESTROY:
+		m_acceptingDropFiles = false;
+		m_pendingDropFiles.clear();
 		(void)m_nativeSurface.Close();
 		m_nativeSurface.SetSink({});
 		m_nativeSurfaceTarget.reset();
@@ -972,9 +977,16 @@ LRESULT CEditView::DispatchEvent(
 		// 2010.03.16 0LではなくTSFが何かするかもしれないのでDefにまかせる
 		return ::DefWindowProc( hwnd, uMsg, wParam, lParam );
 
-	case MYWM_DROPFILES:	// 独自のドロップファイル通知	// 2008.06.20 ryoji
-		OnMyDropFiles( (HDROP)wParam );
+	case MYWM_DROPFILES: // The view owns only handles posted by PostMyDropFiles.
+	{
+		const auto pending = m_pendingDropFiles.find(reinterpret_cast<HGLOBAL>(wParam));
+		if( pending != m_pendingDropFiles.end() ){
+			const auto hDrop = static_cast<HDROP>(pending->second.release());
+			m_pendingDropFiles.erase(pending);
+			OnMyDropFiles(hDrop);
+		}
 		return 0L;
+	}
 
 	// 2007.10.02 nasukoji	マウスクリックにてアクティベートされた時はカーソル位置を移動しない
 	case WM_MOUSEACTIVATE:

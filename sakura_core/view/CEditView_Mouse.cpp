@@ -2172,16 +2172,20 @@ STDMETHODIMP CEditView::PostMyDropFiles( LPDATAOBJECT pDataObject )
 			return true;
 		});
 	});
-	if( !copied ) return E_FAIL;
+	if( !copied || !GetHwnd() || !m_acceptingDropFiles ) return E_FAIL;
 
 	const auto hDrop = drop.Get();
-	if( !::PostMessageAny(
-		GetHwnd(),
-		MYWM_DROPFILES,
-		(WPARAM)hDrop,
-		0
-	) ) return E_FAIL;
-	(void)drop.release();
+	try {
+		auto [pending, inserted] = m_pendingDropFiles.try_emplace(hDrop, static_cast<HGLOBAL>(nullptr));
+		if( !inserted ) return E_FAIL;
+		pending->second.reset(drop.release());
+		if( !::PostMessageAny(GetHwnd(), MYWM_DROPFILES, (WPARAM)hDrop, 0) ){
+			m_pendingDropFiles.erase(pending);
+			return E_FAIL;
+		}
+	} catch( const std::bad_alloc& ) {
+		return E_OUTOFMEMORY;
+	}
 	return S_OK;
 }
 
@@ -2190,6 +2194,7 @@ STDMETHODIMP CEditView::PostMyDropFiles( LPDATAOBJECT pDataObject )
 */
 void CEditView::OnMyDropFiles( HDROP hDrop )
 {
+	cxx::GlobalMemory ownedDrop(static_cast<HGLOBAL>(hDrop));
 	// 普通にメニュー操作ができるように入力状態をフォアグランドウィンドウにアタッチする
 	int nTid2 = ::GetWindowThreadProcessId( ::GetForegroundWindow(), nullptr );
 	int nTid1 = ::GetCurrentThreadId();
@@ -2222,11 +2227,19 @@ void CEditView::OnMyDropFiles( HDROP hDrop )
 	// 入力状態をデタッチする
 	if( nTid1 != nTid2 ) ::AttachThreadInput( nTid1, nTid2, FALSE );
 
-	// 選択されたメニューに対応する処理を実行する
+	ExecuteFileDropMenuAction(static_cast<HDROP>(ownedDrop.release()), nId);
+}
+
+void CEditView::ExecuteFileDropMenuAction(HDROP hDrop, int nId)
+{
+	cxx::GlobalMemory ownedDrop(static_cast<HGLOBAL>(hDrop));
+	// Execute the selected action while retaining or transferring drop ownership.
 	switch( nId ){
-	case 110:	// ファイルを開く
-		// 通常のドロップファイル処理を行う
-		::SendMessageAny( GetEditWnd().GetHwnd(), WM_DROPFILES, (WPARAM)hDrop, 0 );
+	case 110: // The receiving edit window owns and releases WM_DROPFILES data.
+		if( const auto hwnd = GetEditWnd().GetHwnd(); ::IsWindow(hwnd) ){
+			(void)ownedDrop.release();
+			::SendMessageAny(hwnd, WM_DROPFILES, (WPARAM)hDrop, 0);
+		}
 		break;
 
 	case 100:	// パス名を貼り付ける
@@ -2254,8 +2267,6 @@ void CEditView::OnMyDropFiles( HDROP hDrop )
 				cmemBuf.AppendString( m_pcEditDoc->m_cDocEditor.GetNewLineCode().GetValue2() );
 			}
 		}
-		::DragFinish( hDrop );
-
 		// 選択範囲の選択解除
 		if( GetSelectionInfo().IsTextSelected() ){
 			GetSelectionInfo().DisableSelectArea( true );
@@ -2295,8 +2306,6 @@ void CEditView::OnMyDropFiles( HDROP hDrop )
 		break;
 	}
 
-	// メモリ解放
-	::GlobalFree( hDrop );
 }
 
 CLIPFORMAT CEditView::GetAvailableClipFormat( LPDATAOBJECT pDataObject )

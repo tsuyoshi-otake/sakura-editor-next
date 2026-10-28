@@ -3,7 +3,7 @@
   "waivers": [
     {
       "owner": "tsuyoshi-otake",
-      "reason": "Reviewed security fixes #387 and #388 touch existing platform/configuration debt; two existing clipboard setting lookups were reclassified only because their enclosing lines changed to RAII. Preserve every raw finding and reject any later file change until the debt or matching is addressed in #389.",
+      "reason": "Reviewed security fixes #387, #388, and #391 touch existing platform/configuration and editor-view debt; some existing lookups and Win32 handles are reclassified when their enclosing lines change, and native lifetime tests exercise Win32 handles. Preserve the exact raw findings and reject later file changes until the debt or matching is addressed in #389.",
       "tracking_issue": 389,
       "created": "2026-10-28",
       "expires": "2027-01-25",
@@ -13,10 +13,76 @@
         "sakura_core/_os/CDropTarget.h": "sha256:86c92d96a17f6ad74a37ba6116bd86c61f3d5e144c268c4b169b90e70f5b4ca3",
         "sakura_core/io/CFileLoad.cpp": "sha256:8c2fe3e79b098991251f50497136f02c538673120deeb2aec3237ee104d7ade6",
         "sakura_core/util/os.cpp": "sha256:e8353e9d26533ce18196b4b36936f42292171f0b6e3c87cda67f523cf0ea8216",
-        "sakura_core/view/CEditView_Mouse.cpp": "sha256:8e9e386eb6ccd045d017b574a0d61bd963cdfec1127562a5cc495c31855d3eeb",
-        "src/test/cpp/tests1/markdown/MarkdownRemoteImageFetcherTest.cpp": "sha256:9e191195166e59bbfbd0475558f941f87cb8cf9a2c9397bd49e05e2c58545214"
+        "sakura_core/view/CEditView.cpp": "sha256:0fae4ce11378fb1b78636e9ae21d4dd1ca22e5428cb6f44d65723518d7ffeedc",
+        "sakura_core/view/CEditView.h": "sha256:1d77bbca4f6c8c609826dcb9672bed0116684a48953ea7dcf9c9d588cff04374",
+        "sakura_core/view/CEditView_Mouse.cpp": "sha256:a1543c6601488aa640da0b75895d010d29e0a18420c3f2ede12a29fd4e69b3ba",
+        "src/test/cpp/tests1/markdown/MarkdownRemoteImageFetcherTest.cpp": "sha256:9e191195166e59bbfbd0475558f941f87cb8cf9a2c9397bd49e05e2c58545214",
+        "src/test/cpp/tests1/test-cclipboard.cpp": "sha256:3277a7c834907c9af3f8c52fb64c57645d6d17f80a04d4b49ce1bc04fac20774"
       },
       "new_findings": [
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "sakura_core/view/CEditView.h",
+          "line": 826,
+          "column": 2,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "sakura_core/view/CEditView_Mouse.cpp",
+          "line": 2182,
+          "column": 53,
+          "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "sakura_core/view/CEditView_Mouse.cpp",
+          "line": 2241,
+          "column": 42,
+          "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/test-cclipboard.cpp",
+          "line": 167,
+          "column": 41,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/test-cclipboard.cpp",
+          "line": 167,
+          "column": 66,
+          "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/test-cclipboard.cpp",
+          "line": 167,
+          "column": 81,
+          "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/test-cclipboard.cpp",
+          "line": 186,
+          "column": 2,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/test-cclipboard.cpp",
+          "line": 240,
+          "column": 50,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/test-cclipboard.cpp",
+          "line": 248,
+          "column": 64,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
         {
           "rule_id": "global.get_dll_share_data",
           "path": "sakura_core/_os/CClipboard.cpp",
@@ -30,6 +96,34 @@
           "line": 678,
           "column": 75,
           "evidence_sha256": "sha256:6461ff05d5ea836fc75037f596252139e5e2d5a22ee4bdc3165f4d042852ba6e"
+        },
+        {
+          "rule_id": "global.get_edit_wnd",
+          "path": "sakura_core/view/CEditView_Mouse.cpp",
+          "line": 2239,
+          "column": 25,
+          "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/test-cclipboard.cpp",
+          "line": 163,
+          "column": 10,
+          "evidence_sha256": "sha256:26393b632c8eed855feb8c82d40976d90c4a4c5983b3555739af8853ae40d18c"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/test-cclipboard.cpp",
+          "line": 164,
+          "column": 10,
+          "evidence_sha256": "sha256:aa6bf516b29395cc8d8f3d9a42edcecddc462965c827ff903ec8e5ea69103d3e"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/test-cclipboard.cpp",
+          "line": 186,
+          "column": 7,
+          "evidence_sha256": "sha256:cfd815c0662efc1ff86cf9b3ba4339dde75ef73aa76e30c46bc8effe2c38fde4"
         }
       ],
       "missing_touched_reductions": [
@@ -46,8 +140,8 @@
           "baseline_finding_count": 4
         },
         {
-          "path": "sakura_core/view/CEditView_Mouse.cpp",
-          "baseline_finding_count": 92
+          "path": "sakura_core/view/CEditView.cpp",
+          "baseline_finding_count": 87
         },
         {
           "path": "src/test/cpp/tests1/markdown/MarkdownRemoteImageFetcherTest.cpp",
