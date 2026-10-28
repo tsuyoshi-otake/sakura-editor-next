@@ -219,17 +219,25 @@ HGLOBAL GetGlobalData( LPDATAOBJECT pDataObject, CLIPFORMAT cfFormat )
 		if( stgMedium.pUnkForRelease == nullptr ){
 			if( stgMedium.tymed == TYMED_HGLOBAL )
 				hDest = stgMedium.hGlobal;
+			else
+				::ReleaseStgMedium( &stgMedium );
 		}else{
 			if( stgMedium.tymed == TYMED_HGLOBAL ){
 				const auto nSize = ::GlobalSize( stgMedium.hGlobal );
-				hDest = ::GlobalAlloc( GMEM_SHARE|GMEM_MOVEABLE, nSize );
+				if( nSize != 0 ) hDest = ::GlobalAlloc( GMEM_SHARE|GMEM_MOVEABLE, nSize );
 				if( hDest != nullptr ){
 					// copy the bits
 					LPVOID lpSource = ::GlobalLock( stgMedium.hGlobal );
 					LPVOID lpDest = ::GlobalLock( hDest );
-					memcpy_raw( lpDest, lpSource, nSize );
-					::GlobalUnlock( hDest );
-					::GlobalUnlock( stgMedium.hGlobal );
+					if( lpSource != nullptr && lpDest != nullptr ){
+						memcpy_raw( lpDest, lpSource, nSize );
+					}
+					if( lpDest != nullptr ) ::GlobalUnlock( hDest );
+					if( lpSource != nullptr ) ::GlobalUnlock( stgMedium.hGlobal );
+					if( lpSource == nullptr || lpDest == nullptr ){
+						::GlobalFree( hDest );
+						hDest = nullptr;
+					}
 				}
 			}
 			::ReleaseStgMedium( &stgMedium );

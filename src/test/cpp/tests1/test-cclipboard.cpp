@@ -8,10 +8,13 @@
 #include <array>
 #include <cstring>
 #include <functional>
+#include <future>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 #include <Windows.h>
 #include <CommCtrl.h>
@@ -21,6 +24,9 @@
 #include "mem/CNativeW.h"
 #include "_os/CClipboard.h"
 #include "_os/CDropTarget.h"
+#include "config/system_constants.h"
+#include "view/CEditView.h"
+#include "window/EditorTestSuite.hpp"
 
 #include "cxx/com_pointer.hpp"
 
@@ -85,6 +91,194 @@ struct MockCClipboard : public CClipboard {
 	}
 };
 
+namespace {
+
+class MediumReleaseCounter final : public IUnknown {
+private:
+	ULONG references = 1;
+	unsigned releaseCalls = 0;
+public:
+	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, void** result) override {
+		if (result) *result = nullptr;
+		return E_NOINTERFACE;
+	}
+	ULONG STDMETHODCALLTYPE AddRef() override { return ++references; }
+	ULONG STDMETHODCALLTYPE Release() override { ++releaseCalls; return --references; }
+	ULONG References() const { return references; }
+	unsigned ReleaseCalls() const { return releaseCalls; }
+};
+
+class SharedMediumDataObject final : public CDataObject {
+public:
+	SharedMediumDataObject(HGLOBAL memory, MediumReleaseCounter& owner)
+		: CDataObject(nullptr, 0, FALSE), memory(memory), owner(owner) {}
+	HRESULT STDMETHODCALLTYPE GetData(LPFORMATETC, LPSTGMEDIUM medium) override {
+		medium->tymed = TYMED_HGLOBAL;
+		medium->hGlobal = memory;
+		medium->pUnkForRelease = &owner;
+		owner.AddRef();
+		return S_OK;
+	}
+private:
+	HGLOBAL memory;
+	MediumReleaseCounter& owner;
+};
+
+class OwnedMediumDataObject final : public CDataObject {
+public:
+	OwnedMediumDataObject(CLIPFORMAT format, HGLOBAL data)
+		: CDataObject(nullptr, 0, FALSE), format(format), memory(data) {}
+	HRESULT STDMETHODCALLTYPE QueryGetData(LPFORMATETC requested) override {
+		return requested != nullptr && requested->cfFormat == format ? S_OK : DV_E_FORMATETC;
+	}
+	HRESULT STDMETHODCALLTYPE GetData(LPFORMATETC requested, LPSTGMEDIUM medium) override {
+		if (QueryGetData(requested) != S_OK || medium == nullptr || !memory.Get()) return E_INVALIDARG;
+		medium->tymed = TYMED_HGLOBAL;
+		medium->hGlobal = memory.release();
+		medium->pUnkForRelease = nullptr;
+		return S_OK;
+	}
+private:
+	CLIPFORMAT format;
+	cxx::GlobalMemory memory;
+};
+
+class StreamMediumDataObject final : public CDataObject {
+public:
+	explicit StreamMediumDataObject(IStream* stream)
+		: CDataObject(nullptr, 0, FALSE), stream(stream) {}
+	HRESULT STDMETHODCALLTYPE GetData(LPFORMATETC, LPSTGMEDIUM medium) override {
+		stream->AddRef();
+		medium->tymed = TYMED_ISTREAM;
+		medium->pstm = stream;
+		medium->pUnkForRelease = nullptr;
+		return S_OK;
+	}
+private:
+	IStream* stream;
+};
+
+struct ClipboardDropView : ::testing::Test, window::EditorTestSuite, window::UiaTestSuite {
+	static void SetUpTestSuite() { SetUpUia(); SetUpEditor(); }
+	static void TearDownTestSuite() { TearDownEditor(); TearDownUia(); }
+};
+
+} // namespace
+
+TEST_F(ClipboardDropView, TruncatedSakuraDropDoesNotModifyTheDocument)
+{
+	cxx::GlobalMemory memory(::GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(size_t)));
+	ASSERT_NE(memory.Get(), nullptr);
+	auto* header = static_cast<size_t*>(::GlobalLock(memory.Get()));
+	ASSERT_NE(header, nullptr);
+	*header = 1000;
+	::GlobalUnlock(memory.Get());
+	OwnedMediumDataObject data(CClipboard::GetSakuraFormat(), memory.release());
+	const auto before = pcEditDoc->m_cDocEditor.m_cOpeBuf.GetCurrentPointer();
+	DWORD effect = DROPEFFECT_COPY;
+	EXPECT_EQ(E_INVALIDARG, pcEditWnd->GetActiveView().Drop(&data, 0, POINTL{}, &effect));
+	EXPECT_EQ(DROPEFFECT_NONE, effect);
+	EXPECT_EQ(before, pcEditDoc->m_cDocEditor.m_cOpeBuf.GetCurrentPointer());
+}
+
+TEST_F(ClipboardDropView, EmptyFileDropIsRejectedAndItsMemoryReleased)
+{
+	const auto memory = ::GlobalAlloc(GMEM_MOVEABLE, 0);
+	ASSERT_NE(memory, nullptr);
+	OwnedMediumDataObject data(CF_HDROP, memory);
+	DWORD effect = DROPEFFECT_LINK;
+	EXPECT_EQ(E_INVALIDARG, pcEditWnd->GetActiveView().Drop(&data, 0, POINTL{}, &effect));
+	EXPECT_EQ(DROPEFFECT_NONE, effect);
+	EXPECT_EQ(GMEM_INVALID_HANDLE, ::GlobalFlags(memory));
+}
+
+TEST_F(ClipboardDropView, ValidFileDropPostsAnIndependentOwnedCopy)
+{
+	const std::array files = { std::filesystem::path(L"C:\\example.txt") };
+	auto original = cxx::MakeDropFiles(files);
+	ASSERT_NE(original.Get(), nullptr);
+	const auto source = original.Get();
+	OwnedMediumDataObject data(CF_HDROP, original.release());
+	ASSERT_EQ(S_OK, pcEditWnd->GetActiveView().PostMyDropFiles(&data));
+	EXPECT_EQ(GMEM_INVALID_HANDLE, ::GlobalFlags(source));
+	MSG message{};
+	ASSERT_TRUE(::PeekMessageW(&message, nullptr, MYWM_DROPFILES, MYWM_DROPFILES, PM_REMOVE));
+	cxx::GlobalMemory posted(reinterpret_cast<HGLOBAL>(message.wParam));
+	ASSERT_NE(posted.Get(), nullptr);
+	WCHAR path[MAX_PATH]{};
+	EXPECT_EQ(1u, ::DragQueryFileW(static_cast<HDROP>(posted.Get()), 0xFFFFFFFF, nullptr, 0));
+	EXPECT_GT(::DragQueryFileW(static_cast<HDROP>(posted.Get()), 0, path, MAX_PATH), 0u);
+	EXPECT_STREQ(L"C:\\example.txt", path);
+}
+
+TEST(CClipboard, SharedDropMediumIsCopiedAndReleasedOnSuccessAndFailure)
+{
+	const wchar_t data[] = {L'A', L'\0', L'B'};
+	cxx::GlobalSakura source(std::wstring_view(data, std::size(data)));
+	MediumReleaseCounter owner;
+	SharedMediumDataObject object(source.Get(), owner);
+	cxx::GlobalMemory copy(GetGlobalData(&object, CClipboard::GetSakuraFormat()));
+	ASSERT_NE(nullptr, copy.Get());
+	EXPECT_TRUE(copy.Lock([&](const BYTE* bytes, size_t size) {
+		std::wstring_view decoded;
+		return CClipboard::DecodeSakuraFormat(bytes, size, decoded)
+			&& decoded == std::wstring_view(data, std::size(data));
+	}));
+	EXPECT_EQ(1U, owner.ReleaseCalls());
+	EXPECT_EQ(1UL, owner.References());
+
+	SharedMediumDataObject invalid(nullptr, owner);
+	EXPECT_EQ(nullptr, GetGlobalData(&invalid, CClipboard::GetSakuraFormat()));
+	EXPECT_EQ(2U, owner.ReleaseCalls());
+	EXPECT_EQ(1UL, owner.References());
+}
+
+TEST(CClipboard, UnexpectedStorageMediumIsReleased)
+{
+	IStream* stream = nullptr;
+	ASSERT_EQ(S_OK, ::CreateStreamOnHGlobal(nullptr, TRUE, &stream));
+	ASSERT_NE(stream, nullptr);
+	StreamMediumDataObject object(stream);
+	EXPECT_EQ(nullptr, GetGlobalData(&object, CClipboard::GetSakuraFormat()));
+	const ULONG remaining = stream->Release();
+	EXPECT_EQ(0UL, remaining);
+	if (remaining != 0) stream->Release();
+}
+
+TEST(CEnumFORMATETC, ConcurrentReleaseReturnsEachRemainingReferenceCount)
+{
+	constexpr size_t count = 16;
+	std::promise<void> start;
+	const auto ready = start.get_future().share();
+	std::array<ULONG, count> remaining{};
+	std::array<std::future<ULONG>, count> workers;
+	auto targetOwner = std::make_unique<CEnumFORMATETC>(nullptr);
+	auto* target = targetOwner.get();
+	for (size_t i = 1; i < count; ++i) target->AddRef();
+	size_t launched = 0;
+	try {
+		for (; launched < count; ++launched) {
+			workers[launched] = std::async(std::launch::async, [target, ready] {
+				ready.wait();
+				return target->Release();
+			});
+		}
+	} catch (const std::exception&) {
+		// A failed launch owns no reference. Release those references before
+		// unblocking the already launched workers, then wait for their exit.
+		(void)targetOwner.release();
+		for (size_t i = launched; i < count; ++i) target->Release();
+		start.set_value();
+		for (size_t i = 0; i < launched; ++i) workers[i].wait();
+		throw;
+	}
+	(void)targetOwner.release();
+	start.set_value();
+	for (size_t i = 0; i < count; ++i) remaining[i] = workers[i].get();
+	std::ranges::sort(remaining);
+	for (size_t i = 0; i < count; ++i) EXPECT_EQ(i, remaining[i]);
+}
+
 // Open/Close のテスト。
 // OpenClipboard が呼ばれることを確認する。
 // CloseClipboard が呼ばれることを確認する。
@@ -108,6 +302,67 @@ TEST(CClipboard, OpenAndClose) {
 	clipboard.Close();
 
 	EXPECT_THAT(clipboard, IsFalse());
+}
+
+TEST(CClipboard, NullOwnerIsClosedExactlyOnceAfterSuccessfulOpen)
+{
+	MockCClipboard clipboard(false);
+	EXPECT_CALL(clipboard, OpenClipboard(nullptr)).Times(1).WillOnce(Return(TRUE));
+	EXPECT_CALL(clipboard, CloseClipboard()).Times(1).WillOnce(Return(TRUE));
+	ASSERT_TRUE(clipboard.Open(nullptr));
+	clipboard.Close();
+	clipboard.Close();
+	EXPECT_THAT(clipboard, IsFalse());
+}
+
+TEST(CClipboard, OpenCloseSequencesMatchTheOwnershipModel)
+{
+	// Exhaust all six-step sequences over open with/without a window and close.
+	constexpr size_t sequenceLength = 6;
+	constexpr size_t sequenceCount = 729; // 3^6
+	const auto windowOwner = ::GetDesktopWindow();
+	ASSERT_NE(windowOwner, nullptr);
+	for (size_t sequence = 0; sequence < sequenceCount; ++sequence) {
+		SCOPED_TRACE(sequence);
+		std::array<int, sequenceLength> actions{};
+		std::vector<bool> expectedNullOwners;
+		bool expectedOpen = false;
+		int expectedCloses = 0;
+		auto digits = sequence;
+		for (auto& action : actions) {
+			action = static_cast<int>(digits % 3);
+			digits /= 3;
+			if (action == 2) {
+				if (expectedOpen) ++expectedCloses;
+				expectedOpen = false;
+			} else if (!expectedOpen) {
+				expectedNullOwners.push_back(action == 0);
+				expectedOpen = true;
+			}
+		}
+		if (expectedOpen) ++expectedCloses;
+
+		MockCClipboard clipboard(false);
+		std::vector<bool> actualNullOwners;
+		EXPECT_CALL(clipboard, OpenClipboard(_))
+			.Times(static_cast<int>(expectedNullOwners.size()))
+			.WillRepeatedly(Invoke([&](auto owner) { actualNullOwners.push_back(owner == nullptr); return TRUE; }));
+		EXPECT_CALL(clipboard, CloseClipboard()).Times(expectedCloses).WillRepeatedly(Return(TRUE));
+		bool modelOpen = false;
+		for (const int action : actions) {
+			if (action == 2) {
+				clipboard.Close();
+				modelOpen = false;
+			} else {
+				EXPECT_TRUE(clipboard.Open(action == 0 ? nullptr : windowOwner));
+				modelOpen = true;
+			}
+			EXPECT_EQ(modelOpen, static_cast<bool>(clipboard));
+		}
+		clipboard.Close();
+		EXPECT_THAT(clipboard, IsFalse());
+		EXPECT_EQ(expectedNullOwners, actualNullOwners);
+	}
 }
 
 // Open/Close のテスト。
@@ -253,6 +508,95 @@ protected:
 
 	CClipboardGetText() = default;
 };
+
+TEST(CClipboard, SakuraFormatChecksHeaderAndPayloadBounds)
+{
+	alignas(wchar_t) std::array<unsigned char, 40> bytes{};
+	const wchar_t payload[] = {L'A', L'\0', L'B', L'C'};
+	std::memcpy(bytes.data() + sizeof(size_t), payload, sizeof(payload));
+	for (size_t size = 0; size <= bytes.size(); ++size) {
+		for (size_t length = 0; length <= 20; ++length) {
+			SCOPED_TRACE(size);
+			SCOPED_TRACE(length);
+			std::memcpy(bytes.data(), &length, sizeof(length));
+			std::wstring_view decoded = L"stale";
+			const bool expected = size >= sizeof(size_t) &&
+				length <= (size - sizeof(size_t)) / sizeof(wchar_t);
+			EXPECT_EQ(expected, CClipboard::DecodeSakuraFormat(bytes.data(), size, decoded));
+			if (expected) {
+				EXPECT_EQ(length, decoded.size());
+				if (length >= 3) {
+					EXPECT_EQ(L'A', decoded[0]);
+					EXPECT_EQ(L'\0', decoded[1]);
+					EXPECT_EQ(L'B', decoded[2]);
+				}
+			} else {
+				EXPECT_TRUE(decoded.empty());
+			}
+		}
+	}
+	const size_t maximum = (std::numeric_limits<size_t>::max)();
+	std::memcpy(bytes.data(), &maximum, sizeof(maximum));
+	std::wstring_view decoded;
+	EXPECT_FALSE(CClipboard::DecodeSakuraFormat(bytes.data(), bytes.size(), decoded));
+	EXPECT_FALSE(CClipboard::DecodeSakuraFormat(nullptr, bytes.size(), decoded));
+	const size_t tooLargeForNativeBuffer =
+		(static_cast<size_t>((std::numeric_limits<int>::max)()) - sizeof(wchar_t) - 7) / sizeof(wchar_t) + 1;
+	std::memcpy(bytes.data(), &tooLargeForNativeBuffer, sizeof(tooLargeForNativeBuffer));
+	EXPECT_FALSE(CClipboard::DecodeSakuraFormat(bytes.data(), maximum, decoded));
+}
+
+TEST(CClipboard, SakuraFormatShortHeadersDoNotCrossGuardPage)
+{
+	SYSTEM_INFO info{};
+	::GetSystemInfo(&info);
+	const size_t pageSize = info.dwPageSize;
+	ASSERT_GT(pageSize, sizeof(size_t));
+	void* allocation = ::VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	ASSERT_NE(nullptr, allocation);
+	struct AllocationGuard {
+		void* address;
+		~AllocationGuard() { ::VirtualFree(address, 0, MEM_RELEASE); }
+	} guard{allocation};
+	DWORD previous = 0;
+	ASSERT_NE(FALSE, ::VirtualProtect(static_cast<char*>(allocation) + pageSize, pageSize, PAGE_NOACCESS, &previous));
+	for (size_t size = 0; size < sizeof(size_t); ++size) {
+		SCOPED_TRACE(size);
+		const char* data = static_cast<char*>(allocation) + pageSize - size;
+		std::wstring_view decoded;
+		EXPECT_FALSE(CClipboard::DecodeSakuraFormat(data, size, decoded));
+	}
+}
+
+TEST_F(CClipboardGetText, MalformedSakuraFormatFallsBackOnlyInAutomaticMode)
+{
+	cxx::GlobalMemory malformed(sizeof(size_t) + sizeof(wchar_t));
+	ASSERT_NE(nullptr, malformed.Get());
+	ASSERT_TRUE(malformed.Lock([](unsigned char* bytes, size_t size) {
+		const size_t length = (std::numeric_limits<size_t>::max)();
+		if (size < sizeof(length)) return false;
+		std::memcpy(bytes, &length, sizeof(length));
+		return true;
+	}));
+	ON_CALL(clipboard, IsClipboardFormatAvailable(sakuraFormat)).WillByDefault(Return(TRUE));
+	ON_CALL(clipboard, GetClipboardData(sakuraFormat)).WillByDefault(Return(malformed.Get()));
+	ON_CALL(clipboard, GetClipboardData(CF_UNICODETEXT)).WillByDefault(Return(unicodeMemory.Get()));
+	EXPECT_FALSE(clipboard.GetText(&buffer, nullptr, nullptr, eol, sakuraFormat));
+	EXPECT_EQ(0, buffer.GetStringLength());
+	EXPECT_TRUE(clipboard.GetText(&buffer, nullptr, nullptr, eol, -1));
+	EXPECT_STREQ(buffer.GetStringPtr(), unicodeText.data());
+}
+
+TEST_F(CClipboardGetText, SakuraFormatPreservesEmbeddedNull)
+{
+	const wchar_t data[] = {L'A', L'\0', L'B'};
+	cxx::GlobalSakura memory(std::wstring_view(data, std::size(data)));
+	ON_CALL(clipboard, IsClipboardFormatAvailable(sakuraFormat)).WillByDefault(Return(TRUE));
+	ON_CALL(clipboard, GetClipboardData(sakuraFormat)).WillByDefault(Return(memory.Get()));
+	EXPECT_TRUE(clipboard.GetText(&buffer, nullptr, nullptr, eol, sakuraFormat));
+	EXPECT_EQ(std::wstring_view(data, std::size(data)),
+		std::wstring_view(buffer.GetStringPtr(), buffer.GetStringLength()));
+}
 
 // CClipboard::GetText のテスト群。
 //
@@ -465,7 +809,7 @@ TEST(CClipboard, GetTextNoClipboard) {
 }
 
 struct ClipboardFormatDefinition {
-	CLIPFORMAT id;
+	const CLIPFORMAT id;
 	const wchar_t* const name;
 };
 
@@ -994,7 +1338,8 @@ TEST(CopiedTextData, GetDataHere101)
  */
 TEST(CEnumFORMATETC, test001)
 {
-	auto* target = new CEnumFORMATETC(nullptr);
+	auto targetOwner = std::make_unique<CEnumFORMATETC>(nullptr);
+	auto* target = targetOwner.get();
 
 	//AddRefする。内部カウンタが増えて2になる
 	EXPECT_THAT(target->AddRef(), 2UL);
@@ -1009,6 +1354,7 @@ TEST(CEnumFORMATETC, test001)
 	EXPECT_THAT(target->Release(), 1UL);
 
 	//生ポインタなのでReleaseして解放する
+	targetOwner.release(); // The final COM Release performs delete this.
 	EXPECT_THAT(target->Release(), 0UL);
 }
 

@@ -38,7 +38,15 @@ must remain explicit and testable.
   Script, DTD/entity expansion, `foreignObject`, nested images/data payloads,
   and external `href`/CSS URL resources are rejected before parsing; input
   bytes, element count, dimensions, and decoded pixels are bounded. The SVG
-  path never creates a browser or a nested request.
+  path never creates a browser or a nested request. Text overlays clear and
+  inspect only the clipped glyph rectangle, charge both mask clearing and
+  compositing against a 16,777,216-pixel aggregate budget, and check worker
+  cancellation during extraction and scanning. More than 256 text runs, a
+  run over 4,096 UTF-8 input bytes, or more than 4,096 decoded UTF-16 code
+  units in total also reject the image instead of drawing a prefix.
+  The overlay is staged as one transaction;
+  cancellation, budget exhaustion, or failure rejects the whole raster rather
+  than caching partially overlaid pixels.
 - Local resources must remain inside explicitly approved roots after final-path/
   reparse validation before they can be opened.
 - Keep work bounded for large documents. Live updates coalesce to the newest

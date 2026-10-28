@@ -45,6 +45,7 @@ constexpr std::uint64_t kMaximumEncodedImageBytes = 32ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kMaximumSourceImagePixels = 32ULL * 1024ULL * 1024ULL;
 constexpr std::size_t kMaximumDecodedImagePixels = 16ULL * 1024ULL * 1024ULL;
 constexpr UINT kMaximumDecodedImageEdge = 1600;
+constexpr std::size_t kMaximumSvgTextOverlayWorkPixels = 16ULL * 1024ULL * 1024ULL;
 constexpr UINT kCommitPreviewWorkMessage = WM_APP + 1;
 constexpr UINT kContinueLayoutBuildMessage = WM_APP + 2;
 constexpr std::size_t kMaximumLayoutBlocksPerSlice = 2;
@@ -394,14 +395,14 @@ struct SvgTextContext {
 	bool hidden = false;
 };
 
-struct SvgTextRun {
-	std::wstring text;
-	double x = 0.0;
-	double baseline = 0.0;
-	double fontSize = 0.0;
-	COLORREF fill = RGB(0, 0, 0);
-	bool anchorMiddle = false;
-	bool anchorEnd = false;
+struct SvgTextRun final {
+	const std::wstring text;
+	const double x = 0.0;
+	const double baseline = 0.0;
+	const double fontSize = 0.0;
+	const COLORREF fill = RGB(0, 0, 0);
+	const bool anchorMiddle = false;
+	const bool anchorEnd = false;
 };
 
 [[nodiscard]] char FoldAscii(char value) noexcept
@@ -553,8 +554,9 @@ void ApplySvgTextAttributes(SvgTextContext& context, std::string_view tag) noexc
 	return decoded;
 }
 
-[[nodiscard]] std::vector<SvgTextRun> ExtractSvgTextRuns(
-	std::string_view xml, double outputScaleX, double outputScaleY)
+[[nodiscard]] std::optional<std::vector<SvgTextRun>> ExtractSvgTextRuns(
+	std::string_view xml, double outputScaleX, double outputScaleY,
+	const std::function<bool()>& isCancelled)
 {
 	struct Frame { std::string name; SvgTextContext context; };
 	std::vector<Frame> stack;
@@ -562,7 +564,8 @@ void ApplySvgTextAttributes(SvgTextContext& context, std::string_view tag) noexc
 	std::vector<SvgTextRun> runs;
 	std::size_t totalCharacters = 0;
 	std::size_t cursor = 0;
-	while (cursor < xml.size() && runs.size() < 256 && totalCharacters < 4096) {
+	while (cursor < xml.size()) {
+		if (isCancelled && isCancelled()) return std::nullopt;
 		const auto open = xml.find('<', cursor);
 		if (open == std::string_view::npos) break;
 		const auto close = xml.find('>', open + 1);
@@ -593,13 +596,16 @@ void ApplySvgTextAttributes(SvgTextContext& context, std::string_view tag) noexc
 			const auto first = raw.find_first_not_of(" \t\r\n");
 			const auto last = raw.find_last_not_of(" \t\r\n");
 			if (first != std::string_view::npos && last != std::string_view::npos) {
-				auto text = DecodeSvgText(raw.substr(first, last - first + 1));
-				if (!text.empty() && text.size() <= 4096 - totalCharacters) {
-					runs.push_back({ std::move(text),
+				const auto trimmed = raw.substr(first, last - first + 1);
+				if (trimmed.size() > 4096) return std::nullopt;
+				auto text = DecodeSvgText(trimmed);
+				if (!text.empty()) {
+					if (runs.size() >= 256 || text.size() > 4096 - totalCharacters) return std::nullopt;
+					runs.push_back({std::move(text),
 						(context.translateX + context.scaleX * context.x) * outputScaleX,
 						(context.translateY + context.scaleY * context.y) * outputScaleY,
 						context.fontSize * std::abs(context.scaleY) * outputScaleY,
-						context.fill, context.anchorMiddle, context.anchorEnd });
+						context.fill, context.anchorMiddle, context.anchorEnd});
 					totalCharacters += runs.back().text.size();
 				}
 			}
@@ -609,13 +615,34 @@ void ApplySvgTextAttributes(SvgTextContext& context, std::string_view tag) noexc
 	return runs;
 }
 
-void OverlaySvgText(BYTE* destination, int width, int height, std::size_t destinationStride,
-	std::string_view xml, double sourceWidth, double sourceHeight) noexcept
+} // namespace
+
+detail::SvgTextOverlayResult detail::OverlaySvgText(
+	BYTE* destination, int width, int height, std::size_t destinationStride,
+	std::string_view xml, double sourceWidth, double sourceHeight,
+	std::size_t workPixelBudget, const std::function<bool()>& isCancelled) noexcept
 {
-	if (destination == nullptr || width <= 0 || height <= 0 || sourceWidth <= 0.0 || sourceHeight <= 0.0) return;
+	if (destination == nullptr || width <= 0 || height <= 0
+		|| width > static_cast<int>(kMaximumDecodedImageEdge)
+		|| height > static_cast<int>(kMaximumDecodedImageEdge)
+		|| destinationStride < static_cast<std::size_t>(width) * 4
+		|| destinationStride > static_cast<std::size_t>(kMaximumDecodedImageEdge) * 4
+		|| !std::isfinite(sourceWidth) || !std::isfinite(sourceHeight)
+		|| sourceWidth <= 0.0 || sourceHeight <= 0.0) return detail::SvgTextOverlayResult::Failed;
+	bool cancellationObserved = false;
+	const auto cancelled = [&]() {
+		if (!cancellationObserved && isCancelled) cancellationObserved = isCancelled();
+		return cancellationObserved;
+	};
 	try {
-		const auto runs = ExtractSvgTextRuns(xml, width / sourceWidth, height / sourceHeight);
-		if (runs.empty()) return;
+		if (cancelled()) return detail::SvgTextOverlayResult::Cancelled;
+		const auto runs = ExtractSvgTextRuns(xml, width / sourceWidth, height / sourceHeight, cancelled);
+		if (cancelled()) return detail::SvgTextOverlayResult::Cancelled;
+		if (!runs) return detail::SvgTextOverlayResult::WorkBudgetExceeded;
+		if (runs->empty()) return detail::SvgTextOverlayResult::Completed;
+		// Stage the whole overlay. A cancellation or exhausted budget must not
+		// expose only a prefix of the SVG's text runs to the image cache.
+		std::vector<BYTE> staged(destination, destination + destinationStride * static_cast<std::size_t>(height));
 		BITMAPINFO info{};
 		info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
 		info.bmiHeader.biWidth = width;
@@ -629,39 +656,131 @@ void OverlaySvgText(BYTE* destination, int width, int height, std::size_t destin
 		if (maskBitmap == nullptr || maskBits == nullptr || maskDc == nullptr) {
 			if (maskDc != nullptr) ::DeleteDC(maskDc);
 			if (maskBitmap != nullptr) ::DeleteObject(maskBitmap);
-			return;
+			return detail::SvgTextOverlayResult::Failed;
 		}
 		const auto oldBitmap = ::SelectObject(maskDc, maskBitmap);
+		if (oldBitmap == nullptr || oldBitmap == HGDI_ERROR) {
+			::DeleteDC(maskDc);
+			::DeleteObject(maskBitmap);
+			return detail::SvgTextOverlayResult::Failed;
+		}
+		class MaskResources final {
+			HDC m_dc;
+			HBITMAP m_bitmap;
+			HGDIOBJ m_previousBitmap;
+		public:
+			MaskResources(HDC dcValue, HBITMAP bitmapValue, HGDIOBJ previousValue) noexcept
+				: m_dc(dcValue), m_bitmap(bitmapValue), m_previousBitmap(previousValue) {}
+			MaskResources(const MaskResources&) = delete;
+			MaskResources& operator=(const MaskResources&) = delete;
+			~MaskResources() noexcept
+			{
+				if (m_dc != nullptr) {
+					if (m_previousBitmap != nullptr) ::SelectObject(m_dc, m_previousBitmap);
+					::DeleteDC(m_dc);
+				}
+				if (m_bitmap != nullptr) ::DeleteObject(m_bitmap);
+			}
+		};
+		[[maybe_unused]] const MaskResources resources{ maskDc, maskBitmap, oldBitmap };
+		class SelectedFont final {
+			HDC m_dc;
+			HFONT m_font;
+			HGDIOBJ m_previous;
+		public:
+			SelectedFont(HDC dc, HFONT font, HGDIOBJ previous) noexcept
+				: m_dc(dc), m_font(font), m_previous(previous) {}
+			SelectedFont(const SelectedFont&) = delete;
+			SelectedFont& operator=(const SelectedFont&) = delete;
+			~SelectedFont() noexcept {
+				::SelectObject(m_dc, m_previous);
+				::DeleteObject(m_font);
+			}
+		};
 		::SetBkMode(maskDc, TRANSPARENT);
 		::SetTextColor(maskDc, RGB(255, 255, 255));
 		const auto maskStride = static_cast<std::size_t>(width) * 4;
-		for (const auto& run : runs) {
-			const auto fontPixels = (std::max)(1, static_cast<int>(std::lround(run.fontSize)));
+		std::size_t workPixels = 0;
+		for (const auto& run : *runs) {
+			if (cancelled()) return detail::SvgTextOverlayResult::Cancelled;
+			constexpr double kMaximumSafeCoordinate = static_cast<double>((std::numeric_limits<int>::max)() / 2);
+			const auto& text = run.text;
+			if (!std::isfinite(run.x) || !std::isfinite(run.baseline) || !std::isfinite(run.fontSize)
+				|| std::abs(run.x) > kMaximumSafeCoordinate || std::abs(run.baseline) > kMaximumSafeCoordinate
+				|| run.fontSize > static_cast<double>(kMaximumDecodedImageEdge)) {
+				return detail::SvgTextOverlayResult::Failed;
+			}
+			const auto fontPixels = static_cast<int>(std::lround((std::clamp)(
+				run.fontSize, 1.0, static_cast<double>(kMaximumDecodedImageEdge))));
 			const auto font = ::CreateFontW(-fontPixels, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
 				DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
 				DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-			if (font == nullptr) continue;
-			std::memset(maskBits, 0, maskStride * static_cast<std::size_t>(height));
+			if (font == nullptr) {
+				return detail::SvgTextOverlayResult::Failed;
+			}
 			const auto oldFont = ::SelectObject(maskDc, font);
+			if (oldFont == nullptr || oldFont == HGDI_ERROR) {
+				::DeleteObject(font);
+				return detail::SvgTextOverlayResult::Failed;
+			}
+			[[maybe_unused]] const SelectedFont selectedFont(maskDc, font, oldFont);
 			SIZE extent{};
 			TEXTMETRIC metrics{};
-			(void)::GetTextExtentPoint32W(maskDc, run.text.data(), static_cast<int>(run.text.size()), &extent);
-			(void)::GetTextMetricsW(maskDc, &metrics);
-			int left = static_cast<int>(std::lround(run.x));
+			const bool measured = ::GetTextExtentPoint32W(maskDc, text.data(), static_cast<int>(text.size()), &extent)
+				&& ::GetTextMetricsW(maskDc, &metrics);
+			if (!measured) {
+				return detail::SvgTextOverlayResult::Failed;
+			}
+			std::int64_t left = std::llround(run.x);
 			if (run.anchorMiddle) left -= extent.cx / 2;
 			else if (run.anchorEnd) left -= extent.cx;
-			const int top = static_cast<int>(std::lround(run.baseline)) - metrics.tmAscent;
-			(void)::TextOutW(maskDc, left, top, run.text.data(), static_cast<int>(run.text.size()));
-			::SelectObject(maskDc, oldFont);
-			::DeleteObject(font);
+			const std::int64_t top = std::llround(run.baseline) - metrics.tmAscent;
+			// Advance width does not include every glyph's overhang. Include a
+			// font-sized margin so ordinary negative bearings are not clipped.
+			const std::int64_t margin = (std::max)(fontPixels, static_cast<int>(metrics.tmMaxCharWidth));
+			const auto clip = [](std::int64_t value, int limit) {
+				return static_cast<int>((std::clamp)(value, std::int64_t{0}, static_cast<std::int64_t>(limit)));
+			};
+			const auto clippedLeft = clip(left - margin, width);
+			const auto clippedTop = clip(top - margin, height);
+			const auto clippedRight = clip(left + extent.cx + margin, width);
+			const auto clippedBottom = clip(top + metrics.tmHeight + margin, height);
+			const auto scanWidth = (std::max)(0, clippedRight - clippedLeft);
+			const auto scanHeight = (std::max)(0, clippedBottom - clippedTop);
+			// Each visited pixel is cleared in the mask and then alpha-composited.
+			const auto runWork = 2 * static_cast<std::size_t>(scanWidth)
+				* static_cast<std::size_t>(scanHeight);
+			if (runWork > workPixelBudget - (std::min)(workPixels, workPixelBudget)) {
+				return detail::SvgTextOverlayResult::WorkBudgetExceeded;
+			}
+			workPixels += runWork;
+			if (scanWidth == 0 || scanHeight == 0) {
+				continue;
+			}
+			for (int row = clippedTop; row < clippedBottom; ++row) {
+				if (cancelled()) {
+					return detail::SvgTextOverlayResult::Cancelled;
+				}
+				std::memset(static_cast<BYTE*>(maskBits) + static_cast<std::size_t>(row) * maskStride
+					+ static_cast<std::size_t>(clippedLeft) * 4, 0,
+					static_cast<std::size_t>(scanWidth) * 4);
+			}
+			if (left < (std::numeric_limits<int>::min)() || left > (std::numeric_limits<int>::max)()
+				|| top < (std::numeric_limits<int>::min)() || top > (std::numeric_limits<int>::max)()
+				|| !::TextOutW(maskDc, static_cast<int>(left), static_cast<int>(top),
+					text.data(), static_cast<int>(text.size()))) {
+				return detail::SvgTextOverlayResult::Failed;
+			}
 
 			const BYTE red = GetRValue(run.fill);
 			const BYTE green = GetGValue(run.fill);
 			const BYTE blue = GetBValue(run.fill);
-			for (int row = 0; row < height; ++row) {
-				auto* target = destination + static_cast<std::size_t>(row) * destinationStride;
+			for (int row = clippedTop; row < clippedBottom; ++row) {
+				if (cancelled()) return detail::SvgTextOverlayResult::Cancelled;
+				auto* target = staged.data() + static_cast<std::size_t>(row) * destinationStride;
 				const auto* mask = static_cast<const BYTE*>(maskBits) + static_cast<std::size_t>(row) * maskStride;
-				for (int column = 0; column < width; ++column) {
+				for (int column = clippedLeft; column < clippedRight; ++column) {
+					if ((column & 63) == 0 && cancelled()) return detail::SvgTextOverlayResult::Cancelled;
 					const auto index = static_cast<std::size_t>(column) * 4;
 					const BYTE alpha = (std::max)({ mask[index], mask[index + 1], mask[index + 2] });
 					if (alpha == 0) continue;
@@ -673,17 +792,20 @@ void OverlaySvgText(BYTE* destination, int width, int height, std::size_t destin
 				}
 			}
 		}
-		::SelectObject(maskDc, oldBitmap);
-		::DeleteDC(maskDc);
-		::DeleteObject(maskBitmap);
+		if (cancelled()) return detail::SvgTextOverlayResult::Cancelled;
+		std::memcpy(destination, staged.data(), staged.size());
+		return detail::SvgTextOverlayResult::Completed;
 	}
 	catch (...) {
-		return;
+		return detail::SvgTextOverlayResult::Failed;
 	}
 }
 
+namespace {
+
 [[nodiscard]] DecodedBitmap LoadSvgRaster(
-	const std::vector<std::uint8_t>& bytes, std::size_t remainingPixels) noexcept
+	const std::vector<std::uint8_t>& bytes, std::size_t remainingPixels,
+	const std::function<bool()>& isCancelled = {}) noexcept
 {
 	constexpr std::size_t kMaximumSvgBytes = 2U * 1024U * 1024U;
 	constexpr std::size_t kMaximumSvgElements = 20000;
@@ -749,7 +871,12 @@ void OverlaySvgText(BYTE* destination, int width, int height, std::size_t destin
 			std::memcpy(static_cast<BYTE*>(bits) + static_cast<std::size_t>(row) * stride,
 				rendered.data() + static_cast<std::size_t>(row) * rendered.stride(), stride);
 		}
-		OverlaySvgText(static_cast<BYTE*>(bits), width, height, stride, xml, sourceWidth, sourceHeight);
+		const auto overlayResult = detail::OverlaySvgText(static_cast<BYTE*>(bits), width, height,
+			stride, xml, sourceWidth, sourceHeight, kMaximumSvgTextOverlayWorkPixels, isCancelled);
+		if (overlayResult != detail::SvgTextOverlayResult::Completed) {
+			::DeleteObject(bitmap);
+			return {};
+		}
 		return { bitmap, width, height };
 	}
 	catch (...) {
@@ -758,11 +885,12 @@ void OverlaySvgText(BYTE* destination, int width, int height, std::size_t destin
 }
 
 [[nodiscard]] DecodedBitmap LoadRemoteImage(
-	const RemoteImageFetchResult& fetched, std::size_t remainingPixels) noexcept
+	const RemoteImageFetchResult& fetched, std::size_t remainingPixels,
+	const std::function<bool()>& isCancelled = {}) noexcept
 {
 	if (!fetched || !fetched.bytes) return {};
 	if (fetched.mediaType == L"image/svg+xml") {
-		return LoadSvgRaster(*fetched.bytes, remainingPixels);
+		return LoadSvgRaster(*fetched.bytes, remainingPixels, isCancelled);
 	}
 	return LoadEncodedRaster(*fetched.bytes, remainingPixels);
 }
@@ -1033,7 +1161,8 @@ void CMarkdownPreviewWnd::WorkerMain(
 					const auto fetched = state->remoteImageFetcher->Fetch(resource.original, &cancellation);
 					if (cancellation.IsCancellationRequested()) break;
 					decoded = LoadRemoteImage(fetched,
-						kMaximumDecodedImagePixels - completion.decodedImagePixels);
+						kMaximumDecodedImagePixels - completion.decodedImagePixels,
+						[&cancellation] { return cancellation.IsCancellationRequested(); });
 				}
 				CachedImage cached;
 				cached.path = identity;

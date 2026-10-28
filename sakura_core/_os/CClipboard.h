@@ -10,6 +10,7 @@
 #pragma once
 
 #include "mem/CNativeW.h"
+#include <string_view>
 
 class CEol;
 class CStringRef;
@@ -85,8 +86,9 @@ public:
 	static constexpr int CLIPBOARD_RETRY_DELAY_MS = 10;
 
 private:
-	HWND m_hwnd = nullptr;
 	BOOL m_bOpenResult = FALSE;
+	// The test constructor can report an open state without acquiring the OS clipboard.
+	bool m_ownsClipboard = false;
 
 	// Helper method for OpenClipboard with retry
 	bool	OpenClipboardWithRetry(HWND hWndOwner) const;
@@ -95,6 +97,9 @@ private:
 public:
 	static bool HasValidData();    //!< クリップボード内に、サクラエディタで扱えるデータがあればtrue
 	static CLIPFORMAT GetSakuraFormat(); //!< サクラエディタ独自のクリップボードデータ形式
+	// The returned view is valid only while the supplied global memory is locked.
+	// On failure, the view is empty and the caller must not use the payload.
+	static bool DecodeSakuraFormat(const void* data, size_t size, std::wstring_view& text) noexcept;
 
 protected:
 	// 単体テスト用コンストラクタ

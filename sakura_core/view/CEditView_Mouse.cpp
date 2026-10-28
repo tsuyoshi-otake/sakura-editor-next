@@ -1892,8 +1892,11 @@ STDMETHODIMP CEditView::Drop( LPDATAOBJECT pDataObject, DWORD dwKeyState, POINTL
 		return E_INVALIDARG;
 
 	// ファイルドロップは PostMyDropFiles() で処理する
-	if( cf == CF_HDROP )
-		return PostMyDropFiles( pDataObject );
+	if( cf == CF_HDROP ){
+		const HRESULT result = PostMyDropFiles( pDataObject );
+		if( FAILED(result) ) *pdwEffect = DROPEFFECT_NONE;
+		return result;
+	}
 
 	// 外部からのドロップは以後の処理ではコピーと同様に扱う
 	CEditView* pcDragSourceView = GetEditWnd().GetDragSourceView();
@@ -1916,15 +1919,26 @@ STDMETHODIMP CEditView::Drop( LPDATAOBJECT pDataObject, DWORD dwKeyState, POINTL
 
 	// ドロップデータの取得
 	HGLOBAL hData = GetGlobalData( pDataObject, cf );
-	if (hData == nullptr)
+	if (hData == nullptr) {
+		*pdwEffect = DROPEFFECT_NONE;
 		return E_INVALIDARG;
+	}
 	LPVOID pData = ::GlobalLock( hData );
 	SIZE_T nSize = ::GlobalSize( hData );
+	if (pData == nullptr) {
+		::GlobalFree(hData);
+		*pdwEffect = DROPEFFECT_NONE;
+		return E_INVALIDARG;
+	}
 	if( cf == CClipboard::GetSakuraFormat() ){
-		if( nSize > sizeof(size_t) ){
-			wchar_t* pszData = (wchar_t*)((BYTE*)pData + sizeof(size_t));
-			cmemBuf.SetString( pszData, t_min( (SIZE_T)*(size_t*)pData, nSize / sizeof(wchar_t) ) );	// 途中のNUL文字も含める
+		std::wstring_view text;
+		if (!CClipboard::DecodeSakuraFormat(pData, nSize, text)) {
+			::GlobalUnlock(hData);
+			::GlobalFree(hData);
+			*pdwEffect = DROPEFFECT_NONE;
+			return E_INVALIDARG;
 		}
+		cmemBuf.SetString(text.data(), text.size()); // Preserve embedded NULs.
 	}else if( cf == CF_UNICODETEXT ){
 		cmemBuf.SetString( (wchar_t*)pData, wcsnlen( (wchar_t*)pData, nSize / sizeof(wchar_t) ) );
 	}else{
@@ -2143,28 +2157,31 @@ STDMETHODIMP CEditView::Drop( LPDATAOBJECT pDataObject, DWORD dwKeyState, POINTL
 */
 STDMETHODIMP CEditView::PostMyDropFiles( LPDATAOBJECT pDataObject )
 {
-	HGLOBAL hData = GetGlobalData( pDataObject, CF_HDROP );
-	if( hData == nullptr )
-		return E_INVALIDARG;
-	LPVOID pData = ::GlobalLock( hData );
-	SIZE_T nSize = ::GlobalSize( hData );
+	cxx::GlobalMemory source(GetGlobalData(pDataObject, CF_HDROP));
+	if( !source.Get() ) return E_INVALIDARG;
+	const SIZE_T size = ::GlobalSize(source.Get());
+	if( size < sizeof(DROPFILES) ) return E_INVALIDARG;
+	cxx::GlobalMemory drop(size);
+	if( !drop.Get() ) return E_OUTOFMEMORY;
 
-	// ドロップデータをコピーしてあとで独自のドロップファイル処理を行う
-	HGLOBAL hDrop = ::GlobalAlloc( GHND | GMEM_DDESHARE, nSize );
-	memcpy_raw( ::GlobalLock( hDrop ), pData, nSize );
-	::GlobalUnlock( hDrop );
-	::PostMessageAny(
+	const bool copied = source.Lock([&](const BYTE* data, SIZE_T sourceSize) {
+		if( sourceSize != size ) return false;
+		return drop.Lock([&](BYTE* destination, SIZE_T destinationSize) {
+			if( destinationSize < size ) return false;
+			memcpy_raw(destination, data, size);
+			return true;
+		});
+	});
+	if( !copied ) return E_FAIL;
+
+	const auto hDrop = drop.Get();
+	if( !::PostMessageAny(
 		GetHwnd(),
 		MYWM_DROPFILES,
 		(WPARAM)hDrop,
 		0
-	);
-
-	::GlobalUnlock( hData );
-	if( 0 == (GMEM_LOCKCOUNT & ::GlobalFlags( hData )) ){
-		::GlobalFree( hData );
-	}
-
+	) ) return E_FAIL;
+	(void)drop.release();
 	return S_OK;
 }
 

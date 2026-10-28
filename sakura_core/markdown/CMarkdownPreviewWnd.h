@@ -41,6 +41,25 @@ struct ThemePalette;
 
 namespace markdown {
 
+namespace detail {
+
+//! Result of applying SVG text to an already rasterized image. Any non-complete
+//! result guarantees that `destination` was left byte-for-byte unchanged.
+enum class SvgTextOverlayResult : std::uint8_t {
+	Completed,
+	Cancelled,
+	WorkBudgetExceeded,
+	Failed,
+};
+
+//! Internal test seam for the bounded, transactional SVG text overlay pass.
+[[nodiscard]] SvgTextOverlayResult OverlaySvgText(
+	BYTE* destination, int width, int height, std::size_t destinationStride,
+	std::string_view xml, double sourceWidth, double sourceHeight,
+	std::size_t workPixelBudget, const std::function<bool()>& isCancelled = {}) noexcept;
+
+} // namespace detail
+
 class IMarkdownRemoteImageFetcher;
 enum class PreviewFindResult { Found, Wrapped, NotFound, Invalid, Unavailable };
 enum class PreviewFindAction { Show, Next, Previous };
@@ -432,7 +451,7 @@ private:
 	//! The shared VS Code-style overlay bar presents this window's explicit pixel model.
 	workbench::controls::COverlayScrollbar m_overlayScrollbar;
 	workbench::controls::OverlayScrollbarColors m_overlayColors;
-	mutable workbench::rendering::CGdiBackBuffer m_backBuffer;
+	workbench::rendering::CGdiBackBuffer m_backBuffer;
 };
 
 } // namespace markdown

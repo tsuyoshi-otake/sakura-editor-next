@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "waivers": [
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "Reviewed security fixes #387 and #388 touch existing platform/configuration debt; two existing clipboard setting lookups were reclassified only because their enclosing lines changed to RAII. Preserve every raw finding and reject any later file change until the debt or matching is addressed in #389.",
+      "tracking_issue": 389,
+      "created": "2026-10-28",
+      "expires": "2027-01-25",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/_os/CClipboard.cpp": "sha256:53b0db09ce1b92b581581014702017b9324c3067a44fb0758ba4c483abad0de6",
+        "sakura_core/_os/CDropTarget.h": "sha256:86c92d96a17f6ad74a37ba6116bd86c61f3d5e144c268c4b169b90e70f5b4ca3",
+        "sakura_core/io/CFileLoad.cpp": "sha256:8c2fe3e79b098991251f50497136f02c538673120deeb2aec3237ee104d7ade6",
+        "sakura_core/util/os.cpp": "sha256:e8353e9d26533ce18196b4b36936f42292171f0b6e3c87cda67f523cf0ea8216",
+        "sakura_core/view/CEditView_Mouse.cpp": "sha256:8e9e386eb6ccd045d017b574a0d61bd963cdfec1127562a5cc495c31855d3eeb",
+        "src/test/cpp/tests1/markdown/MarkdownRemoteImageFetcherTest.cpp": "sha256:9e191195166e59bbfbd0475558f941f87cb8cf9a2c9397bd49e05e2c58545214"
+      },
+      "new_findings": [
+        {
+          "rule_id": "global.get_dll_share_data",
+          "path": "sakura_core/_os/CClipboard.cpp",
+          "line": 548,
+          "column": 73,
+          "evidence_sha256": "sha256:6461ff05d5ea836fc75037f596252139e5e2d5a22ee4bdc3165f4d042852ba6e"
+        },
+        {
+          "rule_id": "global.get_dll_share_data",
+          "path": "sakura_core/_os/CClipboard.cpp",
+          "line": 678,
+          "column": 75,
+          "evidence_sha256": "sha256:6461ff05d5ea836fc75037f596252139e5e2d5a22ee4bdc3165f4d042852ba6e"
+        }
+      ],
+      "missing_touched_reductions": [
+        {
+          "path": "sakura_core/_os/CDropTarget.h",
+          "baseline_finding_count": 6
+        },
+        {
+          "path": "sakura_core/io/CFileLoad.cpp",
+          "baseline_finding_count": 1
+        },
+        {
+          "path": "sakura_core/util/os.cpp",
+          "baseline_finding_count": 4
+        },
+        {
+          "path": "sakura_core/view/CEditView_Mouse.cpp",
+          "baseline_finding_count": 92
+        },
+        {
+          "path": "src/test/cpp/tests1/markdown/MarkdownRemoteImageFetcherTest.cpp",
+          "baseline_finding_count": 3
+        }
+      ]
+    }
+  ]
+}

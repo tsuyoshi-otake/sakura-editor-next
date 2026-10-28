@@ -177,11 +177,12 @@ public:
 	{return ::InterlockedIncrement(&m_lRef);}
 	STDMETHOD_( ULONG, Release )( void )
 	{
-		if( ::InterlockedDecrement(&m_lRef) == 0 ){
+		const LONG remaining = ::InterlockedDecrement(&m_lRef);
+		if( remaining == 0 ){
 			delete this;
 			return 0;	// 削除後なので m_lRef は使わない
 		}
-		return m_lRef;
+		return static_cast<ULONG>(remaining);
 	}
 	STDMETHOD( Next )(ULONG celt, FORMATETC* rgelt, ULONG* pceltFetched);
 	STDMETHOD( Skip )(ULONG celt);

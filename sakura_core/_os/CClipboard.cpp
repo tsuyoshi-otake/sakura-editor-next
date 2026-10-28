@@ -7,6 +7,9 @@
 */
 
 #include "StdAfx.h"
+#include <cstdint>
+#include <cstring>
+#include <limits>
 #include <shellapi.h>// HDROP
 #include "CClipboard.h"
 #include "doc/CEditDoc.h"
@@ -16,14 +19,15 @@
 #include "charset/CUtf8.h"
 #include "basis/CEol.h"
 #include "mem/CNativeA.h"
+#include "cxx/ResourceHolder.hpp"
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 //               コンストラクタ・デストラクタ                  //
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 
 CClipboard::CClipboard(HWND hwnd)
-	: m_hwnd(hwnd)
-	, m_bOpenResult(OpenClipboardWithRetry(hwnd))
+	: m_bOpenResult(OpenClipboardWithRetry(hwnd))
+	, m_ownsClipboard(m_bOpenResult != FALSE)
 {
 }
 
@@ -41,9 +45,7 @@ bool CClipboard::Open(HWND hWndOwner)
 	if (!m_bOpenResult) {
 		m_bOpenResult = OpenClipboardWithRetry(hWndOwner);
 
-		if (m_bOpenResult) {
-			m_hwnd = hWndOwner;
-		}
+		m_ownsClipboard = m_bOpenResult != FALSE;
 	}
 
 	return m_bOpenResult;
@@ -68,9 +70,9 @@ bool CClipboard::OpenClipboardWithRetry(HWND hWndOwner) const
 void CClipboard::Close()
 {
 	if(m_bOpenResult){
-		if (m_hwnd) {
+		if (m_ownsClipboard) {
 			CloseClipboard();
-			m_hwnd = nullptr;
+			m_ownsClipboard = false;
 		}
 		m_bOpenResult = FALSE;
 	}
@@ -277,6 +279,26 @@ bool CClipboard::SetHtmlText(const CNativeW& cmemBUf)
 	@param [in] cEol HDROP形式のときの改行コード
 	@param [in] uGetFormat クリップボード形式
 */
+bool CClipboard::DecodeSakuraFormat(const void* data, size_t size, std::wstring_view& text) noexcept
+{
+	text = {};
+	if (data == nullptr || size < sizeof(size_t)) {
+		return false;
+	}
+	const auto* bytes = static_cast<const BYTE*>(data);
+	size_t length = 0;
+	std::memcpy(&length, bytes, sizeof(length));
+	const size_t capacity = (size - sizeof(length)) / sizeof(wchar_t);
+	// CNativeW stores a signed byte count and reserves a terminator plus alignment.
+	const size_t maxLength = (static_cast<size_t>((std::numeric_limits<int>::max)()) - sizeof(wchar_t) - 7) / sizeof(wchar_t);
+	if (length > capacity || length > maxLength ||
+		(reinterpret_cast<std::uintptr_t>(bytes + sizeof(length)) % alignof(wchar_t)) != 0) {
+		return false;
+	}
+	text = std::wstring_view(reinterpret_cast<const wchar_t*>(bytes + sizeof(length)), length);
+	return true;
+}
+
 bool CClipboard::GetText(IWBuffer* cmemBuf, bool* pbColumnSelect, bool* pbLineSelect, const CEol& cEol, UINT uGetFormat)
 {
 	if( !m_bOpenResult ){
@@ -318,12 +340,16 @@ bool CClipboard::GetText(IWBuffer* cmemBuf, bool* pbColumnSelect, bool* pbLineSe
 		&& IsClipboardFormatAvailable( uFormatSakuraClip ) ){
 		HGLOBAL hSakura = GetClipboardData( uFormatSakuraClip );
 		if (hSakura != nullptr) {
-			BYTE* pData = (BYTE*)::GlobalLock(hSakura);
-			size_t nLength        = *((size_t*)pData);
-			const wchar_t* szData = (const wchar_t*)(pData + sizeof(size_t));
-			cmemBuf->Append( szData, nLength );
-			::GlobalUnlock(hSakura);
-			return true;
+			const SIZE_T size = ::GlobalSize(hSakura);
+			const void* pData = ::GlobalLock(hSakura);
+			if (pData != nullptr) {
+				cxx::ResourceHolder<&::GlobalUnlock> guard(hSakura);
+				std::wstring_view text;
+				if (DecodeSakuraFormat(pData, size, text)) {
+					cmemBuf->Append(text.data(), text.size());
+					return true;
+				}
+			}
 		}
 	}
 
@@ -519,11 +545,10 @@ bool CClipboard::SetClipboardByFormat(const CStringRef& cstr, const wchar_t* pFo
 			pBuf = (char*)cstr.GetPtr();
 			nTextByteLen = cstr.GetLength() * sizeof(wchar_t);
 		}else{
-			CCodeBase* pCode = CCodeFactory::CreateCodeBase(eMode, GetDllShareData().m_Common.m_sFile.GetAutoMIMEdecode());
+			std::unique_ptr<CCodeBase> pCode(CCodeFactory::CreateCodeBase(eMode, GetDllShareData().m_Common.m_sFile.GetAutoMIMEdecode()));
 			if( RESULT_FAILURE == pCode->UnicodeToCode(cstr, &cmemBuf) ){
 				return false;
 			}
-			delete pCode;
 			pBuf = (char*)cmemBuf.GetRawPtr();
 			nTextByteLen = cmemBuf.GetRawLength();
 		}
@@ -650,12 +675,11 @@ bool CClipboard::GetClipboardByFormat(CNativeW& mem, const wchar_t* pFormatName,
 				CMemory cmem;
 				cmem.SetRawData(pData, nLength);
 				if( nullptr != cmem.GetRawPtr() ){
-					CCodeBase* pCode = CCodeFactory::CreateCodeBase(eMode, GetDllShareData().m_Common.m_sFile.GetAutoMIMEdecode());
+					std::unique_ptr<CCodeBase> pCode(CCodeFactory::CreateCodeBase(eMode, GetDllShareData().m_Common.m_sFile.GetAutoMIMEdecode()));
 					if( RESULT_FAILURE == pCode->CodeToUnicode(cmem, &mem) ){
 						mem.SetString(L"");
 						retVal = false;
 					}
-					delete pCode;
 				}
 			}
 		}

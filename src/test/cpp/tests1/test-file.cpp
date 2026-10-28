@@ -12,6 +12,8 @@
 #include <cstdlib>
 #include <fstream>
 #include <future>
+#include <iterator>
+#include <stdexcept>
 
 #include <algorithm>
 
@@ -890,6 +892,248 @@ TEST(CFilePath, GetDirPath102)
 // FileOpen owns conversion options; callers may release or change their settings.
 #include "io/CFileLoad.h"
 #include "env/ShareDataTestSuite.hpp"
+#include "window/EditorTestSuite.hpp"
+#include "view/CEditView.h"
+
+namespace {
+
+class CFileLoadScannerForTest final : public CFileLoad {
+public:
+	struct Result {
+		const size_t lineLength;
+		const size_t nextOffset;
+		const size_t eolLength;
+		const EEolType eolType;
+	};
+
+	Result Scan(EEncodingTrait trait, const char* data, size_t length, bool extendedEol = false)
+	{
+		m_encodingTrait = trait;
+		m_bEolEx = extendedEol;
+		size_t lineLength = 0;
+		size_t nextOffset = 0;
+		size_t eolLength = 0;
+		CEol eol;
+		GetNextLineCharCode(data, length, &lineLength, &nextOffset, &eol, &eolLength);
+		return {lineLength, nextOffset, eolLength, eol.GetType()};
+	}
+};
+
+} // namespace
+
+TEST(CFileLoadScannerBounds, Utf32ShortInputLengthsAreSafeAndPreserved)
+{
+	CFileLoadScannerForTest scanner;
+	for (const auto trait : {ENCODING_TRAIT_UTF32LE, ENCODING_TRAIT_UTF32BE}) {
+		for (size_t length = 0; length <= 7; ++length) {
+			SCOPED_TRACE(static_cast<int>(trait));
+			SCOPED_TRACE(length);
+			const std::string bytes(length, '\0');
+			const auto result = scanner.Scan(trait, bytes.data(), bytes.size());
+			EXPECT_EQ(length, result.lineLength);
+			EXPECT_EQ(length, result.nextOffset);
+			EXPECT_EQ(0U, result.eolLength);
+			EXPECT_EQ(EEolType::none, result.eolType);
+		}
+	}
+	SYSTEM_INFO systemInfo{};
+	::GetSystemInfo(&systemInfo);
+	const size_t pageSize = systemInfo.dwPageSize;
+	ASSERT_GT(pageSize, 3U);
+	void* const allocation = ::VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	ASSERT_NE(nullptr, allocation);
+	struct AllocationGuard {
+		void* address;
+		~AllocationGuard() { ::VirtualFree(address, 0, MEM_RELEASE); }
+	} guard{allocation};
+	DWORD oldProtection = 0;
+	ASSERT_NE(FALSE, ::VirtualProtect(static_cast<char*>(allocation) + pageSize, pageSize, PAGE_NOACCESS, &oldProtection));
+	for (const auto trait : {ENCODING_TRAIT_UTF32LE, ENCODING_TRAIT_UTF32BE}) {
+		for (size_t length = 1; length <= 3; ++length) {
+			SCOPED_TRACE(static_cast<int>(trait));
+			SCOPED_TRACE(length);
+			char* const bytes = static_cast<char*>(allocation) + pageSize - length;
+			std::memset(bytes, 0x41, length);
+			const auto result = scanner.Scan(trait, bytes, length);
+			EXPECT_EQ(length, result.lineLength);
+			EXPECT_EQ(length, result.nextOffset);
+			EXPECT_EQ(0U, result.eolLength);
+		}
+	}
+}
+
+TEST(CFileLoadScannerBounds, Utf32CrLfPairRemainsOneEol)
+{
+	CFileLoadScannerForTest scanner;
+	const char utf32LeCrLf[] = {'\r', 0, 0, 0, '\n', 0, 0, 0};
+	const char utf32BeCrLf[] = {0, 0, 0, '\r', 0, 0, 0, '\n'};
+	for (const auto [trait, bytes] : {
+		std::pair{ENCODING_TRAIT_UTF32LE, std::string_view(utf32LeCrLf, sizeof(utf32LeCrLf))},
+		std::pair{ENCODING_TRAIT_UTF32BE, std::string_view(utf32BeCrLf, sizeof(utf32BeCrLf))}}) {
+		const auto result = scanner.Scan(trait, bytes.data(), bytes.size());
+		EXPECT_EQ(0U, result.lineLength);
+		EXPECT_EQ(bytes.size(), result.nextOffset);
+		EXPECT_EQ(8U, result.eolLength);
+		EXPECT_EQ(EEolType::cr_and_lf, result.eolType);
+	}
+}
+
+TEST(CFileLoadScannerBounds, EbcdicTrailingMarkerDoesNotReadPastBuffer)
+{
+	SYSTEM_INFO systemInfo{};
+	::GetSystemInfo(&systemInfo);
+	const size_t pageSize = systemInfo.dwPageSize;
+	ASSERT_GT(pageSize, 0U);
+	void* const allocation = ::VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	ASSERT_NE(nullptr, allocation);
+	struct AllocationGuard {
+		void* address;
+		~AllocationGuard() { if (address) ::VirtualFree(address, 0, MEM_RELEASE); }
+	} guard{allocation};
+	DWORD oldProtection = 0;
+	ASSERT_NE(FALSE, ::VirtualProtect(static_cast<char*>(allocation) + pageSize, pageSize, PAGE_NOACCESS, &oldProtection));
+	char* const lastByte = static_cast<char*>(allocation) + pageSize - 1;
+	CFileLoadScannerForTest scanner;
+
+	for (const auto trait : {ENCODING_TRAIT_EBCDIC, ENCODING_TRAIT_EBCDIC_CRLF}) {
+		for (const char marker : {'\x0d', '\x25'}) {
+			SCOPED_TRACE(static_cast<int>(trait));
+			SCOPED_TRACE(static_cast<unsigned char>(marker));
+			*lastByte = marker;
+			const auto result = scanner.Scan(trait, lastByte, 1);
+			EXPECT_EQ(0U, result.lineLength);
+			EXPECT_EQ(1U, result.nextOffset);
+			EXPECT_EQ(1U, result.eolLength);
+			EXPECT_EQ(marker == '\x0d' ? EEolType::carriage_return : EEolType::line_feed, result.eolType);
+		}
+		const char validCrLf[] = {'\x0d', '\x25'};
+		const auto result = scanner.Scan(trait, validCrLf, sizeof(validCrLf));
+		EXPECT_EQ(0U, result.lineLength);
+		EXPECT_EQ(sizeof(validCrLf), result.nextOffset);
+		EXPECT_EQ(sizeof(validCrLf), result.eolLength);
+		EXPECT_EQ(EEolType::cr_and_lf, result.eolType);
+	}
+}
+
+namespace {
+
+class TemporaryDiffInput final {
+public:
+	explicit TemporaryDiffInput(std::string_view bytes)
+	{
+		wchar_t directory[MAX_PATH]{};
+		wchar_t name[MAX_PATH]{};
+		if (::GetTempPathW(MAX_PATH, directory) == 0 || ::GetTempFileNameW(directory, L"sdf", 0, name) == 0) {
+			throw std::runtime_error("Unable to create temporary Diff input");
+		}
+		m_path = name;
+		std::ofstream stream(m_path, std::ios::binary | std::ios::trunc);
+		if (!stream.is_open()) {
+			::DeleteFileW(m_path.c_str());
+			throw std::runtime_error("Unable to write temporary Diff input");
+		}
+		stream.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+		stream.close();
+		if (stream.fail()) {
+			::DeleteFileW(m_path.c_str());
+			throw std::runtime_error("Unable to finish temporary Diff input");
+		}
+	}
+	~TemporaryDiffInput() { ::DeleteFileW(m_path.c_str()); }
+	const std::filesystem::path& Path() const noexcept { return m_path; }
+
+private:
+	std::filesystem::path m_path;
+};
+
+class DiffFileLoadRouteTest : public ::testing::Test, public window::EditorTestSuite {
+protected:
+	static void SetUpTestSuite() { SetUpEditor(); }
+	static void TearDownTestSuite() { TearDownEditor(); }
+
+	std::string ConvertThroughDiff(std::string_view bytes, ECodeType inputCode)
+	{
+		TemporaryDiffInput input(bytes);
+		wchar_t outputPath[MAX_PATH]{};
+		EXPECT_TRUE(pcEditWnd->GetActiveView().MakeDiffTmpFile2(
+			outputPath, input.Path().c_str(), inputCode, CODE_UTF8));
+		struct OutputCleanup {
+			wchar_t* path;
+			~OutputCleanup() { if (path[0] != L'\0') ::DeleteFileW(path); }
+		} cleanup{outputPath};
+
+		std::ifstream stream(std::filesystem::path(outputPath), std::ios::binary);
+		EXPECT_TRUE(stream.is_open());
+		return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+	}
+};
+
+std::string EncodeUtf32(std::string_view ascii, bool littleEndian)
+{
+	std::string bytes;
+	bytes.reserve(ascii.size() * 4);
+	for (const unsigned char value : ascii) {
+		if (littleEndian) {
+			bytes.push_back(static_cast<char>(value));
+			bytes.push_back('\0');
+			bytes.push_back('\0');
+			bytes.push_back('\0');
+		} else {
+			bytes.push_back('\0');
+			bytes.push_back('\0');
+			bytes.push_back('\0');
+			bytes.push_back(static_cast<char>(value));
+		}
+	}
+	return bytes;
+}
+
+std::string EncodeCodePage(UINT codePage, std::wstring_view text)
+{
+	const int length = ::WideCharToMultiByte(codePage, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+	if (length <= 0) throw std::runtime_error("Unable to encode Diff test input");
+	std::string bytes(static_cast<size_t>(length), '\0');
+	if (::WideCharToMultiByte(codePage, 0, text.data(), static_cast<int>(text.size()), bytes.data(), length, nullptr, nullptr) != length) {
+		throw std::runtime_error("Unable to encode Diff test input");
+	}
+	return bytes;
+}
+
+} // namespace
+
+TEST_F(DiffFileLoadRouteTest, Utf32LeAndBeReadValidLinesAndShortTails)
+{
+	for (const auto [littleEndian, code] : {std::pair{true, CODE_UTF32LE}, std::pair{false, CODE_UTF32BE}}) {
+		SCOPED_TRACE(code);
+		const auto input = EncodeUtf32("needle\r\n", littleEndian);
+		const auto output = ConvertThroughDiff(input, code);
+		EXPECT_NE(std::string::npos, output.find("needle"));
+
+		for (size_t length = 1; length <= 3; ++length) {
+			SCOPED_TRACE(length);
+			const auto shortInput = EncodeUtf32("x", littleEndian).substr(0, length);
+			const auto shortOutput = ConvertThroughDiff(shortInput, code);
+			// Incomplete code units are represented as binary surrogates and
+			// written back as their original bytes by the UTF-8 output stream.
+			EXPECT_EQ(shortInput, shortOutput);
+		}
+	}
+}
+
+TEST_F(DiffFileLoadRouteTest, EbcdicValidLinesAndTrailingMarkerUseDiffReader)
+{
+	constexpr UINT ebcdicCodePage = 37; // IBM EBCDIC US-Canada
+	ASSERT_TRUE(::IsValidCodePage(ebcdicCodePage));
+	ASSERT_EQ(ENCODING_TRAIT_EBCDIC, CCodePage::GetEncodingTrait(static_cast<int>(ebcdicCodePage)));
+	const auto input = EncodeCodePage(ebcdicCodePage, L"needle\r\n");
+	const auto output = ConvertThroughDiff(input, static_cast<ECodeType>(ebcdicCodePage));
+	EXPECT_NE(std::string::npos, output.find("needle"));
+
+	const char trailingEol[] = {'\x25'};
+	const auto shortOutput = ConvertThroughDiff(std::string_view(trailingEol, sizeof(trailingEol)), static_cast<ECodeType>(ebcdicCodePage));
+	// Diff's text output normalizes an isolated LF to CRLF.
+	EXPECT_EQ("\r\n", shortOutput);
+}
 
 class FileLoadOptionsTest : public ::testing::Test, public env::ShareDataTestSuite {
 protected:

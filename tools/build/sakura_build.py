@@ -91,6 +91,7 @@ from sakura_build_lib.semantic_inventory import (
     semantic_inventory_summary,
     write_semantic_inventory,
 )
+from sakura_build_lib.semantic_waivers import apply_semantic_waivers, semantic_waiver_ledger_path
 from sakura_build_lib.runner import (
     BuildError,
     EventWriter,
@@ -332,7 +333,7 @@ def parser() -> argparse.ArgumentParser:
     inventory_semantic.add_argument(
         "--strict",
         action="store_true",
-        help="return a non-zero exit code for a new finding or missing touched-file reduction",
+        help="return a non-zero exit code when unwaived semantic findings or missing reductions remain",
     )
     inventory_observe_product = inventory_commands.add_parser("observe-product")
     inventory_observe_product.add_argument("--context", default="msvc-x64-debug")
@@ -1602,12 +1603,23 @@ def main(argv: list[str] | None = None) -> int:
                     except (OSError, json.JSONDecodeError) as error:
                         raise BuildError("SEMANTIC_BASELINE_INVALID", f"could not read semantic baseline: {baseline_path}", EXIT_USAGE) from error
                     comparison = compare_semantic_inventory(current, baseline, repo_root=repo)
+                    waiver_ledger_path = _repository_path(
+                        repo,
+                        semantic_waiver_ledger_path(repo, baseline_path),
+                        "semantic waiver ledger",
+                    )
+                    comparison = apply_semantic_waivers(
+                        comparison,
+                        repo_root=repo,
+                        ledger_path=waiver_ledger_path,
+                    )
                 write_semantic_inventory(destination, current)
                 report = semantic_inventory_summary(current, comparison, output_path=destination)
                 report["baseline"] = str(baseline_path)
                 report["baseline_changed"] = baseline_changed
                 output(report, args.format)
-                return 0 if comparison is None or not args.strict or comparison["ok"] else EXIT_RATCHET
+                strict_ok = comparison is None or comparison.get("effective_ok", comparison["ok"])
+                return 0 if not args.strict or strict_ok else EXIT_RATCHET
             if args.inventory_command == "observe-graduation":
                 native_evidence = _repository_path(repo, args.native_evidence, "--native-evidence")
                 resource_evidence = _repository_path(repo, args.resource_evidence, "--resource-evidence")

@@ -460,6 +460,27 @@ py -3 tools/build/sakura_build.py inventory semantic ^
 Issue番号をbaseline横のimmutable history recordへ書きます。inventory/evidenceは一時ファイルからatomic
 replaceし、同じ入力の通常収集で不要なmtime更新は発生しません。
 
+### Semantic waiver policy (#389)
+
+通常のscannerとbaseline comparisonは常に最初に実行します。厳密な例外を記録するledgerは
+`tools/build/baselines/semantic-waivers.json`です。ファイルが存在しない、または`{"schema_version":1,"waivers":[]}`
+の場合、例外はなく、strict gateの判定は従来どおりです。malformed ledgerや期限切れrecordは、strictの有無にかかわらず
+fail-closedです。
+`--baseline`で別のbaselineを指定した場合、同じdirectoryの`<baseline名>-waivers.json`を使います。
+既定baselineの例外を別baselineへ流用しません。
+
+各recordは`owner`、理由、正の`tracking_issue`、ISO日付の`created`/`expires`、full
+`baseline_source_commit`を持ちます。`files`は対象ファイルごとの`sha256:<64 lowercase hex>`を保持し、比較時は
+CRLF/CRをLFへ正規化して再計算します。`new_findings`は`rule_id`/`path`/`line`/`column`/`evidence_sha256`の
+全一致、`missing_touched_reductions`は`path`/`baseline_finding_count`の全一致で指定します。各対象pathには必ず
+fingerprintが必要で、record内のfingerprint対象と例外対象pathは一致させます。recordは同じbaseline commitを対象にし、
+作成日は未来不可、期限は作成から90日以内です。日付判定はUTCで行います。
+
+ledgerは記載された正確なfinding/reductionだけをwaiveします。stale target、重複、unknown/missing field、対象ファイルの
+fingerprint差、path脱出、baseline差、期限切れは診断付きで拒否し、waiverを無視して通すことはありません。JSON出力では
+元の`ok`、`new_findings`、`missing_touched_reductions`をraw comparisonとして保持し、別の`waiver_review`にwaived/
+unwaived項目と`effective_ok`を出力します。`--strict`はraw `ok`ではなく、未waiveの項目が残らないことを判定します。
+
 `.github/workflows/architecture-gates.yml`はPR、`main`へのpush、手動実行で常に
 `architecture-gates` jobを生成する。path filterやjob条件を置かないので、documentation-only PRでも
 required checkがpendingのままにはならない。baseline commitのancestor判定とblob比較に必要な履歴を
