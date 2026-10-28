@@ -1,0 +1,17 @@
+name: Set up the age-verified MSYS2 toolchain
+description: Install only the pinned, signed MSYS2 packages observed over 72 hours ago
+
+inputs:
+  profile:
+    description: Select the mingw, cppcheck, or doxygen package closure
+    required: false
+    default: mingw
+
+runs:
+  using: composite
+  steps:
+    - name: Install the locked MSYS2 toolchain
+      shell: pwsh
+      env:
+        SAKURA_MSYS2_PROFILE: ${{ inputs.profile }}
+      run: python "${{ github.action_path }}/setup.py"

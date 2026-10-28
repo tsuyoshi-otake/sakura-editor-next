@@ -121,9 +121,10 @@ jobs:
       with:
         python-version: ${{ vars.PYTHON_VERSION || '3.14.3' }}
 
-    - name: Install the latest version of uv
+    - name: Install the reviewed version of uv
       uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       with:
+        version: '0.13.5'
         activate-environment: true
 
     - run: uv pip install --require-hashes --no-build --no-deps -r requirements.txt
@@ -190,24 +191,15 @@ jobs:
         fetch-depth: 1
         submodules: true
 
-    - name: Set up MSYS2
-      uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0
+    - name: Set up bootstrap Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
-        msystem: MINGW64
-        update: true
-        install: >-
-          mingw-w64-x86_64-iconv
-          mingw-w64-x86_64-gcc
-          mingw-w64-x86_64-cmake
-          mingw-w64-x86_64-make
-          mingw-w64-x86_64-python
-          mingw-w64-x86_64-uv
-          mingw-w64-x86_64-7zip
-          mingw-w64-x86_64-gdb
-          mingw-w64-x86_64-ctags
+        python-version: '3.14.3'
 
-    # The CRT that `update: true` would install breaks every static MinGW link
-    # (#378); see the action for the pin and its removal condition.
+    - name: Set up the locked MSYS2 toolchain
+      uses: ./.github/actions/setup-locked-msys2
+
+    # Keep the existing CRT provenance check after the locked bootstrap (#378).
     - name: Pin the mingw-w64 CRT
       uses: ./.github/actions/pin-mingw-crt
 
@@ -447,9 +439,10 @@ jobs:
       with:
         python-version: ${{ vars.PYTHON_VERSION || '3.14.3' }}
 
-    - name: Install the latest version of uv
+    - name: Install the reviewed version of uv
       uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       with:
+        version: '0.13.5'
         activate-environment: true
 
     - run: uv pip install --require-hashes --no-build --no-deps -r requirements.txt

@@ -8,7 +8,7 @@ name: PR cache cleanup
 #
 # That is not hypothetical here. By #123 the repository held 133 entries using
 # 9.88 GiB, of which 82 pull-request-scoped `msys2-pkgs-*` entries -- saved by
-# `msys2/setup-msys2` in build-on-msys2.yml, which caches unconditionally --
+# the former `msys2/setup-msys2` in build-on-msys2.yml, which cached unconditionally --
 # accounted for 7.17 GiB. Every one of them belonged to an already merged pull
 # request. At that fill level any newly saved entry is evicted almost
 # immediately, which silently turns every cache in the repository into a miss.
@@ -16,7 +16,9 @@ name: PR cache cleanup
 # Workflows this repository owns save on trusted pushes only (see
 # cppcheck.yml and the package closure cache in build-sakura.yml), so they do
 # not create this class of entry. This job exists for the ones created by
-# third-party actions, which cannot be told not to.
+# third-party actions, which cannot be told not to. The locked MSYS2 setup
+# introduced in #390 no longer creates these entries, but older entries and
+# future third-party actions still need the cleanup.
 
 on:
   pull_request:

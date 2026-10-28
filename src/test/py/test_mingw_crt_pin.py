@@ -4,8 +4,9 @@
 published. The r532 CRT (2026-10-23) left ``__mingw_fe_dfl_env`` undefined in
 ``libmingwex.a``, so every static MinGW link that pulls in ``fesetenv`` failed
 and both release-required MinGW checks turned red with no source change.
-``.github/actions/pin-mingw-crt`` replaces that CRT with one verified revision.
-These tests keep the pin complete and keep every MinGW toolchain setup behind it.
+``.github/actions/setup-locked-msys2`` installs an aged, verified toolchain and
+``.github/actions/pin-mingw-crt`` rechecks the known-good revision. These tests
+keep the pin complete and keep every MinGW toolchain setup behind it.
 """
 
 from __future__ import annotations
@@ -64,14 +65,18 @@ class MinGWCrtPinTests(unittest.TestCase):
         self.assertIn("https://repo.msys2.org/mingw/mingw64", self.action)
         self.assertIn("set -euo pipefail", self.action)
 
-    def test_every_mingw_toolchain_setup_is_followed_by_the_pin(self) -> None:
+    def test_every_locked_mingw_toolchain_setup_is_followed_by_the_pin(self) -> None:
         guarded = 0
         for workflow_path in sorted(WORKFLOWS.glob("*.yml")):
             steps = _steps(workflow_path.read_text(encoding="utf-8-sig"))
             for index, step in enumerate(steps):
-                if "msys2/setup-msys2@" not in step:
+                self.assertFalse(
+                    "msys2/setup-msys2@" in step and "mingw-w64-x86_64-gcc" in step,
+                    "a rolling package installation bypasses the age-verified lock",
+                )
+                if "uses: ./.github/actions/setup-locked-msys2" not in step:
                     continue
-                if "mingw-w64-x86_64-gcc" not in step:
+                if "profile: cppcheck" in step or "profile: doxygen" in step:
                     continue
                 with self.subTest(workflow=workflow_path.name, step=index):
                     self.assertLess(index + 1, len(steps))

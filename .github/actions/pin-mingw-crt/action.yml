@@ -1,14 +1,12 @@
 name: Pin the mingw-w64 CRT
 description: >
-  Replace the mingw-w64 CRT, headers, and winpthreads that msys2/setup-msys2
-  installed with one verified revision, so every MinGW link uses a CRT this
-  repository has built against.
+  Verify the locked mingw-w64 CRT, headers, and winpthreads at one revision,
+  so every MinGW link uses a CRT this repository has built against.
 
 runs:
   using: composite
   steps:
-    # `update: true` installs whatever MSYS2 published last. On 2026-10-23 that
-    # became r532, whose libmingwex.a references __mingw_fe_dfl_env without
+    # Rolling updates installed r532 on 2026-10-23; its libmingwex.a references __mingw_fe_dfl_env without
     # defining it, so every x64-mingw-static link that pulls in fesetenv (the
     # bregonig DLL first) fails with an undefined reference. r495 is the last
     # revision both MinGW jobs passed with, and r532 was also younger than the
@@ -40,6 +38,6 @@ runs:
           packages+=("$file")
         done < SHA256SUMS
         sha256sum --check --strict SHA256SUMS
-        pacman --upgrade --noconfirm "${packages[@]}"
+        pacman --upgrade --noconfirm --config /etc/sakura-offline.conf "${packages[@]}"
         pacman --query mingw-w64-x86_64-crt mingw-w64-x86_64-headers \
           mingw-w64-x86_64-libwinpthread mingw-w64-x86_64-winpthreads

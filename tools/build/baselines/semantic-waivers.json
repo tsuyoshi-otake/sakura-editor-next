@@ -54,6 +54,24 @@
           "baseline_finding_count": 3
         }
       ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "The CI dependency-age fix in #390 touches an existing build workflow. Its two focused Rust integration filters are intentional additional tests with explicit executed-count checks; removing either would weaken coverage. Track the pre-existing ratchet debt in #389 and reject further unreviewed workflow changes.",
+      "tracking_issue": 389,
+      "created": "2026-10-28",
+      "expires": "2027-01-25",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        ".github/workflows/build-sakura.yml": "sha256:a3b967d1f15c550c7ec839714c3044b46c8b5b3c5cb446e3eac650ad1a1d82f0"
+      },
+      "new_findings": [],
+      "missing_touched_reductions": [
+        {
+          "path": ".github/workflows/build-sakura.yml",
+          "baseline_finding_count": 2
+        }
+      ]
     }
   ]
 }

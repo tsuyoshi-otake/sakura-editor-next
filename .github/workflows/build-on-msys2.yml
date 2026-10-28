@@ -67,7 +67,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
 
@@ -88,28 +88,20 @@ jobs:
           winget install `
             --id OpenCppCoverage.OpenCppCoverage `
             --exact `
+            --version 0.9.9.0 `
             --accept-package-agreements `
             --accept-source-agreements
         shell: pwsh
 
-      - name: Set up MSYS2
-        uses: msys2/setup-msys2@v2
+      - name: Set up bootstrap Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            mingw-w64-x86_64-iconv
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-make
-            mingw-w64-x86_64-python
-            mingw-w64-x86_64-uv
-            mingw-w64-x86_64-7zip
-            mingw-w64-x86_64-gdb
-            mingw-w64-x86_64-ctags
+          python-version: '3.14.3'
 
-      # The CRT that `update: true` would install breaks every static MinGW link
-      # (#378); see the action for the pin and its removal condition.
+      - name: Set up the locked MSYS2 toolchain
+        uses: ./.github/actions/setup-locked-msys2
+
+      # Keep the existing CRT provenance check after the locked bootstrap (#378).
       - name: Pin the mingw-w64 CRT
         uses: ./.github/actions/pin-mingw-crt
 
