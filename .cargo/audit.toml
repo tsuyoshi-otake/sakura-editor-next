@@ -16,4 +16,9 @@ ignore = [
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
+    # zip 5.1.1 (#396, approved 2026-11-06). extract() aborts the process on a
+    # symlink entry with a large declared size. Unreachable for the same
+    # reason: SENP never calls extract() and rejects symlink entries. The zip
+    # 9.x update that fixes all four stays in #335.
+    "RUSTSEC-2026-0429",
 ]
