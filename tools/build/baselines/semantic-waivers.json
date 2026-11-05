@@ -166,6 +166,39 @@
           "baseline_finding_count": 2
         }
       ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "The #395 settings-watch rebuild-loop fix touches existing configuration-watch debt: the noexcept containment catch-alls, the plain request value struct, and stop/fake-state findings in the two watch test files. The fix adds no new findings; reducing that unrelated debt would widen a crash fix. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "tracking_issue": 389,
+      "created": "2026-11-05",
+      "expires": "2027-02-03",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/config/ConfigurationFileWatchController.cpp": "sha256:5ffc1ea123ed6803b8d53f0d9028f985af1ecc263733976cc9f8ac53f861c0b4",
+        "sakura_core/config/ConfigurationFileWatchController.h": "sha256:be7135c1578be0ae38254800d95ff025a6ec55818235823bfa79965f6a310548",
+        "src/test/cpp/tests1/config/ConfigurationFileSourceControllerTest.cpp": "sha256:ea7329ba456aae4f7b21dd94124c1189a2106477b3ff585149ec5e64a6fb9ebc",
+        "src/test/cpp/tests1/workbench/CWorkbenchRuntimeTest.cpp": "sha256:a46cafa1032227e83790f29414a9623714a118103e791620e6fdaa3fb04c666f"
+      },
+      "new_findings": [],
+      "missing_touched_reductions": [
+        {
+          "path": "sakura_core/config/ConfigurationFileWatchController.cpp",
+          "baseline_finding_count": 17
+        },
+        {
+          "path": "sakura_core/config/ConfigurationFileWatchController.h",
+          "baseline_finding_count": 6
+        },
+        {
+          "path": "src/test/cpp/tests1/config/ConfigurationFileSourceControllerTest.cpp",
+          "baseline_finding_count": 10
+        },
+        {
+          "path": "src/test/cpp/tests1/workbench/CWorkbenchRuntimeTest.cpp",
+          "baseline_finding_count": 19
+        }
+      ]
     }
   ]
 }

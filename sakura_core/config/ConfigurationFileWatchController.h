@@ -67,6 +67,10 @@ struct ConfigurationFileWatchRequest final {
 //! Each requested directory watch is non-recursive. For each workspace folder,
 //! the topology is exactly two levels: folder -> `.vscode` lifecycle and, when
 //! present, `.vscode` -> `settings.json` membership.
+//! A rebuild recreates every watch and is always followed by one FullRescan
+//! notification. The first rebuild after a quiet period runs after the normal
+//! debounce; consecutive rebuilds back off exponentially with jitter up to a
+//! bounded maximum, and Stop interrupts that wait.
 class CConfigurationFileWatchController final {
 public:
 	using ChangeCallback = std::function<void(EConfigurationFileWatchChange)>;
@@ -80,6 +84,10 @@ public:
 	//! Replaces the complete topology. Watch failures are intentionally
 	//! best-effort capability gaps; successful watches remain active.
 	[[nodiscard]] ConfigurationFileWatchResult Start(ConfigurationFileWatchRequest request, ChangeCallback callback) noexcept;
+	//! Replaces the topology and rebuilds it. A request whose resources have the
+	//! same URI identity, in the same order, as the current request is
+	//! idempotent: it returns `Updated` without rebuilding or notifying, so a
+	//! consumer may refresh the topology from its own FullRescan handler.
 	[[nodiscard]] ConfigurationFileWatchResult Update(ConfigurationFileWatchRequest request) noexcept;
 	//! Cancels every watch, joins workers and the dispatcher, and guarantees that
 	//! no callback can begin after it returns.

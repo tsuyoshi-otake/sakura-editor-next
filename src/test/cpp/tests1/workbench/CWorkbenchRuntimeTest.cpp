@@ -234,6 +234,8 @@ public:
 	}
 
 	void EnableWatches() { std::lock_guard lock(m_mutex); m_watchEnabled = true; }
+	//! Every watch ever created, including ones a topology rebuild cancelled.
+	std::size_t CreatedWatchCount() const { std::lock_guard lock(m_mutex); return m_watches.size(); }
 	void ConflictNextConditionalReplace() { std::lock_guard lock(m_mutex); m_conflictNextReplace = true; }
 	void EmitFirstWatchEvent(FileWatchEvent event)
 	{
@@ -1575,6 +1577,32 @@ TEST(CWorkbenchRuntime, AdvisoryProfileWatchResnapshotsThroughTheExistingFileSou
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 	EXPECT_EQ(L"multiple", ShowTabs(*fixture.runtime, ProfileTarget(fixture.runtime->Bootstrap())));
+
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}
+
+// #395: a folder-settings change makes the runtime reload and then refresh the
+// settings watch topology. The refreshed topology is unchanged, so no watch may
+// be recreated; previously the refresh rebuilt every watch, announced a
+// FullRescan, and the runtime refreshed again, forever.
+TEST(CWorkbenchRuntime, FolderSettingsChangeDoesNotRecreateTheUnchangedSettingsWatchTopology)
+{
+	auto folder = Parse(L"file:///C:/Repo");
+	RuntimeFixture fixture(Bootstrap(folder));
+	const auto folderSettings = Parse(L"file:///C:/Repo/.vscode/settings.json");
+	fixture.files->Set(folderSettings, Bytes(R"json({ "workbench.editor.showTabs": "single" })json"));
+	fixture.files->EnableWatches();
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	const auto watchesBefore = fixture.files->CreatedWatchCount();
+	ASSERT_GT(watchesBefore, 0U);
+	const auto readsBefore = fixture.files->Reads().size();
+
+	fixture.files->Set(folderSettings, Bytes(R"json({ "workbench.editor.showTabs": "multiple" })json"));
+	fixture.files->EmitFirstWatchEvent({ .type = EFileWatchEventType::Changed, .uri = folderSettings });
+	ASSERT_TRUE(fixture.files->WaitUntilReadCount(readsBefore + 1));
+	// The loop recreated the topology every ~25 ms; 500 ms spans many cycles.
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	EXPECT_EQ(watchesBefore, fixture.files->CreatedWatchCount());
 
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 }

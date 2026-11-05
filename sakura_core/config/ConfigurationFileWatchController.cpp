@@ -13,6 +13,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <exception>
+#include <optional>
 #include <utility>
 
 namespace config {
@@ -59,6 +62,73 @@ bool IsUsableResource(const Uri& resource) noexcept
 
 constexpr std::size_t kMaximumWorkspaceFolders = 64;
 constexpr std::size_t kMaximumWatchTargets = 2 + (kMaximumWorkspaceFolders * 2);
+
+//! Topology identity is URI identity, element by element and in order: two
+//! requests that differ only in spelling (for example drive-letter case) watch
+//! the same directories and must not cause a rebuild.
+bool HasSameTopology(const ConfigurationFileWatchRequest& left, const ConfigurationFileWatchRequest& right)
+{
+	if (!UriIdentityService::IsEqual(left.profileSettings, right.profileSettings)) return false;
+	if (left.workspaceConfiguration.has_value() != right.workspaceConfiguration.has_value()) return false;
+	if (left.workspaceConfiguration
+		&& !UriIdentityService::IsEqual(*left.workspaceConfiguration, *right.workspaceConfiguration)) {
+		return false;
+	}
+	return std::equal(left.workspaceFolders.begin(), left.workspaceFolders.end(),
+		right.workspaceFolders.begin(), right.workspaceFolders.end(),
+		[](const Uri& first, const Uri& second) { return UriIdentityService::IsEqual(first, second); });
+}
+
+// A rebuild cancels and recreates every watch, and each watch owns two threads
+// (the provider's reader and this controller's worker). A source that keeps
+// invalidating the topology must therefore not drive rebuilds at the debounce
+// rate: Issue #395 measured that churn as unbounded per-thread driver memory.
+constexpr std::chrono::milliseconds kRebuildBackoffBase { 100 };
+constexpr std::chrono::milliseconds kRebuildBackoffMaximum { 30'000 };
+//! A rebuild first observed this long after the previous rebuild completed
+//! starts a new episode and runs without a backoff delay.
+constexpr std::chrono::milliseconds kRebuildQuietPeriod { 5'000 };
+
+//! Dispatcher-owned spacing for consecutive topology rebuilds: no delay for the
+//! first rebuild of an episode, then 100 ms doubling to a 30 s cap, each with up
+//! to +25% jitter so windows sharing a faulty source do not rebuild in lockstep.
+class RebuildBackoff final {
+public:
+	explicit RebuildBackoff(std::uint64_t seed) noexcept
+		: m_randomState(seed | 1)
+	{
+	}
+
+	[[nodiscard]] std::chrono::milliseconds DelayBefore(std::chrono::steady_clock::time_point requested) noexcept
+	{
+		if (!m_lastCompleted || requested - *m_lastCompleted >= kRebuildQuietPeriod) {
+			m_delay = std::chrono::milliseconds::zero();
+			return m_delay;
+		}
+		m_delay = m_delay == std::chrono::milliseconds::zero()
+			? kRebuildBackoffBase
+			: std::min(kRebuildBackoffMaximum, m_delay * 2);
+		const auto jitterBound = static_cast<std::uint64_t>(m_delay.count() / 4) + 1;
+		const auto jitter = std::chrono::milliseconds(static_cast<std::int64_t>(NextRandom() % jitterBound));
+		return std::min(kRebuildBackoffMaximum, m_delay + jitter);
+	}
+
+	void Completed(std::chrono::steady_clock::time_point completed) noexcept { m_lastCompleted = completed; }
+
+private:
+	std::uint64_t NextRandom() noexcept
+	{
+		// xorshift64: jitter only needs decorrelation, not unpredictability.
+		m_randomState ^= m_randomState << 13;
+		m_randomState ^= m_randomState >> 7;
+		m_randomState ^= m_randomState << 17;
+		return m_randomState;
+	}
+
+	std::uint64_t m_randomState;
+	std::chrono::milliseconds m_delay { 0 };
+	std::optional<std::chrono::steady_clock::time_point> m_lastCompleted;
+};
 
 } // namespace
 
@@ -137,6 +207,18 @@ ConfigurationFileWatchResult CConfigurationFileWatchController::Update(Configura
 	if (validity != EConfigurationFileWatchStatus::Started) return { validity };
 	std::lock_guard lock(m_mutex);
 	if (!m_started || m_stopping) return { EConfigurationFileWatchStatus::NotStarted };
+	// The workbench refreshes the topology after every FullRescan it receives.
+	// Rebuilding an identical topology would announce another FullRescan and
+	// close a refresh loop that recreates every watch thread forever (#395).
+	bool unchanged = false;
+	try {
+		unchanged = m_request && HasSameTopology(*m_request, request);
+	} catch (const std::exception&) {
+		// Comparison only allocates comparison keys (bad_alloc/length_error); a
+		// rebuild is the costlier but still correct answer when it cannot finish.
+		unchanged = false;
+	}
+	if (unchanged) return { EConfigurationFileWatchStatus::Updated };
 	m_request = std::move(request);
 	m_rebuildRequested = true;
 	m_pending.notify_one();
@@ -320,6 +402,9 @@ void CConfigurationFileWatchController::DispatchMain() noexcept
 		std::lock_guard lock(m_mutex);
 		m_dispatcherThreadId = std::this_thread::get_id();
 	}
+	RebuildBackoff rebuildBackoff(
+		static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count())
+		^ static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this)));
 	for (;;) {
 		bool profile = false;
 		bool folders = false;
@@ -332,10 +417,20 @@ void CConfigurationFileWatchController::DispatchMain() noexcept
 				return m_stopping || m_rebuildRequested || m_profilePending || m_folderPending || m_workspacePending;
 			});
 			if (m_stopping) return;
+			const auto observed = std::chrono::steady_clock::now();
 			// A short bounded debounce collapses atomic-save event bursts without
 			// creating an unbounded refresh queue.
 			(void)m_pending.wait_for(lock, std::chrono::milliseconds(25), [this] { return m_stopping; });
 			if (m_stopping) return;
+			if (m_rebuildRequested) {
+				// Requests arriving during the backoff coalesce into this rebuild,
+				// whose FullRescan also covers any per-resource change held here.
+				const auto delay = rebuildBackoff.DelayBefore(observed);
+				if (delay > std::chrono::milliseconds::zero()) {
+					(void)m_pending.wait_for(lock, delay, [this] { return m_stopping; });
+					if (m_stopping) return;
+				}
+			}
 			profile = m_profilePending;
 			folders = m_folderPending;
 			workspace = m_workspacePending;
@@ -345,6 +440,7 @@ void CConfigurationFileWatchController::DispatchMain() noexcept
 		}
 		if (rebuild) {
 			RebuildTopology();
+			rebuildBackoff.Completed(std::chrono::steady_clock::now());
 			if (callback && CanDispatch()) {
 				try { callback(EConfigurationFileWatchChange::FullRescan); }
 				catch (...) { }

@@ -56,6 +56,16 @@ Sakura INI serialization remains behind an adapter under `env/` until migrated.
   It coalesces events and reports only resource classes; the workbench must
   resnapshot through `CConfigurationFileSourceController::Reload` rather than
   applying callback contents directly.
+- The watch controller owns topology identity. `Update` with a request whose
+  resources are URI-identical (in order) to the current one is a no-op that
+  still returns `Updated`; only a changed topology rebuilds and announces
+  `FullRescan`. Consecutive rebuilds back off (100 ms doubling to 30 s, +25%
+  jitter, reset after 5 s quiet). Issue #395: `CWorkbenchRuntime` refreshes
+  the topology from its own `FullRescan` handler, and while an unchanged
+  `Update` rebuilt, that pair recreated every watch thread each ~25 ms for the
+  window's lifetime (114-170 threads/s measured). The NVIDIA D3D11 driver keeps
+  ~192 B per thread ever created, so commit grew ~90-130 MiB/h per window until
+  the system commit limit failed. Keep both guards; a rebuild is never free.
 - `CSettingsWritebackCoordinator` owns one bounded JSONC writeback transaction:
   it performs a versioned read and conditional atomic replace through
   `CJsoncConfigurationEditor`, replays a CAS conflict at most once, then

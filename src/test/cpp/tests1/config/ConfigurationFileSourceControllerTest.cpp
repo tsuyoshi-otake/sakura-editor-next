@@ -19,6 +19,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -149,20 +150,35 @@ public:
 	{
 		if (!watchEnabled) return FileResult<std::unique_ptr<IFileWatch>>::Failure(EFileResultStatus::Unsupported);
 		bool reject = false;
+		bool overflow = false;
 		{
 			std::lock_guard lock(watchMutex);
 			reject = rejectVscodeWatch;
+			overflow = m_overflowEveryWatch;
 		}
 		if (reject && root.Path().ends_with(L"/.vscode")) {
 			return FileResult<std::unique_ptr<IFileWatch>>::Failure(EFileResultStatus::NotFound);
 		}
 		auto watch = std::make_unique<FakeWatch>(root);
+		if (overflow) watch->Push({ .type = EFileWatchEventType::Overflow, .uri = root });
 		{
 			std::lock_guard lock(watchMutex);
 			watchRoots.push_back(root);
 			watches.push_back(watch.get());
 		}
 		return FileResult<std::unique_ptr<IFileWatch>>::Success(std::move(watch));
+	}
+	std::size_t WatchCount()
+	{
+		std::lock_guard lock(watchMutex);
+		return watchRoots.size();
+	}
+	//! Models a watch source that invalidates its topology as soon as it is
+	//! armed, e.g. a directory whose change buffer overflows continuously.
+	void OverflowEveryWatch()
+	{
+		std::lock_guard lock(watchMutex);
+		m_overflowEveryWatch = true;
 	}
 
 	FileResult<FileBytes> nextRead = FileResult<FileBytes>::Failure(EFileResultStatus::NotFound);
@@ -173,6 +189,9 @@ public:
 	std::mutex watchMutex;
 	std::vector<Uri> watchRoots;
 	std::vector<FakeWatch*> watches;
+
+private:
+	bool m_overflowEveryWatch = false;
 };
 
 FileResult<FileBytes> Bytes(std::string document)
@@ -458,4 +477,123 @@ TEST(ConfigurationFileWatchController, ConcurrentStopsHaveOneJoinOwnerAndRejectD
 	ASSERT_TRUE(firstCancelled);
 	EXPECT_EQ(config::EConfigurationFileWatchStatus::Stopped, firstStop.status);
 	EXPECT_EQ(config::EConfigurationFileWatchStatus::NotStarted, secondStop.status);
+}
+
+// #395: CWorkbenchRuntime answers every FullRescan by reloading settings and
+// then calling Update with the request derived from its unchanged workspace.
+// When an unchanged Update rebuilt the topology and announced another
+// FullRescan, the pair recreated every watch thread each 25 ms debounce for the
+// life of the window. One rebuild must stay one rebuild.
+TEST(ConfigurationFileWatchController, UnchangedTopologyUpdateFromRescanCallbackDoesNotRebuildAgain)
+{
+	FakeFileService files;
+	files.watchEnabled = true;
+	CConfigurationFileWatchController controller(files);
+	const ConfigurationFileWatchRequest request {
+		.profileSettings = Resource(),
+		.workspaceFolders = { TestWorkspaceFolder() },
+	};
+	std::mutex callbackMutex;
+	std::condition_variable callbackReady;
+	int rescans = 0;
+	std::vector<config::EConfigurationFileWatchStatus> refreshes;
+	ASSERT_EQ(config::EConfigurationFileWatchStatus::Started, controller.Start(request, [&](EConfigurationFileWatchChange change) {
+		if (change != EConfigurationFileWatchChange::FullRescan) return;
+		const auto refreshed = controller.Update(request);
+		std::lock_guard lock(callbackMutex);
+		++rescans;
+		refreshes.push_back(refreshed.status);
+		callbackReady.notify_all();
+	}).status);
+
+	// Profile parent, workspace folder, and its `.vscode` directory.
+	const auto initialWatches = files.WatchCount();
+	ASSERT_EQ(3u, initialWatches);
+	{
+		std::lock_guard lock(files.watchMutex);
+		files.watches.front()->Push({ .type = EFileWatchEventType::Overflow, .uri = files.watchRoots.front() });
+	}
+	{
+		std::unique_lock lock(callbackMutex);
+		ASSERT_TRUE(callbackReady.wait_for(lock, std::chrono::seconds(2), [&] { return rescans >= 1; }));
+		// A loop delivers the next FullRescan within one debounce interval, so
+		// 500 ms of silence spans many would-be cycles.
+		EXPECT_FALSE(callbackReady.wait_for(lock, std::chrono::milliseconds(500), [&] { return rescans > 1; }));
+		EXPECT_EQ(1, rescans);
+		for (const auto status : refreshes) EXPECT_EQ(config::EConfigurationFileWatchStatus::Updated, status);
+	}
+	// Exactly one rebuild: the overflow recreated each watch once.
+	EXPECT_EQ(initialWatches * 2, files.WatchCount());
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::Stopped, controller.Stop().status);
+}
+
+TEST(ConfigurationFileWatchController, UpdateRebuildsOnlyWhenTheTopologyIdentityChanges)
+{
+	FakeFileService files;
+	files.watchEnabled = true;
+	CConfigurationFileWatchController controller(files);
+	std::mutex callbackMutex;
+	std::condition_variable callbackReady;
+	int rescans = 0;
+	ASSERT_EQ(config::EConfigurationFileWatchStatus::Started, controller.Start({ .profileSettings = Resource() },
+		[&](EConfigurationFileWatchChange change) {
+			if (change != EConfigurationFileWatchChange::FullRescan) return;
+			std::lock_guard lock(callbackMutex);
+			++rescans;
+			callbackReady.notify_all();
+		}).status);
+	ASSERT_EQ(1u, files.WatchCount());
+
+	// A differently-cased spelling of the same local file is the same identity,
+	// so this Update is idempotent: no rebuild and no notification.
+	auto respelled = Uri::Parse(L"file:///c:/profile/SETTINGS.json");
+	ASSERT_TRUE(respelled.value.has_value());
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::Updated, controller.Update({ .profileSettings = *respelled.value }).status);
+	{
+		std::unique_lock lock(callbackMutex);
+		EXPECT_FALSE(callbackReady.wait_for(lock, std::chrono::milliseconds(300), [&] { return rescans > 0; }));
+	}
+	EXPECT_EQ(1u, files.WatchCount());
+
+	// Adding a folder is a real topology change: rebuild once and announce it.
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::Updated, controller.Update({
+		.profileSettings = Resource(),
+		.workspaceFolders = { TestWorkspaceFolder() },
+	}).status);
+	{
+		std::unique_lock lock(callbackMutex);
+		ASSERT_TRUE(callbackReady.wait_for(lock, std::chrono::seconds(2), [&] { return rescans == 1; }));
+	}
+	EXPECT_EQ(1u + 3u, files.WatchCount());
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::Stopped, controller.Stop().status);
+}
+
+// A watch source that invalidates the topology every time it is armed is a
+// genuine, repeated rescan. It must still be rebuilt (recovery is not
+// abandoned), but consecutive rebuilds back off instead of recreating every
+// watch thread at the debounce rate, and Stop must not wait out a backoff.
+TEST(ConfigurationFileWatchController, RepeatedTopologyInvalidationBacksOffAndStopInterruptsTheWait)
+{
+	FakeFileService files;
+	files.watchEnabled = true;
+	files.OverflowEveryWatch();
+	CConfigurationFileWatchController controller(files);
+	std::atomic_int rescans = 0;
+	ASSERT_EQ(config::EConfigurationFileWatchStatus::Started, controller.Start({ .profileSettings = Resource() },
+		[&](EConfigurationFileWatchChange change) {
+			if (change == EConfigurationFileWatchChange::FullRescan) rescans.fetch_add(1, std::memory_order_relaxed);
+		}).status);
+
+	std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+	const auto watchesAfterWindow = files.WatchCount();
+	// Without backoff, a 25 ms cycle recreates the single watch about 45 times
+	// in this window. The bound is an upper bound only, so a slow machine can
+	// make it easier to meet but never harder.
+	EXPECT_LE(watchesAfterWindow, 8u);
+	EXPECT_GE(watchesAfterWindow, 2u);
+	EXPECT_GE(rescans.load(std::memory_order_relaxed), 1);
+
+	const auto stopBegan = std::chrono::steady_clock::now();
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::Stopped, controller.Stop().status);
+	EXPECT_LT(std::chrono::steady_clock::now() - stopBegan, std::chrono::milliseconds(500));
 }
