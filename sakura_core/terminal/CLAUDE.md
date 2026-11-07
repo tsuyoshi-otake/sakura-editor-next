@@ -936,6 +936,31 @@ back into it. Each re-observation is bounded by the tab count.
   need it either. A detached workspace's terminals are not this window's
   current project's agents.
 
+**The row shows the name; the session title is hover text (2026-11-07).**
+
+- The Projects row is the product name alone, like Herdr's default agent row
+  (state dot and agent name; its `terminal_title_stripped` is opt-in). The
+  row used to append the resolved tab label. That label is `${process}`, so
+  Devin's row read `Devin  pwsh`. It was also never refreshed, because a title
+  change that kept the kind changed no presence, so a Claude row kept the title
+  captured when `claude.exe` started.
+- `TerminalAgentSessionTitle` turns the raw OSC title into the hover text:
+  - it removes C0 controls and DEL, as the tab label does;
+  - it strips leading status glyphs and blanks: `*`, `·`, `•`, `∙`, Geometric
+    Shapes, Misc Symbols/Dingbats, and Braille. Claude Code animates
+    U+25D0..U+25D3 while working and shows U+2733 when idle, so spinner frames
+    never change the result. Pi's `π` is a letter and is kept;
+  - it answers empty for an empty, path-shaped, or over-256-character title.
+    A shell's directory title is therefore never hover text.
+- `ApplyTitle` reports `true` when the presence changed, or when the session
+  title of a tab that has a presence changed. A title change on a tab with no
+  agent reports nothing, so ordinary shell prompts never wake the Projects
+  page. The model hides the tooltip when the title only repeats the name, as
+  Claude's idle `✳ Claude Code` does.
+- The session title is the terminal's title with decoration removed; it does
+  not prove which process wrote it. While a job-detected agent is present, a
+  non-path title set by something else in that terminal becomes its hover text.
+
 **Known limits.**
 
 - An agent started through a wrapper that is not one of these images, for

@@ -163,7 +163,12 @@ and lifecycle rules as the rest of the native workbench.
   presence supplied by composition; the page never inspects processes or
   titles itself. Phase A shows presence only (no state text), rows exist only
   under the current Project, and a change notification rebuilds the projection
-  without restarting Git discovery.
+  without restarting Git discovery. An agent row's text is the product name
+  alone; `ProjectsRow::tooltip` carries the agent's session title, and
+  `CProjectsPage` shows it through one TTF_IDISHWND tool on the list whose
+  text follows the hovered row's painted rectangle. The accessible label stays
+  the visible text. The session-title rules live in
+  [`../terminal/CLAUDE.md`](../terminal/CLAUDE.md).
 - Folder Projects expose their branch or detached state before activation.
   Multi-root workspace Projects inspect the workspace document without mutating
   `WorkspaceContext`, then show a common branch, bounded mixed-branch summary,

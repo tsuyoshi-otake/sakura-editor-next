@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cwchar>
 #include <deque>
 #include <filesystem>
 #include <functional>
@@ -26,6 +27,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -215,6 +217,47 @@ ProjectGitDiscoveryFactory DiscoveryFactory(const std::shared_ptr<ScriptedBranch
 			runner, std::make_shared<workbench::worktree::SystemGitWorktreeRetryJitterSource>(),
 			limits);
 	};
+}
+
+//! The tooltip control of this thread whose one tool is the whole list window.
+HWND FindListTooltip(const HWND list)
+{
+	struct Search final {
+		HWND list;
+		HWND found;
+	} search{ list, nullptr };
+	(void)::EnumThreadWindows(::GetCurrentThreadId(), [](HWND window, LPARAM data) -> BOOL {
+		auto& state = *reinterpret_cast<Search*>(data);
+		wchar_t className[64]{};
+		if (::GetClassNameW(window, className, static_cast<int>(std::size(className))) == 0
+			|| std::wstring_view(className) != TOOLTIPS_CLASSW) return TRUE;
+		const auto count = static_cast<UINT>(::SendMessageW(window, TTM_GETTOOLCOUNT, 0, 0));
+		for (UINT index = 0; index < count; ++index) {
+			TOOLINFOW tool{};
+			tool.cbSize = sizeof(tool);
+			if (::SendMessageW(window, TTM_ENUMTOOLSW, index, reinterpret_cast<LPARAM>(&tool)) != FALSE
+				&& (tool.uFlags & TTF_IDISHWND) != 0
+				&& tool.uId == reinterpret_cast<UINT_PTR>(state.list)) {
+				state.found = window;
+				return FALSE;
+			}
+		}
+		return TRUE;
+	}, reinterpret_cast<LPARAM>(&search));
+	return search.found;
+}
+
+std::wstring ListTooltipText(const HWND tooltip, const HWND list)
+{
+	std::wstring text(1024, L'\0');
+	TOOLINFOW tool{};
+	tool.cbSize = sizeof(tool);
+	tool.hwnd = ::GetParent(list);
+	tool.uId = reinterpret_cast<UINT_PTR>(list);
+	tool.lpszText = text.data();
+	(void)::SendMessageW(tooltip, TTM_GETTEXTW, text.size(), reinterpret_cast<LPARAM>(&tool));
+	text.resize(std::wcslen(text.c_str()));
+	return text;
 }
 
 std::vector<std::wstring> ListBoxRows(const HWND list)
@@ -522,7 +565,7 @@ TEST(ProjectsModel, AgentRowsSitBetweenCurrentWorktreeAndToggleOnTheCurrentProje
 	auto worktrees = Worktrees();
 	const std::vector<ProjectAgentEntry> agents{
 		{ .identity = L"terminal-instance:3", .terminalId = 3,
-			.name = L"Claude Code", .detail = L"fix login bug" },
+			.name = L"Claude Code", .sessionTitle = L"fix login bug" },
 		{ .identity = L"terminal-instance:9", .terminalId = 9, .name = L"Devin" },
 	};
 
@@ -535,16 +578,19 @@ TEST(ProjectsModel, AgentRowsSitBetweenCurrentWorktreeAndToggleOnTheCurrentProje
 	ASSERT_TRUE(projection.rows[2].agentIndex.has_value());
 	EXPECT_EQ(0U, *projection.rows[2].agentIndex);
 	EXPECT_EQ(L"Claude Code", projection.rows[2].label);
-	EXPECT_EQ(L"fix login bug", projection.rows[2].description);
+	// The row shows the product name only (Herdr's default agent row); the
+	// agent's session name is hover text, not a second visible column.
+	EXPECT_TRUE(projection.rows[2].description.empty());
+	EXPECT_EQ(L"fix login bug", projection.rows[2].tooltip);
 	EXPECT_TRUE(projection.rows[2].currentProject);
 	EXPECT_TRUE(projection.rows[2].enabled);
-	EXPECT_EQ(L"Claude Code, fix login bug",
-		ProjectsAccessibleLabel(projection.rows[2]));
+	EXPECT_EQ(L"Claude Code", ProjectsAccessibleLabel(projection.rows[2]));
 	ASSERT_EQ(EProjectsRowKind::Agent, projection.rows[3].kind);
 	ASSERT_TRUE(projection.rows[3].agentIndex.has_value());
 	EXPECT_EQ(1U, *projection.rows[3].agentIndex);
 	EXPECT_EQ(L"Devin", projection.rows[3].label);
 	EXPECT_TRUE(projection.rows[3].description.empty());
+	EXPECT_TRUE(projection.rows[3].tooltip.empty());
 	EXPECT_EQ(EProjectsRowKind::WorktreesToggle, projection.rows[4].kind);
 	EXPECT_EQ(EProjectsRowKind::Project, projection.rows[5].kind);
 	EXPECT_FALSE(projection.rows[5].currentProject);
@@ -593,7 +639,7 @@ TEST(ProjectsModel, AgentRowsFollowTheProjectWithoutWorktreesAndRequireACurrentP
 	}));
 }
 
-TEST(ProjectsModel, AgentRowDescriptionDropsEmptyOrDuplicatedDetail)
+TEST(ProjectsModel, AgentRowShowsOnlyTheNameAndKeepsTheSessionTitleForHover)
 {
 	const std::vector<ProjectEntry> projects{ ProjectFolder(L"C:\\repo", L"repo") };
 	config::WorkspaceContextSnapshot workspace;
@@ -601,19 +647,24 @@ TEST(ProjectsModel, AgentRowDescriptionDropsEmptyOrDuplicatedDetail)
 	workspace.folders.push_back({ FileUri(L"C:\\repo"), L"repo" });
 	const std::vector<ProjectAgentEntry> agents{
 		{ .identity = L"terminal-instance:1", .terminalId = 1,
-			.name = L"Claude Code", .detail = L"Claude Code" },
+			.name = L"Claude Code", .sessionTitle = L"Claude Code" },
 		{ .identity = L"terminal-instance:2", .terminalId = 2,
-			.name = L"Devin", .detail = L"" },
+			.name = L"Devin", .sessionTitle = L"" },
 		{ .identity = L"terminal-instance:3", .terminalId = 3,
-			.name = L"Copilot", .detail = L"terminal tab title" },
+			.name = L"Copilot", .sessionTitle = L"Fix login bug" },
 	};
 
 	const auto projection = ProjectProjects(projects, workspace, nullptr, false,
 		{}, std::nullopt, {}, {}, agents);
 	ASSERT_EQ(4U, projection.rows.size());
-	EXPECT_TRUE(projection.rows[1].description.empty());
-	EXPECT_TRUE(projection.rows[2].description.empty());
-	EXPECT_EQ(L"terminal tab title", projection.rows[3].description);
+	for( std::size_t index = 1; index < projection.rows.size(); ++index ) {
+		EXPECT_TRUE(projection.rows[index].description.empty()) << index;
+		EXPECT_EQ(projection.rows[index].label, ProjectsAccessibleLabel(projection.rows[index])) << index;
+	}
+	// A title that only repeats the product name, or no title, has no hover.
+	EXPECT_TRUE(projection.rows[1].tooltip.empty());
+	EXPECT_TRUE(projection.rows[2].tooltip.empty());
+	EXPECT_EQ(L"Fix login bug", projection.rows[3].tooltip);
 }
 
 TEST(ProjectsModel, PreferredAgentIdentitySelectsTheMatchingRowAndFallsBackWhenUnknown)
@@ -1028,9 +1079,10 @@ TEST(ProjectsPage, AgentNotificationAddsRowsAndActivatesWithoutGitRediscovery)
 	// A change notification posts one message, rebuilds with agents(false),
 	// and never restarts Git discovery.
 	agents.push_back({ .identity = L"terminal-instance:7", .terminalId = 7,
-		.name = L"Claude Code", .detail = L"fix login bug" });
+		.name = L"Claude Code", .sessionTitle = L"fix login bug" });
 	ASSERT_TRUE(static_cast<bool>(agentsChanged));
 	agentsChanged();
+	const auto isAgentRow = [](const std::wstring& row) { return row == L"Claude Code"; };
 	for (int attempt = 0; attempt < 100; ++attempt) {
 		MSG pump{};
 		while (::PeekMessageW(&pump, pageWindow, 0, 0, PM_REMOVE)) {
@@ -1038,25 +1090,46 @@ TEST(ProjectsPage, AgentNotificationAddsRowsAndActivatesWithoutGitRediscovery)
 			::DispatchMessageW(&pump);
 		}
 		rows = ListBoxRows(list);
-		if (std::ranges::any_of(rows, [](const auto& row) {
-			return row.find(L"Claude Code, fix login bug") != std::wstring::npos;
-		})) break;
+		if (std::ranges::any_of(rows, isAgentRow)) break;
 		std::this_thread::sleep_for(5ms);
 	}
-	ASSERT_TRUE(std::ranges::any_of(rows, [](const auto& row) {
-		return row.find(L"Claude Code, fix login bug") != std::wstring::npos;
+	// The row is the product name alone; the session name never becomes row text.
+	ASSERT_TRUE(std::ranges::any_of(rows, isAgentRow));
+	EXPECT_TRUE(std::ranges::none_of(rows, [](const auto& row) {
+		return row.find(L"fix login bug") != std::wstring::npos;
 	}));
 	EXPECT_EQ(2U, refreshFlags.size());
 	EXPECT_FALSE(refreshFlags.back());
 	EXPECT_EQ(2U, runner->Calls().size());
 	// The agent row nests under the current worktree row.
 	const auto worktreeRow = std::ranges::find_if(rows, isCurrentWorktreeRow);
-	const auto agentRow = std::ranges::find_if(rows, [](const auto& row) {
-		return row.starts_with(L"Claude Code, ");
-	});
+	const auto agentRow = std::ranges::find_if(rows, isAgentRow);
 	ASSERT_NE(rows.end(), worktreeRow);
 	ASSERT_NE(rows.end(), agentRow);
 	EXPECT_EQ(worktreeRow + 1, agentRow);
+
+	// Hovering the agent row offers its session name as the list's tooltip;
+	// hovering a row without hover text offers none.
+	const HWND tooltip = FindListTooltip(list);
+	ASSERT_NE(nullptr, tooltip);
+	const auto hoverRow = [list](const std::ptrdiff_t index) {
+		RECT item{};
+		EXPECT_NE(LB_ERR, ::SendMessageW(list, LB_GETITEMRECT, static_cast<WPARAM>(index),
+			reinterpret_cast<LPARAM>(&item)));
+		(void)::SendMessageW(list, WM_MOUSEMOVE, 0,
+			MAKELPARAM((item.left + item.right) / 2, (item.top + item.bottom) / 2));
+	};
+	hoverRow(agentRow - rows.begin());
+	EXPECT_EQ(L"fix login bug", ListTooltipText(tooltip, list));
+	hoverRow(worktreeRow - rows.begin());
+	EXPECT_TRUE(ListTooltipText(tooltip, list).empty());
+	hoverRow(agentRow - rows.begin());
+	EXPECT_EQ(L"fix login bug", ListTooltipText(tooltip, list));
+	// Below the last row is not a row, even though LISTBOX reports the nearest one.
+	RECT client{};
+	ASSERT_TRUE(::GetClientRect(list, &client));
+	(void)::SendMessageW(list, WM_MOUSEMOVE, 0, MAKELPARAM(client.right / 2, client.bottom - 2));
+	EXPECT_TRUE(ListTooltipText(tooltip, list).empty());
 
 	// Enter on the Agent row activates it by terminal id.
 	for (int index = 0; index < static_cast<int>(rows.size()); ++index) {

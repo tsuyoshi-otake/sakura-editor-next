@@ -2887,7 +2887,7 @@ std::vector<TerminalAgentPresenceRecord> CTerminalTool::AgentPresence( bool refr
 		const auto record = std::find_if(projection.begin(), projection.end(),
 			[&tab](const TerminalTabProjectionRecord& value) { return value.tabId == tab.id; });
 		if( record == projection.end() ) continue;
-		result.push_back({ tab.id, record->instanceId, *kind, m_impl->TabTitle(tab) });
+		result.push_back({ tab.id, record->instanceId, *kind, m_impl->agentPresence.SessionTitle(tab.id) });
 	}
 	return result;
 }

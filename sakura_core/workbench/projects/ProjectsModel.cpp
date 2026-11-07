@@ -308,9 +308,10 @@ ProjectsProjection ProjectProjects(
 				.kind = EProjectsRowKind::Agent,
 				.projectIndex = projectIndex,
 				.agentIndex = agentIndex,
+				// Herdr's default agent row: the product name only. The agent's
+				// own session name is hover text, unless it merely repeats the name.
 				.label = agent.name,
-				.description = agent.detail.empty() || agent.detail == agent.name
-					? std::wstring{} : agent.detail,
+				.tooltip = agent.sessionTitle == agent.name ? std::wstring{} : agent.sessionTitle,
 				.currentProject = true,
 			});
 		}

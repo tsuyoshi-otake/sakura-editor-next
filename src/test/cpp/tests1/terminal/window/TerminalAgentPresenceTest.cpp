@@ -13,6 +13,7 @@ using terminal::TerminalAgentKind;
 using terminal::TerminalAgentKindFromImageFileName;
 using terminal::TerminalAgentKindFromTitle;
 using terminal::TerminalAgentPresenceTracker;
+using terminal::TerminalAgentSessionTitle;
 using terminal::TerminalBackendJobProcess;
 using terminal::TerminalBackendJobProcesses;
 
@@ -164,9 +165,11 @@ TEST(TerminalAgentPresence, PiIsRecognizedByItsOwnTitleWhileTheTabLabelKeepsVSCo
 	// Pi 1.3.0 writes `<U+03C0> - <folder>` and `<U+03C0> - <session> - <folder>`.
 	EXPECT_TRUE(tracker.ApplyTitle(1, L"\u03C0 - sakura-editor-next"));
 	EXPECT_EQ(tracker.Presence(1), TerminalAgentKind::Pi);
-	// Pi's prefix wins over another product's name inside the folder name.
-	EXPECT_FALSE(tracker.ApplyTitle(1, L" \u03C0 - refactor - gemini "));
+	// Pi's prefix wins over another product's name inside the folder name. The
+	// report is the row's hover text changing; the presence stays Pi.
+	EXPECT_TRUE(tracker.ApplyTitle(1, L" \u03C0 - refactor - gemini "));
 	EXPECT_EQ(tracker.Presence(1), TerminalAgentKind::Pi);
+	EXPECT_EQ(tracker.SessionTitle(1), L"\u03C0 - refactor - gemini");
 	// The shell's directory title after Pi exits clears it.
 	EXPECT_TRUE(tracker.ApplyTitle(1, L"C:\\work"));
 	EXPECT_FALSE(tracker.Presence(1));
@@ -177,12 +180,64 @@ TEST(TerminalAgentPresence, PiIsRecognizedByItsOwnTitleWhileTheTabLabelKeepsVSCo
 	EXPECT_FALSE(tracker.ApplyTitle(2, std::wstring(L"\u03C0 - ")
 		+ std::wstring(terminal::kMaximumTerminalAgentTitleLength, L'x')));
 	EXPECT_TRUE(tracker.ApplyJobObservation(3, Observation({ Process(30, 300, L"claude.exe") })));
-	EXPECT_FALSE(tracker.ApplyTitle(3, L"\u03C0 - work"));
+	// Only the hover text changes here; the job's Claude Code keeps the row.
+	EXPECT_TRUE(tracker.ApplyTitle(3, L"\u03C0 - work"));
 	EXPECT_EQ(tracker.Presence(3), TerminalAgentKind::ClaudeCode);
+	EXPECT_FALSE(tracker.ApplyTitle(3, L"\u03C0 - work"));
 	// Fork extension only: VS Code's tab label allow-list does not know Pi.
 	EXPECT_FALSE(TerminalAgentKindFromTitle(L"\u03C0 - sakura-editor-next"));
 	EXPECT_FALSE(terminal::IsRecognizedAgentCliTitle(L"\u03C0 - sakura-editor-next"));
 	EXPECT_TRUE(terminal::IsRecognizedAgentCliTitle(L"Claude Code"));
+}
+
+TEST(TerminalAgentPresence, SessionTitleStripsStatusGlyphsAndRejectsShellTitles)
+{
+	// Claude Code: U+2733 when idle, U+25D0..U+25D3 while working.
+	EXPECT_EQ(TerminalAgentSessionTitle(L"\u2733 Claude Code"), L"Claude Code");
+	EXPECT_EQ(TerminalAgentSessionTitle(L"\u25D0 Fix login bug"), L"Fix login bug");
+	EXPECT_EQ(TerminalAgentSessionTitle(L"\u25D3 Fix login bug"), L"Fix login bug");
+	EXPECT_EQ(TerminalAgentSessionTitle(L"\u2810 Fix login bug"), L"Fix login bug");
+	EXPECT_EQ(TerminalAgentSessionTitle(L" \u00B7 * Fix login bug \u3000"), L"Fix login bug");
+	EXPECT_EQ(TerminalAgentSessionTitle(L"\u25D0 \u30ED\u30B0\u30A4\u30F3\u4FEE\u6B63"),
+		L"\u30ED\u30B0\u30A4\u30F3\u4FEE\u6B63");
+	// Controls go, as in the tab label; a glyph after text is part of the name.
+	EXPECT_EQ(TerminalAgentSessionTitle(L"\u25D0 Fix\x07 bug \u2733"), L"Fix bug \u2733");
+	// Pi's own title is kept whole: U+03C0 is a letter, not a status glyph.
+	EXPECT_EQ(TerminalAgentSessionTitle(L"\u03C0 - session - repo"), L"\u03C0 - session - repo");
+
+	EXPECT_TRUE(TerminalAgentSessionTitle(L"").empty());
+	EXPECT_TRUE(TerminalAgentSessionTitle(L"\u2733").empty());
+	EXPECT_TRUE(TerminalAgentSessionTitle(L"C:\\Program Files\\PowerShell\\7\\pwsh.exe").empty());
+	EXPECT_TRUE(TerminalAgentSessionTitle(L"\u25D0 C:\\work").empty());
+	EXPECT_TRUE(TerminalAgentSessionTitle(L"/home/user").empty());
+
+	const std::wstring bounded(terminal::kMaximumTerminalAgentTitleLength, L'a');
+	EXPECT_EQ(TerminalAgentSessionTitle(L"\u2733 " + bounded), bounded);
+	EXPECT_TRUE(TerminalAgentSessionTitle(bounded + L"a").empty());
+}
+
+TEST(TerminalAgentPresence, TrackerReportsSessionTitleChangesOfAPresentAgentOnly)
+{
+	TerminalAgentPresenceTracker tracker;
+	// No agent yet: the title is kept but nothing is reported.
+	EXPECT_FALSE(tracker.ApplyTitle(1, L"\u25D0 Fix login bug"));
+	EXPECT_EQ(tracker.SessionTitle(1), L"Fix login bug");
+
+	EXPECT_TRUE(tracker.ApplyJobObservation(1, Observation({
+		Process(10, 100, L"pwsh.exe"), Process(20, 200, L"claude.exe") })));
+	EXPECT_EQ(tracker.Presence(1), TerminalAgentKind::ClaudeCode);
+
+	// Spinner frames and the idle glyph leave the session name unchanged.
+	EXPECT_FALSE(tracker.ApplyTitle(1, L"\u25D3 Fix login bug"));
+	EXPECT_FALSE(tracker.ApplyTitle(1, L"\u2733 Fix login bug"));
+
+	EXPECT_TRUE(tracker.ApplyTitle(1, L"\u2733 Add tests"));
+	EXPECT_EQ(tracker.SessionTitle(1), L"Add tests");
+	EXPECT_TRUE(tracker.ApplyTitle(1, L"C:\\work"));
+	EXPECT_TRUE(tracker.SessionTitle(1).empty());
+	EXPECT_EQ(tracker.Presence(1), TerminalAgentKind::ClaudeCode);
+
+	EXPECT_TRUE(tracker.SessionTitle(99).empty());
 }
 
 TEST(TerminalAgentPresence, DisplayNamesAreProductNames)

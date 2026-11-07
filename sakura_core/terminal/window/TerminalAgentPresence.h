@@ -13,6 +13,7 @@
 #include <map>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -59,10 +60,23 @@ enum class TerminalAgentKind : std::uint8_t {
 [[nodiscard]] std::optional<TerminalAgentKind> TerminalAgentKindFromTitle(
 	std::wstring_view sequenceTitle ) noexcept;
 
+//! The session name an agent announces through its OSC title, for the Projects
+//! row's hover text (#402). Claude Code writes `<status glyph> <topic>` and
+//! animates the glyph while it works, so leading status glyphs (Braille
+//! patterns, geometric shapes, dingbats, miscellaneous symbols, bullets, and
+//! `*`) and blanks are removed; a spinner frame therefore never changes the
+//! result. Control characters are removed as in the tab label. An empty,
+//! path-shaped (a shell reporting its directory), or over-long title has no
+//! session name and yields an empty string. Like Herdr's
+//! `terminal_title_stripped`, this is the terminal title with decoration
+//! removed; it does not prove which process wrote it.
+[[nodiscard]] std::wstring TerminalAgentSessionTitle( std::wstring_view sequenceTitle );
+
 //! Window-local presence per terminal tab. It holds only the agent processes
-//! of the last job observation and the title-derived kind, so its size is
-//! bounded by the tab count times kMaximumObservedJobProcesses. Process IDs are
-//! kept solely to filter exit hints, never as an identity.
+//! of the last job observation, the title-derived kind, and the bounded session
+//! title, so its size is bounded by the tab count times
+//! kMaximumObservedJobProcesses. Process IDs are kept solely to filter exit
+//! hints, never as an identity.
 //!
 //! A tab's agent is the earliest-created agent process in its job (the
 //! outermost one, so Claude Code running `codex` as a tool is still Claude
@@ -73,7 +87,9 @@ enum class TerminalAgentKind : std::uint8_t {
 //! recognize it, because VS Code's allowAgentCliTitle list does not.
 class TerminalAgentPresenceTracker final {
 public:
-	//! Each Apply returns true when the tab's resolved presence changed.
+	//! Each Apply returns true when what the Projects row shows for the tab
+	//! changed: its resolved presence, or the session title of a tab that has
+	//! a presence. A title change on a tab without an agent reports nothing.
 	bool ApplyTitle( std::uint64_t tabId, std::wstring_view sequenceTitle );
 	//! nullopt (no job, failed query, or a session that is no longer live)
 	//! means the tab currently has no observable agent process.
@@ -84,12 +100,16 @@ public:
 	bool Retain( std::span<const std::uint64_t> liveTabIds );
 
 	[[nodiscard]] std::optional<TerminalAgentKind> Presence( std::uint64_t tabId ) const noexcept;
+	//! TerminalAgentSessionTitle of the tab's last applied title; empty for an
+	//! unknown tab.
+	[[nodiscard]] std::wstring SessionTitle( std::uint64_t tabId ) const;
 	//! The agent processes whose exit could change this tab's presence.
 	[[nodiscard]] std::vector<std::uint32_t> AgentProcessIds( std::uint64_t tabId ) const;
 
 private:
 	struct TabState final {
 		std::optional<TerminalAgentKind> titleKind;
+		std::wstring sessionTitle;
 		std::vector<TerminalBackendJobProcess> agentProcesses;
 		std::optional<TerminalAgentKind> resolved;
 	};

@@ -98,8 +98,9 @@ struct TerminalAgentPresenceRecord final {
 	std::uint64_t tabId{};
 	TerminalInstanceId instanceId;
 	TerminalAgentKind kind{};
-	//! The resolved tab title (TerminalTabPresentation), for the row detail.
-	std::wstring title;
+	//! TerminalAgentSessionTitle of the tab's OSC title, for the row's hover
+	//! text; empty when the agent announced none.
+	std::wstring sessionTitle;
 };
 
 //! Bottom-panel terminal tool with recursive split groups and a right-side

@@ -1835,4 +1835,42 @@ TEST(TerminalTool, AgentPresenceFollowsJobHintsWithoutPolling)
 	::DestroyWindow(parent);
 }
 
+TEST(TerminalTool, AgentPresenceCarriesTheGlyphStrippedSessionTitle)
+{
+	using terminal::TerminalJobProcessEventKind;
+	ToolHarness harness;
+	// Claude Code's working title: U+25D0 then the session name, in UTF-8.
+	harness.scriptedOutput = "\x1b]0;\xE2\x97\x90 Fix login bug\x07";
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout({ 0, 0, 480, 240 }, 96);
+	int sinkCalls = 0;
+	tool.SetAgentPresenceSink([&sinkCalls] { ++sinkCalls; });
+	tool.Activate();
+	ASSERT_EQ(1u, harness.backends.size());
+	auto& backend = *harness.backends[0];
+	ASSERT_TRUE(WaitUntil([&] {
+		const std::lock_guard lock(backend.jobMutex);
+		return static_cast<bool>(backend.jobListener);
+	}));
+	backend.SetJobProcesses({ { 10, 100, L"pwsh.exe" }, { 20, 200, L"claude.exe" } });
+	ASSERT_TRUE(backend.NotifyJobProcess({ TerminalJobProcessEventKind::Started, 20, L"claude.exe" }));
+	// The title and the job hint drain in either order; both end at one row
+	// whose hover text is the session name without the spinner glyph.
+	ASSERT_TRUE(WaitUntil([&] {
+		PumpToolMessages(tool.GetHwnd());
+		const auto presence = tool.AgentPresence(false);
+		return presence.size() == 1u && presence[0].sessionTitle == L"Fix login bug";
+	}, 2000ms));
+	EXPECT_EQ(terminal::TerminalAgentKind::ClaudeCode, tool.AgentPresence(false)[0].kind);
+	EXPECT_GE(sinkCalls, 1);
+	EXPECT_LE(sinkCalls, 2);
+
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
 } // namespace

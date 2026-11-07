@@ -3152,7 +3152,7 @@ bool CEditWnd::InitializeWorkbench()
 							.identity = L"terminal-instance:" + std::to_wstring(record.instanceId.value),
 							.terminalId = record.tabId,
 							.name = std::wstring(terminal::TerminalAgentDisplayName(record.kind)),
-							.detail = std::move(record.title),
+							.sessionTitle = std::move(record.sessionTitle),
 						});
 					}
 					return entries;

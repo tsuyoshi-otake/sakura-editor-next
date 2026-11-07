@@ -105,7 +105,7 @@ struct ProjectAgentEntry final {
 	std::wstring identity;	//! stable row identity such as L"terminal-instance:12"; never a PID or title
 	std::uint64_t terminalId{};	//! window-local terminal id handed back to activateAgent
 	std::wstring name;	//! product name, e.g. L"Claude Code", not localized
-	std::wstring detail;	//! terminal tab title for context; may be empty
+	std::wstring sessionTitle;	//! the agent's own session name; hover text only, may be empty
 
 	[[nodiscard]] bool operator==(const ProjectAgentEntry&) const noexcept = default;
 };
@@ -118,6 +118,7 @@ struct ProjectsRow final {
 	std::wstring label;
 	std::wstring description;
 	std::wstring trailing;
+	std::wstring tooltip;	//! hover text; empty means the row shows no tooltip
 	std::size_t hiddenWorktreeCount{};
 	bool currentProject = false;
 	bool primaryWorktree = false;

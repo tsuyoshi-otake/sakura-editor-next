@@ -38,6 +38,7 @@ constexpr int kRowHeightDip = 24;
 constexpr int kRowInsetDip = 10;
 constexpr int kChildIndentDip = 18;
 constexpr int kColumnGapDip = 8;
+constexpr int kTooltipMaxWidthDip = 480;
 constexpr int kListControlId = 1;
 constexpr UINT_PTR kListSubclassId = 0x7072;
 constexpr UINT kRemoveProjectMenuId = 1;
@@ -140,6 +141,11 @@ public:
 			Cleanup();
 			return false;
 		}
+		// Hover text is optional: without the tooltip the rows still work.
+		// The tool's TTF_SUBCLASS hook is installed before the list subclass
+		// below; the later subclass runs first, so a move retargets the text
+		// before the tooltip relays it.
+		CreateRowTooltip(instance);
 		if (::SetWindowSubclass(m_list, &CProjectsPage::ListSubclassProc,
 			kListSubclassId, reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
 			Cleanup();
@@ -397,6 +403,14 @@ public:
 				self->RemoveSelectedProject();
 				return 0;
 			}
+			if (message == WM_MOUSEMOVE) {
+				self->HoverRowAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+			} else if (message == WM_MOUSEWHEEL || message == WM_VSCROLL) {
+				// Scrolling moves another row under a pointer that did not move.
+				const LRESULT result = ::DefSubclassProc(window, message, wParam, lParam);
+				self->HoverRowUnderCursor();
+				return result;
+			}
 		}
 		return ::DefSubclassProc(window, message, wParam, lParam);
 	}
@@ -484,6 +498,80 @@ private:
 			::SendMessageW(m_list, WM_SETFONT, reinterpret_cast<WPARAM>(m_font.Get()), FALSE);
 			::SendMessageW(m_list, LB_SETITEMHEIGHT, 0, ScaleDip(kRowHeightDip, m_dpi));
 		}
+		if (m_tooltip != nullptr) {
+			(void)::SendMessageW(m_tooltip, TTM_SETMAXTIPWIDTH, 0, ScaleDip(kTooltipMaxWidthDip, m_dpi));
+		}
+	}
+
+	//! One tool covering the whole list; its text follows the hovered row.
+	void CreateRowTooltip(HINSTANCE instance) noexcept
+	{
+		m_tooltip = ::CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+			WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+			CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+			m_window, nullptr, instance, nullptr);
+		if (m_tooltip == nullptr) return;
+		TOOLINFOW tool = RowTool();
+		tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+		tool.lpszText = const_cast<wchar_t*>(L"");
+		if (::SendMessageW(m_tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool)) == FALSE) {
+			::DestroyWindow(m_tooltip);
+			m_tooltip = nullptr;
+		}
+	}
+
+	[[nodiscard]] TOOLINFOW RowTool() const noexcept
+	{
+		TOOLINFOW tool{};
+		tool.cbSize = sizeof(tool);
+		tool.hwnd = m_window;
+		tool.uId = reinterpret_cast<UINT_PTR>(m_list);
+		return tool;
+	}
+
+	//! The row whose painted rectangle contains `point`. LB_ITEMFROMPOINT
+	//! alone answers the nearest row for the empty space below the last one.
+	[[nodiscard]] std::optional<std::size_t> RowAt(const POINT point) const noexcept
+	{
+		if (m_list == nullptr || point.x < 0 || point.y < 0) return std::nullopt;
+		const LRESULT hit = ::SendMessageW(m_list, LB_ITEMFROMPOINT, 0, MAKELPARAM(point.x, point.y));
+		if (hit == LB_ERR || HIWORD(hit) != 0 || LOWORD(hit) >= m_rows.size()) return std::nullopt;
+		RECT item{};
+		if (::SendMessageW(m_list, LB_GETITEMRECT, LOWORD(hit), reinterpret_cast<LPARAM>(&item)) == LB_ERR
+			|| ::PtInRect(&item, point) == FALSE) return std::nullopt;
+		return static_cast<std::size_t>(LOWORD(hit));
+	}
+
+	void HoverRowAt(const POINT point) noexcept
+	{
+		const auto hovered = RowAt(point);
+		if (hovered == m_hoveredRow) return;
+		m_hoveredRow = hovered;
+		SetRowTooltipText(hovered ? m_rows[*hovered].tooltip : std::wstring{});
+	}
+
+	//! Re-resolves the hovered row after the rows or the scroll position
+	//! changed. A pointer that is not over the list hovers nothing.
+	void HoverRowUnderCursor() noexcept
+	{
+		m_hoveredRow.reset();
+		SetRowTooltipText({});
+		POINT cursor{};
+		if (m_list == nullptr || ::GetCursorPos(&cursor) == FALSE
+			|| ::WindowFromPoint(cursor) != m_list
+			|| ::ScreenToClient(m_list, &cursor) == FALSE) return;
+		HoverRowAt(cursor);
+	}
+
+	void SetRowTooltipText(const std::wstring& text) noexcept
+	{
+		if (m_tooltip == nullptr || m_list == nullptr) return;
+		// Hide the previous row's tip; the next pointer move over the new
+		// row starts the tooltip's own initial delay again.
+		(void)::SendMessageW(m_tooltip, TTM_POP, 0, 0);
+		TOOLINFOW tool = RowTool();
+		tool.lpszText = const_cast<wchar_t*>(text.c_str());
+		(void)::SendMessageW(m_tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
 	}
 
 	void Show(const bool visible) noexcept
@@ -805,6 +893,8 @@ private:
 		}
 		::SendMessageW(m_list, WM_SETREDRAW, TRUE, 0);
 		::RedrawWindow(m_list, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
+		// The hovered index may now name another row, or a new session name.
+		HoverRowUnderCursor();
 	}
 
 	void CaptureSelection() noexcept
@@ -1119,6 +1209,11 @@ private:
 		m_worktrees.reset();
 		m_agents.clear();
 		m_agentsChangedPending = false;
+		m_hoveredRow.reset();
+		// The tooltip is a top-level popup, owned by the frame rather than by
+		// m_window, so destroying m_window would not take it along.
+		if (m_tooltip != nullptr && ::IsWindow(m_tooltip)) ::DestroyWindow(m_tooltip);
+		m_tooltip = nullptr;
 		if (m_window != nullptr && ::IsWindow(m_window)) ::DestroyWindow(m_window);
 		m_list = nullptr;
 		m_window = nullptr;
@@ -1139,6 +1234,7 @@ private:
 	std::vector<ProjectsRow> m_rows;
 	std::vector<ProjectAgentEntry> m_agents;
 	std::optional<std::size_t> m_selectedIndex;
+	std::optional<std::size_t> m_hoveredRow;	//! row whose tooltip text is current
 	std::optional<std::size_t> m_currentProjectIndex;
 	std::optional<EProjectsRowKind> m_selectedKind;
 	std::wstring m_selectedWorktreeIdentity;
@@ -1151,6 +1247,7 @@ private:
 	RECT m_contentBounds{};
 	HWND m_window = nullptr;
 	HWND m_list = nullptr;
+	HWND m_tooltip = nullptr;
 	HWND m_parkingParent = nullptr;
 	viewcontainer::ViewContainerNativeHandle m_nativeParent{};
 	unsigned int m_dpi = 96;

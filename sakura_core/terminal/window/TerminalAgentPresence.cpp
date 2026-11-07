@@ -105,6 +105,27 @@ bool IsPathShapedTitle( std::wstring_view text ) noexcept
 		|| text.starts_with(L"../") || text.starts_with(L"..\\");
 }
 
+//! The tab label's rule (TerminalTabPresentation): C0 controls and DEL.
+constexpr bool IsControlCharacter( wchar_t character ) noexcept
+{
+	return character < 0x20 || character == 0x7F;
+}
+
+constexpr bool IsSessionTitleBlank( wchar_t character ) noexcept
+{
+	return IsBlank(character) || character == 0x00A0 || character == 0x3000;
+}
+
+//! Status decoration an agent CLI puts in front of its session name. Claude
+//! Code shows U+2733 when idle and animates U+25D0..U+25D3 while working.
+constexpr bool IsLeadingStatusGlyph( wchar_t character ) noexcept
+{
+	return character == L'*' || character == 0x00B7 || character == 0x2022 || character == 0x2219
+		|| (character >= 0x25A0 && character <= 0x25FF)	// Geometric Shapes
+		|| (character >= 0x2600 && character <= 0x27BF)	// Miscellaneous Symbols, Dingbats
+		|| (character >= 0x2800 && character <= 0x28FF);	// Braille Patterns (spinners)
+}
+
 std::optional<TerminalAgentKind> ResolveKind(
 	const std::optional<TerminalAgentKind> titleKind,
 	const std::span<const TerminalBackendJobProcess> jobProcesses ) noexcept
@@ -182,6 +203,24 @@ std::optional<TerminalAgentKind> TerminalAgentKindFromTitle(
 	return std::nullopt;
 }
 
+std::wstring TerminalAgentSessionTitle( const std::wstring_view sequenceTitle )
+{
+	std::wstring cleaned;
+	cleaned.reserve(sequenceTitle.size());
+	for( const wchar_t character : sequenceTitle ) {
+		if( !IsControlCharacter(character) ) cleaned.push_back(character);
+	}
+	std::wstring_view view(cleaned);
+	while( !view.empty() && (IsSessionTitleBlank(view.front()) || IsLeadingStatusGlyph(view.front())) ) {
+		view.remove_prefix(1);
+	}
+	while( !view.empty() && IsSessionTitleBlank(view.back()) ) view.remove_suffix(1);
+	if( view.empty() || view.size() > kMaximumTerminalAgentTitleLength || IsPathShapedTitle(view) ) {
+		return {};
+	}
+	return std::wstring(view);
+}
+
 bool TerminalAgentPresenceTracker::Resolve( TabState& state ) noexcept
 {
 	const auto next = ResolveKind(state.titleKind, state.agentProcesses);
@@ -195,7 +234,11 @@ bool TerminalAgentPresenceTracker::ApplyTitle(
 {
 	auto& state = m_tabs[tabId];
 	state.titleKind = PresenceKindFromTitle(sequenceTitle);
-	return Resolve(state);
+	auto sessionTitle = TerminalAgentSessionTitle(sequenceTitle);
+	const bool sessionTitleChanged = sessionTitle != state.sessionTitle;
+	state.sessionTitle = std::move(sessionTitle);
+	const bool presenceChanged = Resolve(state);
+	return presenceChanged || (sessionTitleChanged && state.resolved.has_value());
 }
 
 bool TerminalAgentPresenceTracker::ApplyJobObservation(
@@ -232,6 +275,12 @@ std::optional<TerminalAgentKind> TerminalAgentPresenceTracker::Presence(
 {
 	const auto found = m_tabs.find(tabId);
 	return found == m_tabs.end() ? std::nullopt : found->second.resolved;
+}
+
+std::wstring TerminalAgentPresenceTracker::SessionTitle( const std::uint64_t tabId ) const
+{
+	const auto found = m_tabs.find(tabId);
+	return found == m_tabs.end() ? std::wstring{} : found->second.sessionTitle;
 }
 
 std::vector<std::uint32_t> TerminalAgentPresenceTracker::AgentProcessIds(
