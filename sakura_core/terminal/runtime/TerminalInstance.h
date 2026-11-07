@@ -78,6 +78,9 @@ public:
 	//! false.
 	[[nodiscard]] bool OwnsProcess(
 		std::uint32_t processId, std::uint64_t creationTime) const noexcept;
+	//! Bounded job-membership observation (#402) while this instance is live.
+	//! Terminalized instances and backends without a job return nullopt.
+	[[nodiscard]] std::optional<TerminalBackendJobProcesses> ObserveJobProcesses() const noexcept;
 
 	//! These borrowed model/input views are valid only on the runtime's serialized
 	//! UI executor. A future projection lease will add generation-checked detach.

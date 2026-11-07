@@ -50,6 +50,7 @@ enum class EProjectsRowKind : std::uint8_t {
 	CurrentWorktree,
 	WorktreesToggle,
 	Worktree,
+	Agent,
 };
 
 enum class EProjectBranchSummaryStatus : std::uint8_t {
@@ -97,10 +98,23 @@ struct ProjectBranchDiscoveryPlan final {
 	std::vector<bool> truncatedProjects;
 };
 
+//! A terminal-hosted agent session the composition root projects under the
+//! current Project. Phase A carries presence only; never a PID, HWND, or a
+//! mutable title as identity.
+struct ProjectAgentEntry final {
+	std::wstring identity;	//! stable row identity such as L"terminal-instance:12"; never a PID or title
+	std::uint64_t terminalId{};	//! window-local terminal id handed back to activateAgent
+	std::wstring name;	//! product name, e.g. L"Claude Code", not localized
+	std::wstring detail;	//! terminal tab title for context; may be empty
+
+	[[nodiscard]] bool operator==(const ProjectAgentEntry&) const noexcept = default;
+};
+
 struct ProjectsRow final {
 	EProjectsRowKind kind{ EProjectsRowKind::Project };
 	std::size_t projectIndex{};
 	std::optional<std::size_t> worktreeIndex;
+	std::optional<std::size_t> agentIndex;
 	std::wstring label;
 	std::wstring description;
 	std::wstring trailing;
@@ -129,7 +143,9 @@ struct ProjectsProjection final {
 	std::span<const ProjectBranchSummary> branchSummaries = {},
 	std::optional<EProjectsRowKind> preferredKind = std::nullopt,
 	std::wstring_view preferredWorktreeIdentity = {},
-	const ProjectsTexts& texts = {});
+	const ProjectsTexts& texts = {},
+	std::span<const ProjectAgentEntry> agents = {},
+	std::wstring_view preferredAgentIdentity = {});
 
 //! Aggregates completed repository observations without inventing a branch for
 //! failed or truncated inputs.  A mixed result counts distinct branch labels.

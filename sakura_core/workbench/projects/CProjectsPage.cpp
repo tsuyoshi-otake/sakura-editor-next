@@ -16,6 +16,7 @@
 #include <CommCtrl.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <future>
@@ -32,6 +33,7 @@ namespace {
 constexpr wchar_t kWindowClass[] = L"SakuraProjectsPage";
 constexpr UINT_PTR kRefreshTimer = 0x7072;
 constexpr UINT kRefreshPollMilliseconds = 50;
+constexpr UINT kAgentsChangedMessage = WM_APP + 0x72;
 constexpr int kRowHeightDip = 24;
 constexpr int kRowInsetDip = 10;
 constexpr int kChildIndentDip = 18;
@@ -144,6 +146,20 @@ public:
 			return false;
 		}
 		m_created = true;
+		// The registered listener may arrive from a foreign thread; it only
+		// coalesces one posted message back to this page's window and never
+		// touches page state directly.
+		if (m_options.agentsChanged) {
+			m_options.agentsChanged([this] {
+				const HWND window = m_window;
+				if (window == nullptr) return;
+				bool expected = false;
+				if (!m_agentsChangedPending.compare_exchange_strong(expected, true)) return;
+				if (::PostMessageW(window, kAgentsChangedMessage, 0, 0) == FALSE) {
+					m_agentsChangedPending = false;
+				}
+			});
+		}
 		ApplyDpi(96);
 		ApplyVisibility();
 		return true;
@@ -413,6 +429,9 @@ public:
 		case WM_TIMER:
 			if (wParam == kRefreshTimer) { self->PollRefresh(); return 0; }
 			break;
+		case kAgentsChangedMessage:
+			self->OnAgentsChangedMessage();
+			return 0;
 		case WM_COMMAND:
 			if (LOWORD(wParam) == kListControlId && HIWORD(wParam) == LBN_SELCHANGE) {
 				self->CaptureSelection();
@@ -494,11 +513,29 @@ private:
 	{
 		if (!m_created || !m_discovery) return;
 		if (m_currentBranchRequest) {
+			// The current rows stay on screen until the cancelled request
+			// restarts, so they are reprojected against the new agent list
+			// instead of indexing it with stale agentIndex values.
+			ReloadAgents(true);
+			RebuildProjection();
 			m_restartPending = true;
 			(void)m_discovery->CancelCurrent();
 			return;
 		}
+		ReloadAgents(true);
 		BeginBranchRefresh();
+	}
+
+	//! Replaces m_agents. Callers that keep the current selection capture it
+	//! before this call, while the rows still index the old list; callers then
+	//! reproject so no row keeps a stale agentIndex.
+	void ReloadAgents(const bool refresh) noexcept
+	{
+		m_agents.clear();
+		if (m_options.agents) {
+			try { m_agents = m_options.agents(refresh); }
+			catch (...) { m_agents.clear(); }
+		}
 	}
 
 	void BeginBranchRefresh() noexcept
@@ -717,6 +754,17 @@ private:
 		StartNextBranchRequest();
 	}
 
+	void OnAgentsChangedMessage() noexcept
+	{
+		m_agentsChangedPending = false;
+		if (!m_created) return;
+		CaptureSelection();
+		ReloadAgents(false);
+		// Agent presence changed: reproject rows only; Git discovery state,
+		// the catalog, and the workspace snapshot all stay untouched.
+		RebuildProjection();
+	}
+
 	void RebuildProjection() noexcept
 	{
 		try {
@@ -729,7 +777,8 @@ private:
 			}
 			const auto projection = ProjectProjects(m_projects, m_workspace,
 				m_worktrees ? &*m_worktrees : nullptr, m_worktreesExpanded,
-				summaries, m_selectedKind, m_selectedWorktreeIdentity, m_texts);
+				summaries, m_selectedKind, m_selectedWorktreeIdentity, m_texts,
+				m_agents, m_selectedAgentIdentity);
 			m_rows = projection.rows;
 			m_selectedIndex = projection.selectedRowIndex;
 		} catch (...) {
@@ -772,6 +821,12 @@ private:
 		} else {
 			m_selectedWorktreeIdentity.clear();
 		}
+		if (row.kind == EProjectsRowKind::Agent && row.agentIndex
+			&& *row.agentIndex < m_agents.size()) {
+			m_selectedAgentIdentity = m_agents[*row.agentIndex].identity;
+		} else {
+			m_selectedAgentIdentity.clear();
+		}
 	}
 
 	void SetSelectedToggle(const bool expanded) noexcept
@@ -801,6 +856,9 @@ private:
 		try {
 			if (row.kind == EProjectsRowKind::Project && row.projectIndex < m_projects.size()) {
 				status = m_options.activateProject(m_projects[row.projectIndex], row.currentProject);
+			} else if (row.kind == EProjectsRowKind::Agent && row.agentIndex
+				&& *row.agentIndex < m_agents.size() && m_options.activateAgent) {
+				status = m_options.activateAgent(m_agents[*row.agentIndex].terminalId);
 			} else if (row.worktreeIndex && m_worktrees
 				&& *row.worktreeIndex < m_worktrees->rows.size()) {
 				const auto& worktree = m_worktrees->rows[*row.worktreeIndex];
@@ -841,6 +899,7 @@ private:
 		m_selectedIndex.reset();
 		m_selectedKind.reset();
 		m_selectedWorktreeIdentity.clear();
+		m_selectedAgentIdentity.clear();
 		Refresh();
 	}
 
@@ -971,7 +1030,17 @@ private:
 				DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 			labelRect.left += childIndent;
 		} else {
-			labelRect.left += childIndent;
+			// An Agent row nests under the CurrentWorktree row when that row
+			// exists for the same Project, otherwise under the Project row.
+			int rowIndent = childIndent;
+			if (row.kind == EProjectsRowKind::Agent
+				&& std::ranges::any_of(m_rows, [&row](const auto& candidate) {
+					return candidate.kind == EProjectsRowKind::CurrentWorktree
+						&& candidate.projectIndex == row.projectIndex;
+				})) {
+				rowIndent += childIndent;
+			}
+			labelRect.left += rowIndent;
 			if (row.primaryWorktree) trailing = m_texts.primary;
 			if (row.kind == EProjectsRowKind::CurrentWorktree) {
 				if (!trailing.empty()) trailing += L"  ";
@@ -979,13 +1048,23 @@ private:
 			}
 			const int dot = ScaleDip(6, m_dpi);
 			RECT dotRect = item.rcItem;
-			dotRect.left = item.rcItem.left + inset + ScaleDip(2, m_dpi);
+			dotRect.left = item.rcItem.left + inset + ScaleDip(2, m_dpi)
+				+ (rowIndent - childIndent);
 			dotRect.right = dotRect.left + dot;
 			dotRect.top += (item.rcItem.bottom - item.rcItem.top - dot) / 2;
 			dotRect.bottom = dotRect.top + dot;
-			::SetDCBrushColor(item.hDC, row.kind == EProjectsRowKind::CurrentWorktree
-				? m_palette.activityBarBadgeBackground.ToColorRef() : secondary);
-			::Ellipse(item.hDC, dotRect.left, dotRect.top, dotRect.right, dotRect.bottom);
+			if (row.kind == EProjectsRowKind::Agent) {
+				// Phase A presence marker: a filled rounded square in the
+				// secondary color, distinct from the worktree dot.
+				::SetDCBrushColor(item.hDC, secondary);
+				const int corner = ScaleDip(2, m_dpi);
+				::RoundRect(item.hDC, dotRect.left, dotRect.top,
+					dotRect.right, dotRect.bottom, corner, corner);
+			} else {
+				::SetDCBrushColor(item.hDC, row.kind == EProjectsRowKind::CurrentWorktree
+					? m_palette.activityBarBadgeBackground.ToColorRef() : secondary);
+				::Ellipse(item.hDC, dotRect.left, dotRect.top, dotRect.right, dotRect.bottom);
+			}
 		}
 		if (!trailing.empty()) {
 			SIZE trailingSize{};
@@ -1020,6 +1099,11 @@ private:
 
 	void Cleanup() noexcept
 	{
+		// Unregister before the window goes away so no stale listener can post
+		// into a destroyed HWND.
+		if (m_options.agentsChanged) {
+			try { m_options.agentsChanged({}); } catch (...) {}
+		}
 		if (m_window != nullptr) (void)::KillTimer(m_window, kRefreshTimer);
 		m_attachedHost.reset();
 		m_nativeParent = 0;
@@ -1033,6 +1117,8 @@ private:
 		m_rows.clear();
 		m_projects.clear();
 		m_worktrees.reset();
+		m_agents.clear();
+		m_agentsChangedPending = false;
 		if (m_window != nullptr && ::IsWindow(m_window)) ::DestroyWindow(m_window);
 		m_list = nullptr;
 		m_window = nullptr;
@@ -1051,10 +1137,13 @@ private:
 	std::deque<ProjectBranchDiscoveryRequest> m_branchQueue;
 	std::optional<ProjectBranchDiscoveryRequest> m_currentBranchRequest;
 	std::vector<ProjectsRow> m_rows;
+	std::vector<ProjectAgentEntry> m_agents;
 	std::optional<std::size_t> m_selectedIndex;
 	std::optional<std::size_t> m_currentProjectIndex;
 	std::optional<EProjectsRowKind> m_selectedKind;
 	std::wstring m_selectedWorktreeIdentity;
+	std::wstring m_selectedAgentIdentity;
+	std::atomic_bool m_agentsChangedPending{ false };
 	std::wstring m_currentWorkspaceRoot;
 	std::optional<viewcontainer::ViewContainerPageHost> m_attachedHost;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);

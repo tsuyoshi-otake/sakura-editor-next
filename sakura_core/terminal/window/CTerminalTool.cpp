@@ -15,6 +15,7 @@
 #include "terminal/window/TerminalHeaderLayout.h"
 #include "terminal/window/TerminalPaneLayout.h"
 #include "terminal/window/TerminalTabPresentation.h"
+#include "terminal/window/TerminalAgentPresence.h"
 #include "terminal/window/CTerminalWnd.h"
 #include "workbench/IconMetrics.h"
 #include "workbench/icons/CCodiconFont.h"
@@ -42,6 +43,7 @@ constexpr int kTabHeightDip = 30;
 constexpr int kTerminalTabsRowHeightDip = 24;
 constexpr UINT kOutputAvailableMessage = WM_APP + 0x3a1;
 constexpr UINT kStateChangedMessage = WM_APP + 0x3a2;
+constexpr UINT kJobProcessMessage = WM_APP + 0x3a3;
 constexpr UINT_PTR kSynchronizedOutputTimer = 0x5344;
 constexpr UINT_PTR kProtocolInputRetryTimer = 0x5346;
 constexpr UINT kProtocolInputRetryMilliseconds = 30;
@@ -100,7 +102,26 @@ struct NotificationGate {
 	bool alive{ true };
 	bool stateWakePending{};
 	std::unordered_set<std::uint64_t> outputWakePending;
+	//! Job-membership hints (#402) that could change a tab's agent presence.
+	std::unordered_set<std::uint64_t> jobWakePending;
+	//! Agent processes per tab from the last UI-thread observation. Only their
+	//! exit, or the start of an agent image, wakes the UI thread, so a build that
+	//! spawns hundreds of compilers costs one image-name check per process here.
+	std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> agentProcessIds;
 };
+
+//! Runs on the backend notification worker with the gate locked.
+bool IsAgentPresenceHint( const NotificationGate& gate, const TerminalTabEvent& event )
+{
+	if( !event.jobProcess ) return false;
+	if( event.jobProcess->kind == TerminalJobProcessEventKind::Started ) {
+		return TerminalAgentKindFromImageFileName(event.jobProcess->imageFileName).has_value();
+	}
+	const auto tracked = gate.agentProcessIds.find(event.tabId);
+	return tracked != gate.agentProcessIds.end()
+		&& std::find(tracked->second.begin(), tracked->second.end(), event.jobProcess->processId)
+			!= tracked->second.end();
+}
 
 std::wstring FormatProfileLabel( const TerminalProfile& profile )
 {
@@ -221,6 +242,16 @@ void DrawHeaderIcon( HDC dc, const RECT& bounds, TerminalHeaderTarget target, bo
 		::LineTo(dc, center.x, bottom);
 		break;
 	}
+	case TerminalHeaderTarget::SplitDown: {
+		const int left = center.x - half;
+		const int top = center.y - std::max(3, ScaleDip(5, dpi));
+		const int right = center.x + half;
+		const int bottom = center.y + std::max(3, ScaleDip(5, dpi));
+		::Rectangle(dc, left, top, right, bottom);
+		::MoveToEx(dc, left, center.y, nullptr);
+		::LineTo(dc, right, center.y);
+		break;
+	}
 	case TerminalHeaderTarget::Kill: {
 		const int bodyHalf = std::max(3, ScaleDip(4, dpi));
 		const int top = center.y - ScaleDip(4, dpi);
@@ -303,6 +334,9 @@ struct CTerminalTool::Impl {
 					target = gate->window;
 					if( event.kind == TerminalTabEventKind::OutputAvailable ) {
 						post = gate->outputWakePending.insert(event.tabId).second;
+					} else if( event.kind == TerminalTabEventKind::JobProcess ) {
+						post = IsAgentPresenceHint(*gate, event)
+							&& gate->jobWakePending.insert(event.tabId).second;
 					} else if( !gate->stateWakePending ) {
 						gate->stateWakePending = true;
 						post = true;
@@ -311,11 +345,14 @@ struct CTerminalTool::Impl {
 			}
 			if( !target || !post ) return;
 			const UINT message = event.kind == TerminalTabEventKind::OutputAvailable
-				? kOutputAvailableMessage : kStateChangedMessage;
+				? kOutputAvailableMessage
+				: event.kind == TerminalTabEventKind::JobProcess ? kJobProcessMessage : kStateChangedMessage;
 			if( ::PostMessageW(target, message, static_cast<WPARAM>(event.tabId), 0) ) return;
 			const std::lock_guard lock(gate->mutex);
 			if( event.kind == TerminalTabEventKind::OutputAvailable ) {
 				gate->outputWakePending.erase(event.tabId);
+			} else if( event.kind == TerminalTabEventKind::JobProcess ) {
+				gate->jobWakePending.erase(event.tabId);
 			} else {
 				gate->stateWakePending = false;
 			}
@@ -327,6 +364,11 @@ struct CTerminalTool::Impl {
 	std::unique_ptr<TerminalTabManager> manager;
 	TerminalNativeFrameBridgePtr nativeFrameBridge;
 	std::uint64_t nativeDeviceEpoch = 1;
+	//! Which tabs host an AI agent CLI (#402). Updated only by events: a title
+	//! change re-resolves from cached state, and only an agent start/exit hint or
+	//! a session/tab-set change re-observes a job. Nothing here polls.
+	TerminalAgentPresenceTracker agentPresence;
+	std::function<void()> agentPresenceSink;
 
 	// A terminal session belongs to exactly one group; only the selected group
 	// owns native viewport HWNDs at a time. The group keeps a recursive split
@@ -1048,6 +1090,7 @@ struct CTerminalTool::Impl {
 		case TerminalHeaderTarget::Profile:
 			return visibility.activeTerminal;
 		case TerminalHeaderTarget::Split:
+		case TerminalHeaderTarget::SplitDown:
 			return visibility.inlineActions;
 		case TerminalHeaderTarget::Kill:
 			return visibility.inlineActions && FocusedTabId().has_value();
@@ -1185,6 +1228,7 @@ struct CTerminalTool::Impl {
 			TerminalHeaderTarget::New,
 			TerminalHeaderTarget::Dropdown,
 			TerminalHeaderTarget::Split,
+			TerminalHeaderTarget::SplitDown,
 			TerminalHeaderTarget::Kill,
 			TerminalHeaderTarget::More,
 			TerminalHeaderTarget::Maximize,
@@ -1451,6 +1495,7 @@ struct CTerminalTool::Impl {
 		if( result.sequenceChanged ) {
 			InvalidateTabs();
 			InvalidateTerminalTabs();
+			OnAgentTitleChanged(tabId);
 		}
 		// OSC 52 write from the application (for example a TUI's own selection
 		// copy). Best effort: a busy clipboard drops it, as in xterm.js.
@@ -1490,6 +1535,69 @@ struct CTerminalTool::Impl {
 		// arriving during the drain post the next wake. This is event driven and does
 		// not impose a 16 ms application timer or hold a short echo for a later tick.
 		HandleOutput(tabId);
+	}
+
+	void ConsumeJobWake( std::uint64_t tabId )
+	{
+		const std::lock_guard lock(gate->mutex);
+		gate->jobWakePending.erase(tabId);
+	}
+
+	void NotifyAgentPresence() noexcept
+	{
+		if( !agentPresenceSink ) return;
+		try {
+			const auto sink = agentPresenceSink;
+			sink();
+		} catch( ... ) {
+			// The Projects projection is advisory; it must not unwind the panel.
+		}
+	}
+
+	//! Hands the observed agent PIDs to the worker-side hint filter.
+	void PublishAgentProcessIds( std::uint64_t tabId )
+	{
+		auto ids = agentPresence.AgentProcessIds(tabId);
+		const std::lock_guard lock(gate->mutex);
+		if( ids.empty() ) gate->agentProcessIds.erase(tabId);
+		else gate->agentProcessIds[tabId] = std::move(ids);
+	}
+
+	bool ObserveAgentProcesses( std::uint64_t tabId )
+	{
+		const bool changed = agentPresence.ApplyJobObservation(tabId, manager->ObserveJobProcesses(tabId));
+		PublishAgentProcessIds(tabId);
+		return changed;
+	}
+
+	//! Brings presence in line with the current tab set. `observe` re-reads every
+	//! job; it is used for session and tab-set changes and explicit refreshes,
+	//! each bounded by the tab count, never on a timer.
+	bool ReconcileAgentPresence( bool observe )
+	{
+		const auto tabs = manager->Snapshot();
+		std::vector<std::uint64_t> live;
+		live.reserve(tabs.size());
+		for( const auto& tab : tabs ) live.push_back(tab.id);
+		bool changed = agentPresence.Retain(live);
+		{
+			const std::lock_guard lock(gate->mutex);
+			std::erase_if(gate->agentProcessIds, [&live](const auto& entry) {
+				return std::find(live.begin(), live.end(), entry.first) == live.end();
+			});
+		}
+		for( const auto& tab : tabs ) {
+			if( agentPresence.ApplyTitle(tab.id, tab.sequenceTitle) ) changed = true;
+			if( observe && ObserveAgentProcesses(tab.id) ) changed = true;
+		}
+		return changed;
+	}
+
+	void OnAgentTitleChanged( std::uint64_t tabId )
+	{
+		const auto tabs = manager->Snapshot();
+		const auto found = std::find_if(tabs.begin(), tabs.end(), [tabId](const TerminalTabSnapshot& tab) { return tab.id == tabId; });
+		if( found != tabs.end() && agentPresence.ApplyTitle(tabId, found->sequenceTitle) ) NotifyAgentPresence();
 	}
 
 	void ConsumeOutputWake( std::uint64_t tabId )
@@ -1572,8 +1680,49 @@ struct CTerminalTool::Impl {
 				::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(profilesMenu), LS(STR_TERMINAL_POWERSHELL_PROFILE));
 			}
 		}
-		::TrackPopupMenu(menu, TPM_RIGHTBUTTON, x, y, 0, menuOwner, nullptr);
+		// The owner may be the Panel's header host rather than this tool window, and
+		// that window's WM_COMMAND handler does not know these IDs. Take the chosen
+		// ID back synchronously and dispatch it here so every owner reaches the same
+		// terminal commands.
+		const UINT command = static_cast<UINT>(::TrackPopupMenu(menu,
+			TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, x, y, 0, menuOwner, nullptr));
 		::DestroyMenu(menu);
+		if( command != 0 ) ExecuteContextMenuCommand(command);
+	}
+
+	void ExecuteContextMenuCommand( UINT command )
+	{
+		if( closed ) return;
+		if( command >= kCommandProfileFirst && command < kCommandProfileFirst + profileCommandPaths.size() ) {
+			if( profileService ) {
+				const auto index = static_cast<std::size_t>(command - kCommandProfileFirst);
+				(void)profileService->SelectProfile(profileCommandPaths[index]);
+			}
+			return;
+		}
+		if( command >= kCommandShortcutPresetFirst
+			&& command < kCommandShortcutPresetFirst + kShortcutPresets.size() ) {
+			const auto index = static_cast<std::size_t>(command - kCommandShortcutPresetFirst);
+			ApplyShortcutPreset(kShortcutPresets[index], true);
+			return;
+		}
+		if( command >= kCommandTabFirst && command < kCommandTabFirst + tabCommandIds.size() ) {
+			const auto index = static_cast<std::size_t>(command - kCommandTabFirst);
+			static_cast<void>(SelectTerminal(tabCommandIds[index]));
+			return;
+		}
+		switch( command ) {
+		case kCommandNewTerminal: static_cast<void>(AddTerminal()); break;
+		case kCommandRunTask: if( panelActions.runCommand ) panelActions.runCommand("workbench.action.tasks.runTask"); break;
+		case kCommandRunBuildTask: if( panelActions.runCommand ) panelActions.runCommand("workbench.action.tasks.build"); break;
+		case kCommandRestartTerminal: if( const auto id = FocusedTabId() ) RestartTerminal(*id); break;
+		case kCommandCloseTerminal: if( const auto id = FocusedTabId() ) DeleteTerminal(*id); break;
+		case kCommandRedetectPowerShell: if( profileService ) profileService->Redetect(); break;
+		case kCommandSplitTerminal: static_cast<void>(SplitTerminalRight()); break;
+		case kCommandSplitTerminalDown: static_cast<void>(SplitTerminalDown()); break;
+		case kCommandCloseSplit: CloseTerminalSplit(); break;
+		default: break;
+		}
 	}
 
 	void ShowHeaderMenu( TerminalHeaderTarget target, HWND owner = nullptr,
@@ -1607,6 +1756,12 @@ struct CTerminalTool::Impl {
 			// Match the editor Split action: Alt chooses the orthogonal orientation.
 			if( (::GetKeyState(VK_MENU) & 0x8000) != 0 ) static_cast<void>(SplitTerminalDown());
 			else static_cast<void>(SplitTerminalRight());
+			break;
+		case TerminalHeaderTarget::SplitDown:
+			// Fork extension: a visible stacked split. Alt mirrors Split's
+			// orthogonal choice.
+			if( (::GetKeyState(VK_MENU) & 0x8000) != 0 ) static_cast<void>(SplitTerminalRight());
+			else static_cast<void>(SplitTerminalDown());
 			break;
 		case TerminalHeaderTarget::Kill:
 			if( const auto id = FocusedTabId() ) static_cast<void>(DeleteTerminal(*id));
@@ -1857,41 +2012,6 @@ struct CTerminalTool::Impl {
 			ShowContextMenu(point.x, point.y);
 			return 0;
 		}
-		case WM_COMMAND:
-			if( const UINT command = LOWORD(wParam);
-				command >= kCommandProfileFirst && command < kCommandProfileFirst + profileCommandPaths.size() ) {
-				if( profileService ) {
-					const auto index = static_cast<std::size_t>(command - kCommandProfileFirst);
-					(void)profileService->SelectProfile(profileCommandPaths[index]);
-				}
-				return 0;
-			}
-			if( const UINT command = LOWORD(wParam);
-				command >= kCommandShortcutPresetFirst
-				&& command < kCommandShortcutPresetFirst + kShortcutPresets.size() ) {
-				const auto index = static_cast<std::size_t>(command - kCommandShortcutPresetFirst);
-				ApplyShortcutPreset(kShortcutPresets[index], true);
-				return 0;
-			}
-			if( const UINT command = LOWORD(wParam);
-				command >= kCommandTabFirst && command < kCommandTabFirst + tabCommandIds.size() ) {
-				const auto index = static_cast<std::size_t>(command - kCommandTabFirst);
-				static_cast<void>(SelectTerminal(tabCommandIds[index]));
-				return 0;
-			}
-			switch( LOWORD(wParam) ) {
-			case kCommandNewTerminal: AddTerminal(); break;
-			case kCommandRunTask: if( panelActions.runCommand ) panelActions.runCommand("workbench.action.tasks.runTask"); break;
-			case kCommandRunBuildTask: if( panelActions.runCommand ) panelActions.runCommand("workbench.action.tasks.build"); break;
-			case kCommandRestartTerminal: if( const auto id = FocusedTabId() ) RestartTerminal(*id); break;
-			case kCommandCloseTerminal: if( const auto id = FocusedTabId() ) DeleteTerminal(*id); break;
-			case kCommandRedetectPowerShell: if( profileService ) profileService->Redetect(); break;
-			case kCommandSplitTerminal: SplitTerminalRight(); break;
-			case kCommandSplitTerminalDown: SplitTerminalDown(); break;
-			case kCommandCloseSplit: CloseTerminalSplit(); break;
-			default: break;
-			}
-			return 0;
 		case kOutputAvailableMessage:
 			ConsumeOutputWake(static_cast<std::uint64_t>(wParam));
 			ScheduleOutputFrame(static_cast<std::uint64_t>(wParam));
@@ -1917,6 +2037,11 @@ struct CTerminalTool::Impl {
 			ConsumeStateWake();
 			InvalidateTabs();
 			InvalidateTerminalTabs();
+			if( ReconcileAgentPresence(true) ) NotifyAgentPresence();
+			return 0;
+		case kJobProcessMessage:
+			ConsumeJobWake(static_cast<std::uint64_t>(wParam));
+			if( ObserveAgentProcesses(static_cast<std::uint64_t>(wParam)) ) NotifyAgentPresence();
 			return 0;
 		default:
 			return ::DefWindowProcW(window, message, wParam, lParam);
@@ -2009,17 +2134,34 @@ struct CTerminalTool::Impl {
 	{
 		const auto tabs = manager->Snapshot();
 		if( std::none_of(tabs.begin(), tabs.end(), [tabId](const TerminalTabSnapshot& tab) { return tab.id == tabId; }) ) return false;
+		const bool wasActive = manager->ActiveTabId() == tabId;
+		std::vector<std::uint64_t> remainingInGroup;
+		std::size_t removedIndex = 0;
+		if( const auto owner = FindGroup(tabId) ) {
+			remainingInGroup = paneGroups[*owner].tabIds;
+			const auto found = std::find(remainingInGroup.begin(), remainingInGroup.end(), tabId);
+			removedIndex = static_cast<std::size_t>(found - remainingInGroup.begin());
+			if( found != remainingInGroup.end() ) remainingInGroup.erase(found);
+		}
 		DestroyPaneRenderers();
 		if( !manager->DeleteTab(tabId) ) {
 			if( window ) static_cast<void>(RebuildPaneRenderers());
 			return false;
 		}
 		RemoveTabFromGroups(tabId);
-		// Preserve the tab manager's deterministic successor: it selects the next
-		// tab in tab order, or the preceding tab when the deleted terminal was last.
-		// Re-selecting a wrapped pane within this split group makes repeated Close
-		// Terminal Split jump back to the first pane instead of closing the focused
-		// neighbor.
+		// VS Code TerminalGroup: removing the active instance activates the one now
+		// at the same index in that group, or the last one when it was last. Only
+		// an emptied group hands selection to the group RemoveTabFromGroups chose.
+		// The manager's successor follows global creation order and can belong to
+		// another group, so it is used only when no group-local choice exists.
+		std::optional<std::uint64_t> successor;
+		if( wasActive && !remainingInGroup.empty() ) {
+			successor = remainingInGroup[(std::min)(removedIndex, remainingInGroup.size() - 1)];
+		} else if( wasActive && activePaneGroup && *activePaneGroup < paneGroups.size()
+			&& !paneGroups[*activePaneGroup].tabIds.empty() ) {
+			successor = paneGroups[*activePaneGroup].tabIds.front();
+		}
+		if( successor ) static_cast<void>(manager->SelectTab(*successor));
 		if( const auto activeId = manager->ActiveTabId() ) activePaneGroup = FindGroup(*activeId);
 		if( window ) {
 			static_cast<void>(RebuildPaneRenderers());
@@ -2027,6 +2169,7 @@ struct CTerminalTool::Impl {
 		}
 		InvalidateTabs();
 		InvalidateTerminalTabs();
+		if( ReconcileAgentPresence(false) ) NotifyAgentPresence();
 		return true;
 	}
 
@@ -2532,7 +2675,10 @@ void CTerminalTool::Close()
 		m_impl->gate->window = nullptr;
 		m_impl->gate->stateWakePending = false;
 		m_impl->gate->outputWakePending.clear();
+		m_impl->gate->jobWakePending.clear();
+		m_impl->gate->agentProcessIds.clear();
 	}
+	m_impl->agentPresenceSink = {};
 	if( m_impl->window ) ::KillTimer(m_impl->window, kSynchronizedOutputTimer);
 	if( m_impl->window ) ::KillTimer(m_impl->window, kProtocolInputRetryTimer);
 	m_impl->DetachNativeFrameRuntime();
@@ -2559,13 +2705,19 @@ void CTerminalTool::SetWorkingDirectory( std::wstring workingDirectory )
 TerminalWorkspaceSwitchResult CTerminalTool::SwitchWorkspace(
 	TerminalWorkspaceSwitchRequest request )
 {
-	return m_impl->SwitchWorkspace(std::move(request));
+	auto result = m_impl->SwitchWorkspace(std::move(request));
+	// The visible tab set is now another workspace's projection; agents of the
+	// detached one are no longer this window's current project's agents.
+	if( !m_impl->closed && m_impl->ReconcileAgentPresence(true) ) m_impl->NotifyAgentPresence();
+	return result;
 }
 
 TerminalWorkspaceResetResult CTerminalTool::ResetForWorkspace(
 	std::wstring workingDirectory, bool recreateSession )
 {
-	return m_impl->ResetForWorkspace(std::move(workingDirectory), recreateSession);
+	auto result = m_impl->ResetForWorkspace(std::move(workingDirectory), recreateSession);
+	if( !m_impl->closed && m_impl->ReconcileAgentPresence(true) ) m_impl->NotifyAgentPresence();
+	return result;
 }
 
 void CTerminalTool::SetPalette( const theme::ThemePalette& palette )
@@ -2718,6 +2870,32 @@ TerminalPaneOrientation CTerminalTool::ActivePaneOrientation() const noexcept
 std::vector<TerminalTabSnapshot> CTerminalTool::Tabs() const
 {
 	return m_impl->manager->Snapshot();
+}
+
+std::vector<TerminalAgentPresenceRecord> CTerminalTool::AgentPresence( bool refresh )
+{
+	std::vector<TerminalAgentPresenceRecord> result;
+	if( m_impl->closed ) return result;
+	// The caller asked for current data and receives it, so a refresh-driven
+	// change is not echoed back through the sink.
+	if( refresh ) static_cast<void>(m_impl->ReconcileAgentPresence(true));
+	const auto tabs = m_impl->manager->Snapshot();
+	const auto projection = m_impl->manager->ProjectionSnapshot();
+	for( const auto& tab : tabs ) {
+		const auto kind = m_impl->agentPresence.Presence(tab.id);
+		if( !kind ) continue;
+		const auto record = std::find_if(projection.begin(), projection.end(),
+			[&tab](const TerminalTabProjectionRecord& value) { return value.tabId == tab.id; });
+		if( record == projection.end() ) continue;
+		result.push_back({ tab.id, record->instanceId, *kind, m_impl->TabTitle(tab) });
+	}
+	return result;
+}
+
+void CTerminalTool::SetAgentPresenceSink( std::function<void()> sink )
+{
+	if( m_impl->closed ) return;
+	m_impl->agentPresenceSink = std::move(sink);
 }
 
 std::optional<std::uint64_t> CTerminalTool::ActiveTerminalId() const noexcept

@@ -3141,6 +3141,37 @@ bool CEditWnd::InitializeWorkbench()
 						? workbench::projects::EProjectsRemovalStatus::Removed
 						: workbench::projects::EProjectsRemovalStatus::Failed;
 				};
+				// #402 Phase A: the window's terminal agent presence, projected under
+				// the current Project. Identity is the runtime terminal instance;
+				// the tab id only routes activation back to the same terminal.
+				options.agents = [this](const bool refresh) {
+					std::vector<workbench::projects::ProjectAgentEntry> entries;
+					if (m_terminalTool == nullptr) return entries;
+					for (auto& record : m_terminalTool->AgentPresence(refresh)) {
+						entries.push_back({
+							.identity = L"terminal-instance:" + std::to_wstring(record.instanceId.value),
+							.terminalId = record.tabId,
+							.name = std::wstring(terminal::TerminalAgentDisplayName(record.kind)),
+							.detail = std::move(record.title),
+						});
+					}
+					return entries;
+				};
+				options.activateAgent = [this](const std::uint64_t terminalId) {
+					if (m_terminalTool == nullptr || GetHwnd() == nullptr) {
+						return workbench::projects::EProjectsActivationStatus::Failed;
+					}
+					// VS Code's terminal-tab activation: reveal the Terminal view in
+					// its Panel, then make that instance active and focused.
+					if (!ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Terminal, true)
+						|| !m_terminalTool->SelectTerminal(terminalId)) {
+						return workbench::projects::EProjectsActivationStatus::Failed;
+					}
+					return workbench::projects::EProjectsActivationStatus::FocusedCurrentWindow;
+				};
+				options.agentsChanged = [this](std::function<void()> listener) {
+					m_projectsAgentsListener = std::move(listener);
+				};
 				return workbench::projects::CreateProjectsPage(GetHwnd(), std::move(options));
 			},
 		},
@@ -3368,6 +3399,11 @@ bool CEditWnd::InitializeWorkbench()
 	m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
 	m_terminalTool->SetShortcutPresetSink([this](terminal::TerminalShortcutPreset preset) {
 		(void)PersistTerminalShortcutPresetSelection(preset);
+	});
+	// Presence changes arrive on the UI thread; the Projects page coalesces
+	// them into one posted reprojection.
+	m_terminalTool->SetAgentPresenceSink([this]() {
+		if (m_projectsAgentsListener) m_projectsAgentsListener();
 	});
 	ApplyTerminalShortcutPresetSetting();
 	ApplyTerminalScrollbackSetting();
@@ -6682,6 +6718,7 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_searchTool = nullptr;
 	m_extensionsTool = nullptr;
 	m_terminalTool = nullptr;
+	m_projectsAgentsListener = {};
 	m_bottomWorkbenchMaximized = false;
 	m_workspaceContext.reset();
 }
@@ -7512,12 +7549,14 @@ std::optional<std::string> CEditWnd::NextTaskExecutionOperationId()
 		return std::nullopt;
 	}
 	const auto sequence = ++m_taskExecutionOperationSequence;
-	std::string operationId = "sakura.native-task.v1/";
+	// TaskExecutionService accepts only [A-Za-z0-9._:-]; a '/' separator made
+	// every native task start fail before it reached the service.
+	std::string operationId = "sakura.native-task.v1:";
 	operationId += std::to_string(static_cast<unsigned long long>(::GetCurrentProcessId()));
-	operationId += '/';
+	operationId += ':';
 	operationId += std::to_string(static_cast<unsigned long long>(
 		reinterpret_cast<std::uintptr_t>(GetHwnd())));
-	operationId += '/';
+	operationId += ':';
 	operationId += std::to_string(static_cast<unsigned long long>(sequence));
 	if (!workbench::tasks::TaskExecutionService::IsValidOperationId(operationId)) return std::nullopt;
 	return operationId;

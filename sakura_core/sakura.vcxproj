@@ -590,6 +590,7 @@
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalHeaderLayout.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalPaneLayout.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalTabPresentation.h" />
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalAgentPresence.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalInput.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalClipboardPaste.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalRenderPlan.h" />
@@ -1359,6 +1360,7 @@
     <ClCompile Include="..\sakura_core\terminal\window\TerminalLink.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalPaneLayout.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalTabPresentation.cpp" />
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalAgentPresence.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalRenderPlan.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp" />
     <ClCompile Include="..\sakura_core\theme\CThemeService.cpp" />

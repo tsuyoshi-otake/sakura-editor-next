@@ -172,3 +172,25 @@ sessions, so a Task terminal is not yet visible as a panel tab the way
 VS Code reveals its task terminal. Surfacing Task instances as panel tabs is
 a future projection; it must keep the same runtime-owned instance authority
 rather than duplicating a HWND-local buffer.
+
+## Native task operation IDs must pass the service validator (2026-11-07)
+
+Symptom: "Run Task", "Run Build Task" (Terminal menu, Command Palette, and
+`F_RUN_BUILD_TASK`) did nothing in a folder with a valid `tasks.json`; the
+only trace was `workbench command failed.` in debug output.
+
+Root cause: `CEditWnd::NextTaskExecutionOperationId` minted
+`sakura.native-task.v1/<pid>/<hwnd>/<seq>`, but
+`TaskExecutionService::IsValidOperationId` accepts only `[A-Za-z0-9._:-]`. The
+mint's own validity check therefore always failed and `StartWorkbenchTask`
+returned `Failed` before reaching the service. This existed since 413a049af.
+The separator is now `:`. Any new minting site must be validated against the
+service it feeds, not copied from another service's format (`sakura.native-
+output.v1/...` is valid for Output, not for Tasks).
+
+Verified 2026-11-07 on x64 Debug with a throwaway profile and a folder whose
+`tasks.json` runs `ping -n 20`: before, no `ping.exe` and three
+`workbench command failed.`; after, Run Task, Run Build Task, and
+`F_RUN_BUILD_TASK` each started one `ping.exe`. Task output is still not shown
+in the Terminal panel; that presentation seam is the open gap documented in
+`../../terminal/CLAUDE.md`.

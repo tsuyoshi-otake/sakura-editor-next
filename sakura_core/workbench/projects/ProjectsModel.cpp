@@ -254,7 +254,9 @@ ProjectsProjection ProjectProjects(
 	const std::span<const ProjectBranchSummary> branchSummaries,
 	const std::optional<EProjectsRowKind> preferredKind,
 	const std::wstring_view preferredWorktreeIdentity,
-	const ProjectsTexts& texts)
+	const ProjectsTexts& texts,
+	const std::span<const ProjectAgentEntry> agents,
+	const std::wstring_view preferredAgentIdentity)
 {
 	ProjectsProjection result;
 	for (std::size_t index = 0; index < projects.size(); ++index) {
@@ -263,7 +265,8 @@ ProjectsProjection ProjectProjects(
 			break;
 		}
 	}
-	result.rows.reserve(projects.size() + (worktrees ? worktrees->rows.size() + 1U : 0U));
+	result.rows.reserve(projects.size() + (worktrees ? worktrees->rows.size() + 1U : 0U)
+		+ (result.currentProjectIndex ? agents.size() : 0U));
 	for (std::size_t projectIndex = 0; projectIndex < projects.size(); ++projectIndex) {
 		const bool current = result.currentProjectIndex
 			&& *result.currentProjectIndex == projectIndex;
@@ -277,25 +280,42 @@ ProjectsProjection ProjectProjects(
 				? branchSummaries[projectIndex].label : std::wstring{},
 			.currentProject = current,
 		});
-		if (!current || worktrees == nullptr || !worktrees->Succeeded()
-			|| !worktrees->currentIndex || *worktrees->currentIndex >= worktrees->rows.size()) {
-			continue;
+		if (!current) continue;
+
+		bool currentWorktreeEmitted = false;
+		std::size_t currentWorktree = 0;
+		if (worktrees != nullptr && worktrees->Succeeded()
+			&& worktrees->currentIndex && *worktrees->currentIndex < worktrees->rows.size()) {
+			currentWorktree = *worktrees->currentIndex;
+			const auto& currentRow = worktrees->rows[currentWorktree];
+			const auto currentLabel = WorktreeLabel(currentRow);
+			result.rows.push_back({
+				.kind = EProjectsRowKind::CurrentWorktree,
+				.projectIndex = projectIndex,
+				.worktreeIndex = currentWorktree,
+				.label = currentLabel,
+				.description = WorktreeDescription(currentRow, projectName, currentLabel, texts),
+				.currentProject = true,
+				.primaryWorktree = currentWorktree == 0,
+				.enabled = !currentRow.locked && !currentRow.prunable && !currentRow.bare,
+			});
+			currentWorktreeEmitted = true;
 		}
 
-		const auto currentWorktree = *worktrees->currentIndex;
-		const auto& currentRow = worktrees->rows[currentWorktree];
-		const auto currentLabel = WorktreeLabel(currentRow);
-		result.rows.push_back({
-			.kind = EProjectsRowKind::CurrentWorktree,
-			.projectIndex = projectIndex,
-			.worktreeIndex = currentWorktree,
-			.label = currentLabel,
-			.description = WorktreeDescription(currentRow, projectName, currentLabel, texts),
-			.currentProject = true,
-			.primaryWorktree = currentWorktree == 0,
-			.enabled = !currentRow.locked && !currentRow.prunable && !currentRow.bare,
-		});
+		for (std::size_t agentIndex = 0; agentIndex < agents.size(); ++agentIndex) {
+			const auto& agent = agents[agentIndex];
+			result.rows.push_back({
+				.kind = EProjectsRowKind::Agent,
+				.projectIndex = projectIndex,
+				.agentIndex = agentIndex,
+				.label = agent.name,
+				.description = agent.detail.empty() || agent.detail == agent.name
+					? std::wstring{} : agent.detail,
+				.currentProject = true,
+			});
+		}
 
+		if (!currentWorktreeEmitted) continue;
 		const auto hiddenCount = worktrees->rows.size() - 1U;
 		if (hiddenCount == 0) continue;
 		result.rows.push_back({
@@ -333,6 +353,12 @@ ProjectsProjection ProjectProjects(
 				&& *row.worktreeIndex < worktrees->rows.size()
 				&& !preferredWorktreeIdentity.empty()
 				&& worktrees->rows[*row.worktreeIndex].identity != preferredWorktreeIdentity) {
+				continue;
+			}
+			if (row.kind == EProjectsRowKind::Agent && row.agentIndex
+				&& *row.agentIndex < agents.size()
+				&& !preferredAgentIdentity.empty()
+				&& agents[*row.agentIndex].identity != preferredAgentIdentity) {
 				continue;
 			}
 			result.selectedRowIndex = rowIndex;

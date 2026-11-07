@@ -130,7 +130,8 @@ struct TerminalInstance::Impl {
 
 	void Publish(
 		const TerminalInstanceEventKind kind,
-		std::optional<TerminalInstanceOutcome> eventOutcome = std::nullopt) noexcept
+		std::optional<TerminalInstanceOutcome> eventOutcome = std::nullopt,
+		std::optional<TerminalJobProcessEvent> jobProcess = std::nullopt) noexcept
 	{
 		try {
 			TerminalInstanceEvent event;
@@ -144,6 +145,7 @@ struct TerminalInstance::Impl {
 				event.sessionState = sessionStateValue;
 				event.errorCode = errorCode;
 				event.outcome = std::move(eventOutcome);
+				event.jobProcess = std::move(jobProcess);
 				callback = eventCallback;
 			}
 			InvokeNoThrow(callback, event);
@@ -168,6 +170,19 @@ struct TerminalInstance::Impl {
 		if (!publish) return;
 		Publish(TerminalInstanceEventKind::StateChanged);
 		Publish(TerminalInstanceEventKind::Completed, std::move(value));
+	}
+
+	void OnJobProcess(const TerminalJobProcessEvent& value) noexcept
+	{
+		{
+			const std::lock_guard lock(stateMutex);
+			if (outcomePublished || state == TerminalInstanceState::Retired) return;
+		}
+		try {
+			Publish(TerminalInstanceEventKind::JobProcess, std::nullopt, value);
+		} catch (...) {
+			// A membership hint is advisory; losing one is the documented contract.
+		}
 	}
 
 	void OnOutputAvailable() noexcept
@@ -350,6 +365,13 @@ struct TerminalInstance::Impl {
 		callbacks.completed = [weak](const TerminalSessionCompletionResult completion) {
 			if (const auto current = weak.lock()) current->OnSessionCompleted(completion);
 		};
+		// Job-membership hints exist only for interactive terminals, whose panel
+		// projects agent presence (#402). Task runs keep the backend worker-free.
+		if (request.origin == TerminalInstanceOrigin::Interactive) {
+			callbacks.jobProcess = [weak](const TerminalJobProcessEvent& value) {
+				if (const auto current = weak.lock()) current->OnJobProcess(value);
+			};
+		}
 
 		std::unique_ptr<CTerminalSession> created;
 		try {
@@ -719,6 +741,22 @@ struct TerminalInstance::Impl {
 		}
 	}
 
+	std::optional<TerminalBackendJobProcesses> ObserveJobProcesses() const noexcept
+	{
+		CTerminalSession* sessionValue = nullptr;
+		{
+			const std::lock_guard lock(stateMutex);
+			if (!session || outcomePublished
+				|| sessionStateValue == TerminalSessionState::Idle
+				|| sessionStateValue == TerminalSessionState::Exited
+				|| sessionStateValue == TerminalSessionState::Failed) {
+				return std::nullopt;
+			}
+			sessionValue = session.get();
+		}
+		return sessionValue->ObserveJobProcesses();
+	}
+
 	bool OwnsProcess(
 		const std::uint32_t processId, const std::uint64_t creationTime) const noexcept
 	{
@@ -908,6 +946,11 @@ bool TerminalInstance::OwnsProcess(
 	const std::uint32_t processId, const std::uint64_t creationTime) const noexcept
 {
 	return m_impl && m_impl->OwnsProcess(processId, creationTime);
+}
+
+std::optional<TerminalBackendJobProcesses> TerminalInstance::ObserveJobProcesses() const noexcept
+{
+	return m_impl ? m_impl->ObserveJobProcesses() : std::nullopt;
 }
 
 const TerminalModel* TerminalInstance::Model() const noexcept

@@ -143,7 +143,8 @@ struct TerminalTabManager::Impl {
 	//! route is ignored on purpose: the runtime service can be process-wide, so
 	//! this manager observes instances that belong to other projections.
 	void PublishTabEvent( const TerminalInstanceId instanceId, const TerminalTabEventKind kind,
-		const TerminalSessionState sessionState, const std::uint32_t errorCode ) noexcept
+		const TerminalSessionState sessionState, const std::uint32_t errorCode,
+		const std::optional<TerminalJobProcessEvent>& jobProcess = std::nullopt ) noexcept
 	{
 		TerminalTabEvent translated;
 		TerminalTabEventCallback callback;
@@ -159,6 +160,7 @@ struct TerminalTabManager::Impl {
 				translated.tabId = found->tabId;
 				translated.state = sessionState;
 				translated.errorCode = errorCode;
+				translated.jobProcess = jobProcess;
 				callback = eventCallback;
 			}
 			callback(translated);
@@ -185,6 +187,14 @@ struct TerminalTabManager::Impl {
 
 	void OnRuntimeEvent( const TerminalInstanceEvent& event ) noexcept
 	{
+		if( event.kind == TerminalInstanceEventKind::JobProcess ) {
+			// A hint is not a session state change; keep it out of the state wake.
+			if( event.jobProcess ) {
+				PublishTabEvent(event.coordinate.instanceId, TerminalTabEventKind::JobProcess,
+					event.sessionState, event.errorCode, event.jobProcess);
+			}
+			return;
+		}
 		PublishTabEvent(event.coordinate.instanceId,
 			event.kind == TerminalInstanceEventKind::OutputAvailable
 				? TerminalTabEventKind::OutputAvailable : TerminalTabEventKind::StateChanged,
@@ -661,6 +671,15 @@ std::vector<TerminalTabProjectionRecord> TerminalTabManager::ProjectionSnapshot(
 		result.push_back({ tab->id, tab->instanceId, tab->sessionId, tab->windowId, tab->paneId });
 	}
 	return result;
+}
+
+std::optional<TerminalBackendJobProcesses> TerminalTabManager::ObserveJobProcesses( std::uint64_t tabId ) const noexcept
+{
+	if( m_impl->closed || !m_impl->runtimeService ) return std::nullopt;
+	const auto found = std::find_if(m_impl->tabs.begin(), m_impl->tabs.end(), [tabId](const auto& tab) { return tab->id == tabId; });
+	if( found == m_impl->tabs.end() ) return std::nullopt;
+	const auto* instance = std::as_const(*m_impl->runtimeService).Instance((*found)->instanceId);
+	return instance ? instance->ObserveJobProcesses() : std::nullopt;
 }
 
 std::size_t TerminalTabManager::TabCount() const noexcept

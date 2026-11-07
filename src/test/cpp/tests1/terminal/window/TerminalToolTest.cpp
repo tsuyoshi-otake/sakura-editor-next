@@ -40,6 +40,31 @@ struct BackendState {
 	std::wstring workingDirectory;
 	terminal::TerminalSize initialSize{};
 	bool failStart{};
+	// Job notifications (#402): the listener the session installed and the job
+	// membership ObserveJobProcesses reports, both guarded by jobMutex.
+	mutable std::mutex jobMutex;
+	terminal::TerminalJobProcessListener jobListener;
+	std::vector<terminal::TerminalBackendJobProcess> jobProcesses;
+	std::atomic<int> jobObservations{};
+
+	void SetJobProcesses( std::vector<terminal::TerminalBackendJobProcess> processes )
+	{
+		const std::lock_guard lock(jobMutex);
+		jobProcesses = std::move(processes);
+	}
+
+	//! Delivers one hint the way the ConPTY notification worker would.
+	bool NotifyJobProcess( terminal::TerminalJobProcessEvent event )
+	{
+		terminal::TerminalJobProcessListener listener;
+		{
+			const std::lock_guard lock(jobMutex);
+			listener = jobListener;
+		}
+		if( !listener ) return false;
+		listener(event);
+		return true;
+	}
 };
 
 class ToolFakeBackend final : public terminal::ITerminalBackend {
@@ -81,6 +106,17 @@ public:
 	}
 
 	terminal::TerminalBackendOperationResult Resize( terminal::TerminalSize ) override { return { true, 0 }; }
+	void SetJobProcessListener( terminal::TerminalJobProcessListener listener ) noexcept override
+	{
+		const std::lock_guard lock(m_state->jobMutex);
+		m_state->jobListener = std::move(listener);
+	}
+	std::optional<terminal::TerminalBackendJobProcesses> ObserveJobProcesses() const noexcept override
+	{
+		++m_state->jobObservations;
+		const std::lock_guard lock(m_state->jobMutex);
+		return terminal::TerminalBackendJobProcesses{ m_state->jobProcesses, false };
+	}
 	void RequestGracefulClose() noexcept override { ++m_state->gracefulCloseCalls; }
 	terminal::TerminalBackendExitResult WaitForExit( std::chrono::milliseconds ) noexcept override { return { terminal::TerminalBackendExitStatus::Exited, 0, 0 }; }
 	void ForceTerminate() noexcept override { ++m_state->forceTerminateCalls; }
@@ -161,6 +197,16 @@ private:
 	bool m_restore{};
 	bool m_applied{};
 };
+
+//! Dispatches the tool's queued application messages (wakes, never WM_TIMER).
+void PumpToolMessages( HWND window )
+{
+	MSG message{};
+	while( ::PeekMessageW(&message, window, WM_APP, 0xBFFF, PM_REMOVE) ) {
+		::TranslateMessage(&message);
+		::DispatchMessageW(&message);
+	}
+}
 
 template<typename Predicate>
 bool WaitUntil( Predicate&& predicate, std::chrono::milliseconds timeout = 500ms )
@@ -1018,6 +1064,40 @@ TEST(TerminalTool, SupportsAddSelectRestartAndDeleteAcrossTabs)
 	tool.Close();
 }
 
+// VS Code TerminalGroup removes a focused instance by activating the instance
+// now at the same index in that group, or the last one when the removed
+// instance was last. Closing a split must never switch to another group just
+// because that group's terminal was created earlier.
+TEST(TerminalTool, ClosingAFocusedSplitPaneKeepsItsOwnGroupActive)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.Activate();
+	const auto first = tool.ActiveTerminalId();
+	ASSERT_TRUE(first.has_value());
+	const auto otherGroup = tool.AddTerminal();
+	ASSERT_TRUE(otherGroup.has_value());
+	ASSERT_TRUE(tool.SelectTerminal(*first));
+
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	const auto middle = tool.ActiveTerminalId();
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	const auto last = tool.ActiveTerminalId();
+	ASSERT_TRUE(middle.has_value());
+	ASSERT_TRUE(last.has_value());
+
+	ASSERT_TRUE(tool.SelectTerminal(*middle));
+	EXPECT_TRUE(tool.CloseTerminalSplit());
+	EXPECT_EQ(last, tool.ActiveTerminalId());
+	EXPECT_TRUE(tool.HasTerminalSplit());
+
+	EXPECT_TRUE(tool.CloseTerminalSplit());
+	EXPECT_EQ(first, tool.ActiveTerminalId());
+	EXPECT_FALSE(tool.HasTerminalSplit());
+	EXPECT_EQ(2u, tool.TabCount());
+	tool.Close();
+}
+
 TEST(TerminalTool, RestartClearsOldSequenceState)
 {
 	ToolHarness harness;
@@ -1459,6 +1539,37 @@ TEST(TerminalTool, SecondTerminalGroupRemovesHeaderSplitAndKillInsteadOfDisablin
 	::DestroyWindow(parent);
 }
 
+TEST(TerminalTool, HeaderSplitDownButtonStacksANewPane)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	const RECT visible{ 0, 0, 640, 320 };
+	tool.Layout(visible, 96);
+	tool.Activate();
+	ASSERT_EQ(1u, tool.TabCount());
+	ASSERT_FALSE(tool.HasTerminalSplit());
+
+	// Fork extension beside VS Code's Split action: the visible Split Down
+	// button adds a stacked pane without requiring Alt.
+	const auto layout = terminal::CalculateTerminalHeaderLayout(visible, 96);
+	const auto splitDown = layout.RectFor(terminal::TerminalHeaderTarget::SplitDown);
+	ASSERT_LT(splitDown.left, splitDown.right);
+	const int x = splitDown.left + (splitDown.right - splitDown.left) / 2;
+	const int y = splitDown.top + (splitDown.bottom - splitDown.top) / 2;
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0, MAKELPARAM(x, y));
+
+	EXPECT_EQ(2u, tool.TabCount());
+	EXPECT_TRUE(tool.HasTerminalSplit());
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Vertical, tool.ActivePaneOrientation());
+
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
 TEST(TerminalTool, NewSessionsUseNewWorkspaceButExistingSessionsKeepOriginalCwd)
 {
 	ToolHarness harness;
@@ -1644,6 +1755,84 @@ TEST(TerminalTool, CloseTerminatesDetachedWorkspaceSessions)
 	for( std::size_t index = 0; index < harness.backends.size(); ++index ) {
 		EXPECT_TRUE(WaitUntil([&, index] { return harness.backends[index]->closeCalls.load() == 1; }));
 	}
+}
+
+//! #402 Phase A: agent presence is event-driven. Only an agent start/exit hint
+//! wakes the UI thread, the job (not the hint) decides presence, and a refresh
+//! re-observes without echoing through the sink.
+TEST(TerminalTool, AgentPresenceFollowsJobHintsWithoutPolling)
+{
+	using terminal::TerminalJobProcessEventKind;
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout({ 0, 0, 480, 240 }, 96);
+	int sinkCalls = 0;
+	tool.SetAgentPresenceSink([&sinkCalls] { ++sinkCalls; });
+	tool.Activate();
+	ASSERT_EQ(1u, harness.backends.size());
+	auto& backend = *harness.backends[0];
+	ASSERT_TRUE(WaitUntil([&] {
+		const std::lock_guard lock(backend.jobMutex);
+		return static_cast<bool>(backend.jobListener);
+	})) << "an interactive session must install the job listener";
+	backend.SetJobProcesses({ { 10, 100, L"pwsh.exe" } });
+	PumpToolMessages(tool.GetHwnd());
+	EXPECT_TRUE(tool.AgentPresence(false).empty());
+	EXPECT_EQ(0, sinkCalls);
+
+	// A non-agent child never wakes the UI thread, so it is never observed.
+	const int observationsBefore = backend.jobObservations.load();
+	ASSERT_TRUE(backend.NotifyJobProcess({ TerminalJobProcessEventKind::Started, 11, L"node.exe" }));
+	PumpToolMessages(tool.GetHwnd());
+	EXPECT_EQ(observationsBefore, backend.jobObservations.load());
+	EXPECT_EQ(0, sinkCalls);
+
+	// An agent start is observed once and reported once.
+	backend.SetJobProcesses({ { 10, 100, L"pwsh.exe" }, { 20, 200, L"claude.exe" } });
+	ASSERT_TRUE(backend.NotifyJobProcess({ TerminalJobProcessEventKind::Started, 20, L"claude.exe" }));
+	ASSERT_TRUE(backend.NotifyJobProcess({ TerminalJobProcessEventKind::Started, 20, L"claude.exe" }));
+	PumpToolMessages(tool.GetHwnd());
+	EXPECT_EQ(observationsBefore + 1, backend.jobObservations.load()) << "duplicate hints coalesce";
+	EXPECT_EQ(1, sinkCalls);
+	auto presence = tool.AgentPresence(false);
+	ASSERT_EQ(1u, presence.size());
+	EXPECT_EQ(terminal::TerminalAgentKind::ClaudeCode, presence[0].kind);
+	EXPECT_EQ(tool.ActiveTerminalId(), presence[0].tabId);
+	EXPECT_TRUE(presence[0].instanceId.IsValid());
+	const auto projection = tool.TerminalProjectionSnapshot();
+	ASSERT_EQ(1u, projection.size());
+	EXPECT_EQ(projection[0].instanceId, presence[0].instanceId);
+
+	// An exit of an untracked process is filtered; the agent's exit is not.
+	ASSERT_TRUE(backend.NotifyJobProcess({ TerminalJobProcessEventKind::Exited, 11, {} }));
+	PumpToolMessages(tool.GetHwnd());
+	EXPECT_EQ(1, sinkCalls);
+	backend.SetJobProcesses({ { 10, 100, L"pwsh.exe" } });
+	ASSERT_TRUE(backend.NotifyJobProcess({ TerminalJobProcessEventKind::Exited, 20, {} }));
+	PumpToolMessages(tool.GetHwnd());
+	EXPECT_EQ(2, sinkCalls);
+	EXPECT_TRUE(tool.AgentPresence(false).empty());
+
+	// A lost hint is recovered by an explicit refresh, which does not echo.
+	backend.SetJobProcesses({ { 10, 100, L"pwsh.exe" }, { 30, 300, L"devin.exe" } });
+	EXPECT_TRUE(tool.AgentPresence(false).empty());
+	presence = tool.AgentPresence(true);
+	ASSERT_EQ(1u, presence.size());
+	EXPECT_EQ(terminal::TerminalAgentKind::Devin, presence[0].kind);
+	EXPECT_EQ(2, sinkCalls);
+
+	// Deleting the terminal drops its presence and reports it.
+	ASSERT_TRUE(tool.DeleteTerminal(presence[0].tabId));
+	EXPECT_TRUE(tool.AgentPresence(false).empty());
+	EXPECT_EQ(3, sinkCalls);
+
+	tool.Close();
+	EXPECT_TRUE(tool.AgentPresence(true).empty());
+	::DestroyWindow(parent);
 }
 
 } // namespace

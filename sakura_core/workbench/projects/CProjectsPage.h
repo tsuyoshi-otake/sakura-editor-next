@@ -9,6 +9,7 @@
 
 #include "config/WorkspaceContextTypes.h"
 #include "workbench/projects/ProjectCatalogService.h"
+#include "workbench/projects/ProjectsModel.h"
 #include "workbench/viewcontainer/CViewContainerPages.h"
 #include "workbench/worktree/GitWorktreeDiscoverySource.h"
 
@@ -52,6 +53,16 @@ using ProjectRemovalCallback =
 	std::function<EProjectsRemovalStatus(const ProjectEntry&)>;
 using ProjectGitDiscoveryFactory =
 	std::function<std::unique_ptr<worktree::GitWorktreeDiscoverySource>()>;
+//! refresh=true only from the page's own Refresh() (activation / explicit
+//! refresh); false when reacting to a change notification.
+using ProjectAgentsProvider =
+	std::function<std::vector<ProjectAgentEntry>(bool refresh)>;
+using ProjectAgentActivationCallback =
+	std::function<EProjectsActivationStatus(std::uint64_t terminalId)>;
+//! The page registers its listener in Create, and calls it with an empty
+//! function in Cleanup.
+using ProjectAgentsChangedRegistrar =
+	std::function<void(std::function<void()> listener)>;
 
 struct ProjectsPageOptions final {
 	ProjectsSnapshotProvider projects;
@@ -65,6 +76,11 @@ struct ProjectsPageOptions final {
 	//! Optional test/composition seam. Production constructs the hardened
 	//! passive Git source when this factory is absent.
 	ProjectGitDiscoveryFactory gitDiscoveryFactory;
+	//! Optional #402 Phase A seams. Absent = no agent rows; never required
+	//! for Create to succeed.
+	ProjectAgentsProvider agents;
+	ProjectAgentActivationCallback activateAgent;
+	ProjectAgentsChangedRegistrar agentsChanged;
 };
 
 [[nodiscard]] std::unique_ptr<viewcontainer::IViewContainerPage>

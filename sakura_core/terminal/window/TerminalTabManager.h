@@ -27,6 +27,8 @@ class CDefaultTerminalLaunchProfileService;
 enum class TerminalTabEventKind : std::uint8_t {
 	OutputAvailable,
 	StateChanged,
+	//! A process entered or left the tab's job (#402); `jobProcess` is set.
+	JobProcess,
 };
 
 struct TerminalTabEvent {
@@ -34,6 +36,7 @@ struct TerminalTabEvent {
 	std::uint64_t tabId{};
 	TerminalSessionState state{ TerminalSessionState::Idle };
 	std::uint32_t errorCode{};
+	std::optional<TerminalJobProcessEvent> jobProcess;
 };
 
 struct TerminalTabSnapshot {
@@ -201,6 +204,8 @@ public:
 	[[nodiscard]] std::optional<std::uint64_t> ActiveTabId() const noexcept;
 	[[nodiscard]] std::vector<TerminalTabSnapshot> Snapshot() const;
 	[[nodiscard]] std::vector<TerminalTabProjectionRecord> ProjectionSnapshot() const;
+	//! Bounded job-membership observation for one live tab (#402).
+	[[nodiscard]] std::optional<TerminalBackendJobProcesses> ObserveJobProcesses( std::uint64_t tabId ) const noexcept;
 	[[nodiscard]] std::size_t TabCount() const noexcept;
 	[[nodiscard]] bool HasStartedAnySession() const noexcept;
 

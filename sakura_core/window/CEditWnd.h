@@ -1472,6 +1472,9 @@ private:
 	workbench::search::CSearchWorkbenchTool* m_searchTool = nullptr;
 	workbench::extensions::CExtensionsWorkbenchTool* m_extensionsTool = nullptr;
 	terminal::CTerminalTool* m_terminalTool = nullptr;
+	//! The Projects page's agent-change listener (#402); set and cleared by the
+	//! page through ProjectsPageOptions::agentsChanged.
+	std::function<void()> m_projectsAgentsListener;
 	workbench::panel::CBottomPanelTool* m_bottomPanelTool = nullptr;
 	std::unique_ptr<markdown::CMarkdownPreviewWnd> m_markdownPreview;
 	markdown::MarkdownPreviewCommandState m_markdownPreviewCommandState;

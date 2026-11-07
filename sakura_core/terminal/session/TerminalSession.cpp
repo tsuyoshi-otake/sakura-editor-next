@@ -1134,6 +1134,27 @@ TerminalStartResult CTerminalSession::Start( const TerminalLaunchOptions& option
 		return TerminalStartResult::Failure( ERROR_BUSY, L"Terminal retirement capacity is exhausted." );
 	}
 
+	bool wantsJobProcessHints = false;
+	try {
+		const std::lock_guard lock(impl->shared->callbackMutex);
+		wantsJobProcessHints = static_cast<bool>(impl->shared->callbacks.jobProcess);
+	} catch( ... ) {}
+	if( wantsJobProcessHints ) {
+		// The backend worker holds only a weak reference: completion clears the
+		// callbacks and Close joins the worker, so no hint outlives the session.
+		const std::weak_ptr<Impl::SharedState> weakState = impl->shared;
+		impl->backend->SetJobProcessListener( [weakState](const TerminalJobProcessEvent& event) {
+			const auto state = weakState.lock();
+			if( !state ) return;
+			TerminalJobProcessListener callback;
+			try {
+				const std::lock_guard lock(state->callbackMutex);
+				callback = state->callbacks.jobProcess;
+			} catch( ... ) {}
+			Impl::InvokeCallback(state, callback, event);
+		} );
+	}
+
 	TerminalStartResult result;
 	try {
 		result = impl->backend->Start(options);
@@ -1221,6 +1242,13 @@ bool CTerminalSession::OwnsProcess(
 {
 	const auto impl = m_impl;
 	return impl && impl->backend && impl->backend->OwnsProcess(processId, creationTime);
+}
+
+std::optional<TerminalBackendJobProcesses> CTerminalSession::ObserveJobProcesses() const noexcept
+{
+	const auto impl = m_impl;
+	if( !impl || !impl->backend ) return std::nullopt;
+	return impl->backend->ObserveJobProcesses();
 }
 
 TerminalQueueInputResult CTerminalSession::QueueInput(

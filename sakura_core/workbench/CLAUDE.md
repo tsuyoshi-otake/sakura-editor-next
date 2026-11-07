@@ -159,6 +159,11 @@ and lifecycle rules as the rest of the native workbench.
   Project and total work per refresh, and reaches an explicit terminal summary
   on failure, supersession, or teardown. Linked worktrees remain actionable only
   beneath the active Project and start collapsed behind a truthful count.
+- Agent rows (#402 Phase A) are projections of the window's terminal agent
+  presence supplied by composition; the page never inspects processes or
+  titles itself. Phase A shows presence only (no state text), rows exist only
+  under the current Project, and a change notification rebuilds the projection
+  without restarting Git discovery.
 - Folder Projects expose their branch or detached state before activation.
   Multi-root workspace Projects inspect the workspace document without mutating
   `WorkspaceContext`, then show a common branch, bounded mixed-branch summary,

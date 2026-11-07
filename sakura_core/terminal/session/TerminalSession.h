@@ -120,6 +120,46 @@ struct TerminalBackendExitResult {
 	std::uint32_t errorCode = 0;
 };
 
+enum class TerminalJobProcessEventKind : std::uint8_t {
+	Started,
+	Exited,
+};
+
+//! A process entering or leaving a terminal's job object (Issue #402).
+//! Windows does not guarantee delivery of job notifications, so this is only a
+//! hint that the job changed: consumers re-observe the job through
+//! `ObserveJobProcesses` instead of keeping process truth from these events.
+//! The process ID is never an identity or an authorization.
+struct TerminalJobProcessEvent {
+	TerminalJobProcessEventKind kind = TerminalJobProcessEventKind::Started;
+	std::uint32_t processId = 0;
+	//! Final path component of the image (for example `claude.exe`) for
+	//! `Started`; empty when the process had already exited or could not be
+	//! opened, and always empty for `Exited`.
+	std::wstring imageFileName;
+};
+
+//! Runs on a backend worker. It must only copy, filter, and post/coalesce; it
+//! must never close or destroy the backend that invoked it.
+using TerminalJobProcessListener = std::function<void(const TerminalJobProcessEvent&)>;
+
+//! One process currently inside a terminal's job object.
+struct TerminalBackendJobProcess {
+	std::uint32_t processId = 0;
+	//! FILETIME as an unsigned 100 ns count; orders processes by creation.
+	std::uint64_t creationTime = 0;
+	std::wstring imageFileName;
+};
+
+//! Bounded snapshot of a terminal's job membership. `truncated` reports that
+//! the job held more processes than `kMaximumObservedJobProcesses`.
+struct TerminalBackendJobProcesses {
+	std::vector<TerminalBackendJobProcess> processes;
+	bool truncated = false;
+};
+
+inline constexpr std::size_t kMaximumObservedJobProcesses = 64;
+
 // This is the only boundary between the session state machine and ConPTY. It
 // deliberately contains no HWND, HANDLE, HPCON, or vendored terminal type so
 // the state machine can be tested without creating operating-system objects.
@@ -146,6 +186,19 @@ public:
 		(void)processId;
 		(void)creationTime;
 		return false;
+	}
+	//! Installs the job-membership hint listener. Call before Start; a backend
+	//! without a job, or one given an empty listener, never creates the
+	//! notification worker. Close stops the worker before returning.
+	virtual void SetJobProcessListener( TerminalJobProcessListener listener ) noexcept
+	{
+		(void)listener;
+	}
+	//! Bounded observation of the processes currently in the terminal's job.
+	//! nullopt means the backend has no job or the query failed.
+	[[nodiscard]] virtual std::optional<TerminalBackendJobProcesses> ObserveJobProcesses() const noexcept
+	{
+		return std::nullopt;
 	}
 };
 
@@ -260,6 +313,9 @@ struct TerminalSessionCallbacks {
 	//! destruction is safe; an external owner remains responsible for any
 	//! self-wait that returned InProgress.
 	std::function<void(TerminalSessionCompletionResult)> completed;
+	//! Job-membership hints (#402). Optional: when empty the backend creates no
+	//! notification worker. Runs on a backend worker, like the callbacks above.
+	TerminalJobProcessListener jobProcess;
 };
 
 class CTerminalSession final {
@@ -317,6 +373,7 @@ public:
 	[[nodiscard]] std::optional<TerminalBackendProcessIdentity> GetProcessIdentity() const noexcept;
 	[[nodiscard]] bool OwnsProcess(
 		std::uint32_t processId, std::uint64_t creationTime ) const noexcept;
+	[[nodiscard]] std::optional<TerminalBackendJobProcesses> ObserveJobProcesses() const noexcept;
 
 private:
 	struct Impl;

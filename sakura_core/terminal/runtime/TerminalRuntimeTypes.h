@@ -260,6 +260,9 @@ enum class TerminalInstanceEventKind : std::uint8_t {
 	OutputAvailable,
 	StateChanged,
 	Completed,
+	//! A process entered or left the instance's job (#402). A hint only; see
+	//! TerminalJobProcessEvent.
+	JobProcess,
 };
 
 struct TerminalInstanceEvent final {
@@ -269,6 +272,8 @@ struct TerminalInstanceEvent final {
 	TerminalSessionState sessionState{ TerminalSessionState::Idle };
 	std::uint32_t errorCode{};
 	std::optional<TerminalInstanceOutcome> outcome;
+	//! Present only for JobProcess.
+	std::optional<TerminalJobProcessEvent> jobProcess;
 };
 
 using TerminalInstanceEventCallback = std::function<void(const TerminalInstanceEvent&)>;

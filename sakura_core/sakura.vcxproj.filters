@@ -1887,6 +1887,9 @@
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalTabPresentation.h">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalAgentPresence.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalInput.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
@@ -3931,6 +3934,9 @@
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalTabPresentation.cpp">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalAgentPresence.cpp">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp">

@@ -199,6 +199,503 @@
           "baseline_finding_count": 19
         }
       ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "The #398 terminal menu/focus/Run Task fixes, the #401 Split Down button, and #402 Phase A agent presence (job-membership hints, the window-owned tracker, and the Projects agent rows, including OpenCode and Pi) touch existing terminal session/window, editor-window, and Projects debt. Each new finding was reviewed: catch-alls are noexcept containment at callback, worker, and join boundaries; public fields are plain event, option, and record value structs or members of pimpl-internal state and of the presence tracker's private per-tab state; HWND mentions are the Projects page's own window and native test fixtures; the job-notification std::thread is always joined by Close, which the destructor calls; the mutable member is a test fake's counter; and the private-include matches are the regex hit on terminal/window headers already included beside them. Reducing unrelated debt would widen these changes. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "tracking_issue": 389,
+      "created": "2026-11-07",
+      "expires": "2027-02-05",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/terminal/runtime/TerminalInstance.cpp": "sha256:e410ebce08bc9339092762b0c7aad1c2afcd25de5475b7b391f68da1ebed1021",
+        "sakura_core/terminal/runtime/TerminalInstance.h": "sha256:aa1ac7e631ef52651a14940f5c0b4c77f6039f3c3244a3772a71aae56ccee2e0",
+        "sakura_core/terminal/runtime/TerminalRuntimeTypes.h": "sha256:be8c460ec6e6832602257ed47690e4bfa0a3c5c8b3c47aee6ed4c9ce2efc7d10",
+        "sakura_core/terminal/session/ConPtyTerminalBackend.cpp": "sha256:84e14d7a248ea45d5454abd078b7d7dcaf98b000c2fb536288c2e210a694c5ae",
+        "sakura_core/terminal/session/TerminalSession.cpp": "sha256:73a39ab7e1cb0cf794a1ed071bd9f0f2c55ee03fb6af90ed1ca60aebbaccea38",
+        "sakura_core/terminal/session/TerminalSession.h": "sha256:a45b5e51dc4e6714580692bb179924448ca04bcb5997e6c4f189cfa588b2915c",
+        "sakura_core/terminal/window/CTerminalTool.cpp": "sha256:c5b9feae8ad792382d655cbaa3a5fa6dd73ea528efc602a232f13499722ed9ba",
+        "sakura_core/terminal/window/CTerminalTool.h": "sha256:1034c2bec649768248cb5807aa8174d9cdd346ebcca1aee5cc2819781475075e",
+        "sakura_core/terminal/window/TerminalAgentPresence.cpp": "sha256:557ca61fdc1a660a3c2c7fa7593f9a1cee97e97ef2530b359964b24491f50e2f",
+        "sakura_core/terminal/window/TerminalAgentPresence.h": "sha256:b510dc5e783947a4f8d53e033924f102f4ba5d42faa64b396f19d2950eed0a8a",
+        "sakura_core/terminal/window/TerminalTabManager.cpp": "sha256:a727bb0a6d6a19d03bf824e744dd8b9da3c1936c0b3e98dd8f21f00e3655bc8e",
+        "sakura_core/terminal/window/TerminalTabManager.h": "sha256:ebf46e0964fa8bea023e5ac96f3ee054fc2ba7e3f0eb134780ae3ca157d8707b",
+        "sakura_core/terminal/window/TerminalTabPresentation.cpp": "sha256:e05262b1b26543d071561e2e2de7996d3d63aec3791a925ebf8fb978ce787fe5",
+        "sakura_core/window/CEditWnd.cpp": "sha256:d7064f86e9e74d549f0faff0b2696430dcd32c7b62630611ccf5177929eb34c9",
+        "sakura_core/window/CEditWnd.h": "sha256:852acbeb1b4f579563dda046b8cf76fd658614fa2d0f627bb90ab43220fa0599",
+        "sakura_core/workbench/projects/CProjectsPage.cpp": "sha256:0ed0c38a2cb485780064e6de0e0603960dd5dfcd852ca45d8bceb8bb30372695",
+        "sakura_core/workbench/projects/CProjectsPage.h": "sha256:0a69592784aad8c0fd454b350b958d9acdac8769966f5c9630dbafb8d9d63f6b",
+        "sakura_core/workbench/projects/ProjectsModel.h": "sha256:0a910a70aaaaaeeb486b56faa987a29116524e780ef744cc91f869ec8f4c9fd1",
+        "src/test/cpp/tests1/terminal/window/TerminalAgentPresenceTest.cpp": "sha256:1d228658db889fd2655f9acfc50c129138ac5584db6d8d2064c250a2dd6afd2c",
+        "src/test/cpp/tests1/terminal/window/TerminalHeaderLayoutTest.cpp": "sha256:3239d03baed00844c5b4f7ee5fa11bfc4e4b933de3d4a9d31219e3864285243f",
+        "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp": "sha256:7f98d17a499f1968da35533a258300263dccaa5631374e9086aef12358ffd0c8",
+        "src/test/cpp/tests1/workbench/ProjectsTest.cpp": "sha256:12c2abd47901c8f05024ef0826dffb686bc1902444ef3e15dd5570438ca16b2f"
+      },
+      "new_findings": [
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
+          "line": 183,
+          "column": 5,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
+          "line": 276,
+          "column": 41,
+          "evidence_sha256": "sha256:19acaa66b63bf38facce88ad852640a95cc834f9b3b24f43b219ac303fa46c9c"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/terminal/session/ConPtyTerminalBackend.cpp",
+          "line": 212,
+          "column": 5,
+          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c"
+        },
+        {
+          "rule_id": "resource.stop_required_acquisition",
+          "path": "sakura_core/terminal/session/ConPtyTerminalBackend.cpp",
+          "line": 361,
+          "column": 31,
+          "evidence_sha256": "sha256:098f63ea1f79029b04e2f60dc47727e4d38a44f4c5618ac1950972a4bb1c02e6"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/terminal/session/ConPtyTerminalBackend.cpp",
+          "line": 365,
+          "column": 6,
+          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/terminal/session/ConPtyTerminalBackend.cpp",
+          "line": 415,
+          "column": 5,
+          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/terminal/session/ConPtyTerminalBackend.cpp",
+          "line": 626,
+          "column": 6,
+          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/terminal/session/TerminalSession.cpp",
+          "line": 1141,
+          "column": 4,
+          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/terminal/session/TerminalSession.cpp",
+          "line": 1153,
+          "column": 6,
+          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/session/TerminalSession.h",
+          "line": 134,
+          "column": 30,
+          "evidence_sha256": "sha256:0e13c6d6d2dec97b06581177a64a435f5c24a5c7c572e472c87a290517acb249"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/session/TerminalSession.h",
+          "line": 135,
+          "column": 16,
+          "evidence_sha256": "sha256:94f30f19ca3ed3e371b7a082c71b6cd94d8451ab362e59d501be6be06e7dafc3"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/session/TerminalSession.h",
+          "line": 139,
+          "column": 15,
+          "evidence_sha256": "sha256:4db4fdbb5efc5bff9c40d27b985b4a6ebcd646832ec7772b94c67f529de9c1c7"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/session/TerminalSession.h",
+          "line": 148,
+          "column": 16,
+          "evidence_sha256": "sha256:94f30f19ca3ed3e371b7a082c71b6cd94d8451ab362e59d501be6be06e7dafc3"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/session/TerminalSession.h",
+          "line": 150,
+          "column": 16,
+          "evidence_sha256": "sha256:3b2fca75d832873beb25ada689845a1b38f1e62d7901871cc53c384d8bbce047"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/session/TerminalSession.h",
+          "line": 151,
+          "column": 15,
+          "evidence_sha256": "sha256:4db4fdbb5efc5bff9c40d27b985b4a6ebcd646832ec7772b94c67f529de9c1c7"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/session/TerminalSession.h",
+          "line": 157,
+          "column": 41,
+          "evidence_sha256": "sha256:bc70fcafe58c304f98d613573d6e752db253ed6c9c3957298bbc7ff655ea919d"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/session/TerminalSession.h",
+          "line": 158,
+          "column": 7,
+          "evidence_sha256": "sha256:4739807349487fcdb9296882d8c3e6ad7f337e492571cc8ad4304ac302f34c07"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/session/TerminalSession.h",
+          "line": 318,
+          "column": 29,
+          "evidence_sha256": "sha256:4a3c3e752de07249846076495ffa653c7243b50fd65a34df0b1089f2e949a136"
+        },
+        {
+          "rule_id": "boundary.private_include",
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "line": 18,
+          "column": 11,
+          "evidence_sha256": "sha256:dcd0886304af13466473af33729faa056798a9e5b1fd8914c9d93ae180f276f5"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "line": 106,
+          "column": 36,
+          "evidence_sha256": "sha256:acf746e7641f1cc28a987beb8e7dd09104454ee265b5c4515a2f4574a048e4dd"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "line": 110,
+          "column": 64,
+          "evidence_sha256": "sha256:a90e6e9b9e74f095a28d0753ee84792325f7439c1fcf022c74e55121fdd6b1db"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "line": 370,
+          "column": 31,
+          "evidence_sha256": "sha256:95c795d3434b5cbfcb5288ed30712943759065279e59837bcaedcef0d5818724"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "line": 1552,
+          "column": 5,
+          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c"
+        },
+        {
+          "rule_id": "boundary.private_include",
+          "path": "sakura_core/terminal/window/CTerminalTool.h",
+          "line": 12,
+          "column": 11,
+          "evidence_sha256": "sha256:dcd0886304af13466473af33729faa056798a9e5b1fd8914c9d93ae180f276f5"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/CTerminalTool.h",
+          "line": 99,
+          "column": 21,
+          "evidence_sha256": "sha256:e41d65ba7e5993d2048b1f8e227c1804f7768482e482b4c916ee3a2ae576dea1"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/CTerminalTool.h",
+          "line": 102,
+          "column": 15,
+          "evidence_sha256": "sha256:7ba927093f2a4b5bdfe59ee5ad7ef978ad2a2669dfe7a8765a1f3860c95f14b0"
+        },
+        {
+          "rule_id": "boundary.private_include",
+          "path": "sakura_core/terminal/window/TerminalAgentPresence.cpp",
+          "line": 8,
+          "column": 11,
+          "evidence_sha256": "sha256:dcd0886304af13466473af33729faa056798a9e5b1fd8914c9d93ae180f276f5"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/TerminalAgentPresence.h",
+          "line": 92,
+          "column": 36,
+          "evidence_sha256": "sha256:e2707d2e839dc5f2a1ae8ab986cad0426b031b1c79eef1060df99fd35cdfc0c4"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/TerminalAgentPresence.h",
+          "line": 93,
+          "column": 42,
+          "evidence_sha256": "sha256:f625411587b0eb754cd11fd2a57ffc614b3a0ea7540051951693144da4df3f4e"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/TerminalAgentPresence.h",
+          "line": 94,
+          "column": 36,
+          "evidence_sha256": "sha256:79ea57f02a32567edde1d17b577becf2d720ceb9153e56b158a633e04441bea5"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/TerminalTabManager.h",
+          "line": 39,
+          "column": 41,
+          "evidence_sha256": "sha256:19acaa66b63bf38facce88ad852640a95cc834f9b3b24f43b219ac303fa46c9c"
+        },
+        {
+          "rule_id": "boundary.private_include",
+          "path": "sakura_core/terminal/window/TerminalTabPresentation.cpp",
+          "line": 9,
+          "column": 11,
+          "evidence_sha256": "sha256:dcd0886304af13466473af33729faa056798a9e5b1fd8914c9d93ae180f276f5"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "sakura_core/workbench/projects/CProjectsPage.cpp",
+          "line": 154,
+          "column": 11,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/workbench/projects/CProjectsPage.cpp",
+          "line": 537,
+          "column": 4,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/workbench/projects/CProjectsPage.cpp",
+          "line": 1105,
+          "column": 41,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/CProjectsPage.h",
+          "line": 81,
+          "column": 24,
+          "evidence_sha256": "sha256:9aafb868615471f6870a9f681ca6b3368857a1ec2040514e64158791bb27bc9d"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/CProjectsPage.h",
+          "line": 82,
+          "column": 33,
+          "evidence_sha256": "sha256:a8637414d279c95cb9cd9552cf7e7400ffec7b48dd303c27642c6e56adcc1870"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/CProjectsPage.h",
+          "line": 83,
+          "column": 32,
+          "evidence_sha256": "sha256:14527caa6ca7d2a8f75aeb5bbcee9491c3ca5e23e3478f62cd24d422164f871b"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/ProjectsModel.h",
+          "line": 105,
+          "column": 15,
+          "evidence_sha256": "sha256:d8359e9a281b774c8f7f6deebe46fa34bd13015612ed50b63278f914c9f49b82"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/ProjectsModel.h",
+          "line": 107,
+          "column": 15,
+          "evidence_sha256": "sha256:94a765aea66b162ec2b085f420eed15d59ce27ec430bebf13ce53cd17736a582"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/ProjectsModel.h",
+          "line": 108,
+          "column": 15,
+          "evidence_sha256": "sha256:57053a1b30542055014167b233e54dc2f6a635e6a74f0fb8ab03e6152efd17bf"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/ProjectsModel.h",
+          "line": 110,
+          "column": 21,
+          "evidence_sha256": "sha256:c771c9ca0cd804393dcfe3df969f209db375eb30c25c1c3828720e87ecc68087"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/ProjectsModel.h",
+          "line": 117,
+          "column": 29,
+          "evidence_sha256": "sha256:20f65c92ff325369affd23a6df858ee41f087e0ef69757b5e92fa0c0a96e1967"
+        },
+        {
+          "rule_id": "boundary.private_include",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalAgentPresenceTest.cpp",
+          "line": 2,
+          "column": 11,
+          "evidence_sha256": "sha256:dcd0886304af13466473af33729faa056798a9e5b1fd8914c9d93ae180f276f5"
+        },
+        {
+          "rule_id": "boundary.private_include",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalAgentPresenceTest.cpp",
+          "line": 3,
+          "column": 11,
+          "evidence_sha256": "sha256:2a1e0e708a078958922b4ac68b29b873bdf1ecebc851d8d8a9ec12539f0ccc04"
+        },
+        {
+          "rule_id": "state.mutable_member",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 45,
+          "column": 2,
+          "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 45,
+          "column": 21,
+          "evidence_sha256": "sha256:51ceb5550fe2e983504e76c6b785c21e1d33140f646156605343cf131c2cb192"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 46,
+          "column": 39,
+          "evidence_sha256": "sha256:bd794aa599e3d1b6f3a3a44fcd21fa54f5613cdeba626f86f59d8c6eb6334536"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 47,
+          "column": 51,
+          "evidence_sha256": "sha256:ffe02c4e4da587bdad386164c2f45997287e459d0ce1f9ce021dc43ddd626963"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 202,
+          "column": 24,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 1545,
+          "column": 8,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 1767,
+          "column": 8,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/workbench/ProjectsTest.cpp",
+          "line": 976,
+          "column": 8,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/workbench/ProjectsTest.cpp",
+          "line": 995,
+          "column": 8,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/workbench/ProjectsTest.cpp",
+          "line": 997,
+          "column": 8,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        }
+      ],
+      "missing_touched_reductions": [
+        {
+          "path": "sakura_core/terminal/runtime/TerminalInstance.cpp",
+          "baseline_finding_count": 27
+        },
+        {
+          "path": "sakura_core/terminal/runtime/TerminalInstance.h",
+          "baseline_finding_count": 1
+        },
+        {
+          "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
+          "baseline_finding_count": 97
+        },
+        {
+          "path": "sakura_core/terminal/session/ConPtyTerminalBackend.cpp",
+          "baseline_finding_count": 8
+        },
+        {
+          "path": "sakura_core/terminal/session/TerminalSession.cpp",
+          "baseline_finding_count": 70
+        },
+        {
+          "path": "sakura_core/terminal/session/TerminalSession.h",
+          "baseline_finding_count": 33
+        },
+        {
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "baseline_finding_count": 64
+        },
+        {
+          "path": "sakura_core/terminal/window/CTerminalTool.h",
+          "baseline_finding_count": 16
+        },
+        {
+          "path": "sakura_core/terminal/window/TerminalTabManager.cpp",
+          "baseline_finding_count": 17
+        },
+        {
+          "path": "sakura_core/terminal/window/TerminalTabManager.h",
+          "baseline_finding_count": 19
+        },
+        {
+          "path": "sakura_core/terminal/window/TerminalTabPresentation.cpp",
+          "baseline_finding_count": 2
+        },
+        {
+          "path": "sakura_core/window/CEditWnd.cpp",
+          "baseline_finding_count": 277
+        },
+        {
+          "path": "sakura_core/window/CEditWnd.h",
+          "baseline_finding_count": 61
+        },
+        {
+          "path": "sakura_core/workbench/projects/CProjectsPage.cpp",
+          "baseline_finding_count": 41
+        },
+        {
+          "path": "sakura_core/workbench/projects/CProjectsPage.h",
+          "baseline_finding_count": 10
+        },
+        {
+          "path": "sakura_core/workbench/projects/ProjectsModel.h",
+          "baseline_finding_count": 25
+        },
+        {
+          "path": "src/test/cpp/tests1/terminal/window/TerminalHeaderLayoutTest.cpp",
+          "baseline_finding_count": 1
+        },
+        {
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "baseline_finding_count": 49
+        },
+        {
+          "path": "src/test/cpp/tests1/workbench/ProjectsTest.cpp",
+          "baseline_finding_count": 18
+        }
+      ]
     }
   ]
 }

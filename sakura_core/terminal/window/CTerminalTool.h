@@ -9,6 +9,7 @@
 #include "terminal/window/TerminalTabManager.h"
 #include "terminal/window/TerminalNativeFrameBridge.h"
 #include "TerminalTabPresentation.h"
+#include "terminal/window/TerminalAgentPresence.h"
 #include "workbench/IWorkbenchTool.h"
 #include "theme/CThemeService.h"
 #include "terminal/window/TerminalPaneLayout.h"
@@ -88,6 +89,17 @@ struct TerminalWorkspaceSwitchResult final {
 			|| outcome == TerminalWorkspaceSwitchOutcome::Attached
 			|| outcome == TerminalWorkspaceSwitchOutcome::Created;
 	}
+};
+
+//! One integrated terminal of this window that hosts a recognized AI agent CLI
+//! (Issue #402). `instanceId` is the stable row identity; `tabId` is the
+//! window-local handle SelectTerminal accepts. Neither is a process ID.
+struct TerminalAgentPresenceRecord final {
+	std::uint64_t tabId{};
+	TerminalInstanceId instanceId;
+	TerminalAgentKind kind{};
+	//! The resolved tab title (TerminalTabPresentation), for the row detail.
+	std::wstring title;
 };
 
 //! Bottom-panel terminal tool with recursive split groups and a right-side
@@ -171,6 +183,15 @@ public:
 	[[nodiscard]] bool HasTerminalSplit() const noexcept;
 	[[nodiscard]] TerminalPaneOrientation ActivePaneOrientation() const noexcept;
 	[[nodiscard]] std::vector<TerminalTabSnapshot> Tabs() const;
+	//! Terminals of the current projection that host an agent, in tab order.
+	//! `refresh` re-observes every terminal's job first (bounded by the tab
+	//! count) and does not call the sink for what it finds; false returns the
+	//! event-maintained state without touching any process.
+	[[nodiscard]] std::vector<TerminalAgentPresenceRecord> AgentPresence( bool refresh );
+	//! Called on the UI thread after an event changed which terminals host an
+	//! agent. The sink must not re-enter this tool synchronously except through
+	//! AgentPresence(false). Cleared by Close().
+	void SetAgentPresenceSink( std::function<void()> sink );
 	[[nodiscard]] std::optional<std::uint64_t> ActiveTerminalId() const noexcept;
 	//! Resolves the focused terminal's display title for shared panel chrome.
 	//! Empty means that the caller should keep its stable "Terminal" label.

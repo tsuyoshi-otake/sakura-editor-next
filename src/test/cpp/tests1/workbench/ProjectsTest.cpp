@@ -20,6 +20,7 @@
 #include <chrono>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -509,6 +510,139 @@ TEST(ProjectsModel, UsesWorkspaceIdentityAndPreservesUnsafeWorktreeStates)
 	EXPECT_FALSE(projection.rows[5].enabled);
 }
 
+TEST(ProjectsModel, AgentRowsSitBetweenCurrentWorktreeAndToggleOnTheCurrentProjectOnly)
+{
+	const std::vector<ProjectEntry> projects{
+		ProjectFolder(L"C:\\repo", L"sakura-editor-next"),
+		ProjectFolder(L"D:\\other", L"other"),
+	};
+	config::WorkspaceContextSnapshot workspace;
+	workspace.kind = config::EWorkspaceKind::Folder;
+	workspace.folders.push_back({ FileUri(L"C:\\repo"), L"repo" });
+	auto worktrees = Worktrees();
+	const std::vector<ProjectAgentEntry> agents{
+		{ .identity = L"terminal-instance:3", .terminalId = 3,
+			.name = L"Claude Code", .detail = L"fix login bug" },
+		{ .identity = L"terminal-instance:9", .terminalId = 9, .name = L"Devin" },
+	};
+
+	const auto projection = ProjectProjects(projects, workspace, &worktrees, false,
+		{}, std::nullopt, {}, {}, agents);
+	ASSERT_EQ(6U, projection.rows.size());
+	EXPECT_EQ(EProjectsRowKind::Project, projection.rows[0].kind);
+	EXPECT_EQ(EProjectsRowKind::CurrentWorktree, projection.rows[1].kind);
+	ASSERT_EQ(EProjectsRowKind::Agent, projection.rows[2].kind);
+	ASSERT_TRUE(projection.rows[2].agentIndex.has_value());
+	EXPECT_EQ(0U, *projection.rows[2].agentIndex);
+	EXPECT_EQ(L"Claude Code", projection.rows[2].label);
+	EXPECT_EQ(L"fix login bug", projection.rows[2].description);
+	EXPECT_TRUE(projection.rows[2].currentProject);
+	EXPECT_TRUE(projection.rows[2].enabled);
+	EXPECT_EQ(L"Claude Code, fix login bug",
+		ProjectsAccessibleLabel(projection.rows[2]));
+	ASSERT_EQ(EProjectsRowKind::Agent, projection.rows[3].kind);
+	ASSERT_TRUE(projection.rows[3].agentIndex.has_value());
+	EXPECT_EQ(1U, *projection.rows[3].agentIndex);
+	EXPECT_EQ(L"Devin", projection.rows[3].label);
+	EXPECT_TRUE(projection.rows[3].description.empty());
+	EXPECT_EQ(EProjectsRowKind::WorktreesToggle, projection.rows[4].kind);
+	EXPECT_EQ(EProjectsRowKind::Project, projection.rows[5].kind);
+	EXPECT_FALSE(projection.rows[5].currentProject);
+}
+
+TEST(ProjectsModel, AgentRowsFollowTheProjectWithoutWorktreesAndRequireACurrentProject)
+{
+	const std::vector<ProjectEntry> projects{
+		ProjectFolder(L"C:\\repo", L"repo"),
+		ProjectFolder(L"D:\\other", L"other"),
+	};
+	config::WorkspaceContextSnapshot workspace;
+	workspace.kind = config::EWorkspaceKind::Folder;
+	workspace.folders.push_back({ FileUri(L"C:\\repo"), L"repo" });
+	const std::vector<ProjectAgentEntry> agents{
+		{ .identity = L"terminal-instance:3", .terminalId = 3, .name = L"Claude Code" },
+	};
+
+	const auto projection = ProjectProjects(projects, workspace, nullptr, false,
+		{}, std::nullopt, {}, {}, agents);
+	ASSERT_EQ(3U, projection.rows.size());
+	EXPECT_EQ(EProjectsRowKind::Project, projection.rows[0].kind);
+	EXPECT_EQ(EProjectsRowKind::Agent, projection.rows[1].kind);
+	EXPECT_EQ(0U, projection.rows[1].projectIndex);
+	EXPECT_EQ(EProjectsRowKind::Project, projection.rows[2].kind);
+	EXPECT_EQ(1U, projection.rows[2].projectIndex);
+
+	// A failed/empty worktree projection does not suppress the Agent rows.
+	auto failedWorktrees = Worktrees();
+	failedWorktrees.status = workbench::agent::EAgentWorkspacesProjectionStatus::CurrentWorktreeUnavailable;
+	failedWorktrees.currentIndex.reset();
+	failedWorktrees.rows.clear();
+	const auto failed = ProjectProjects(projects, workspace, &failedWorktrees, false,
+		{}, std::nullopt, {}, {}, agents);
+	ASSERT_EQ(3U, failed.rows.size());
+	EXPECT_EQ(EProjectsRowKind::Agent, failed.rows[1].kind);
+
+	// No current project: agent rows are never emitted.
+	config::WorkspaceContextSnapshot empty;
+	empty.kind = config::EWorkspaceKind::Empty;
+	const auto orphaned = ProjectProjects(projects, empty, nullptr, false,
+		{}, std::nullopt, {}, {}, agents);
+	ASSERT_EQ(2U, orphaned.rows.size());
+	EXPECT_TRUE(std::ranges::none_of(orphaned.rows, [](const auto& row) {
+		return row.kind == EProjectsRowKind::Agent;
+	}));
+}
+
+TEST(ProjectsModel, AgentRowDescriptionDropsEmptyOrDuplicatedDetail)
+{
+	const std::vector<ProjectEntry> projects{ ProjectFolder(L"C:\\repo", L"repo") };
+	config::WorkspaceContextSnapshot workspace;
+	workspace.kind = config::EWorkspaceKind::Folder;
+	workspace.folders.push_back({ FileUri(L"C:\\repo"), L"repo" });
+	const std::vector<ProjectAgentEntry> agents{
+		{ .identity = L"terminal-instance:1", .terminalId = 1,
+			.name = L"Claude Code", .detail = L"Claude Code" },
+		{ .identity = L"terminal-instance:2", .terminalId = 2,
+			.name = L"Devin", .detail = L"" },
+		{ .identity = L"terminal-instance:3", .terminalId = 3,
+			.name = L"Copilot", .detail = L"terminal tab title" },
+	};
+
+	const auto projection = ProjectProjects(projects, workspace, nullptr, false,
+		{}, std::nullopt, {}, {}, agents);
+	ASSERT_EQ(4U, projection.rows.size());
+	EXPECT_TRUE(projection.rows[1].description.empty());
+	EXPECT_TRUE(projection.rows[2].description.empty());
+	EXPECT_EQ(L"terminal tab title", projection.rows[3].description);
+}
+
+TEST(ProjectsModel, PreferredAgentIdentitySelectsTheMatchingRowAndFallsBackWhenUnknown)
+{
+	const std::vector<ProjectEntry> projects{
+		ProjectFolder(L"C:\\repo", L"repo"),
+		ProjectFolder(L"D:\\other", L"other"),
+	};
+	config::WorkspaceContextSnapshot workspace;
+	workspace.kind = config::EWorkspaceKind::Folder;
+	workspace.folders.push_back({ FileUri(L"C:\\repo"), L"repo" });
+	const std::vector<ProjectAgentEntry> agents{
+		{ .identity = L"terminal-instance:3", .terminalId = 3, .name = L"Claude Code" },
+		{ .identity = L"terminal-instance:9", .terminalId = 9, .name = L"Devin" },
+	};
+
+	const auto matched = ProjectProjects(projects, workspace, nullptr, false,
+		{}, EProjectsRowKind::Agent, {}, {}, agents, L"terminal-instance:9");
+	ASSERT_TRUE(matched.selectedRowIndex.has_value());
+	EXPECT_EQ(EProjectsRowKind::Agent, matched.rows[*matched.selectedRowIndex].kind);
+	EXPECT_EQ(L"Devin", matched.rows[*matched.selectedRowIndex].label);
+
+	const auto unmatched = ProjectProjects(projects, workspace, nullptr, false,
+		{}, EProjectsRowKind::Agent, {}, {}, agents, L"terminal-instance:404");
+	ASSERT_TRUE(unmatched.selectedRowIndex.has_value());
+	EXPECT_EQ(EProjectsRowKind::Project, unmatched.rows[*unmatched.selectedRowIndex].kind);
+	EXPECT_TRUE(unmatched.rows[*unmatched.selectedRowIndex].currentProject);
+}
+
 TEST(ProjectsPage, DeleteRemovesTheCatalogEntryWithoutChangingWorkspaceState)
 {
 	std::vector<ProjectEntry> projects{
@@ -788,6 +922,160 @@ TEST(ProjectsPage, RefreshSupersessionAndCloseFinalizeEachInFlightBranchDiscover
 	EXPECT_LT(elapsed, 2s);
 	EXPECT_EQ(0, runner->Active());
 	EXPECT_EQ(2U, runner->Calls().size());
+	page.reset();
+	::DestroyWindow(hostWindow);
+}
+
+TEST(ProjectsPage, AgentNotificationAddsRowsAndActivatesWithoutGitRediscovery)
+{
+	TemporaryProjectRoots roots;
+	std::vector<ProjectEntry> projects{
+		ProjectFolder(roots.current.wstring(), L"Current"),
+		ProjectFolder(roots.other.wstring(), L"Other"),
+	};
+	config::WorkspaceContextSnapshot workspace;
+	workspace.kind = config::EWorkspaceKind::Folder;
+	workspace.folders.push_back({ FileUri(roots.current.wstring()), L"repo" });
+	const auto runner = std::make_shared<ScriptedBranchRunner>();
+	runner->branches.emplace(roots.current.wstring(), "main");
+
+	std::vector<ProjectAgentEntry> agents;
+	std::vector<bool> refreshFlags;
+	std::function<void()> agentsChanged;
+	std::optional<std::uint64_t> activatedTerminal;
+
+	ProjectsPageOptions options;
+	options.projects = [&projects] { return std::optional(projects); };
+	options.workspace = [&workspace] { return workspace; };
+	options.workspaceRoot = [&roots] { return roots.current.wstring(); };
+	options.repositoryRoots = [](const ProjectEntry& project) {
+		const auto path = project.uri.ToWindowsPath();
+		return path.value ? std::optional(std::vector<std::wstring>{ *path.value })
+			: std::nullopt;
+	};
+	options.activateProject = [](const ProjectEntry&, bool) {
+		return EProjectsActivationStatus::Failed;
+	};
+	options.activateWorktree = [](std::wstring_view, bool) {
+		return EProjectsActivationStatus::Failed;
+	};
+	options.removeProject = [](const ProjectEntry&) { return EProjectsRemovalStatus::Failed; };
+	options.gitDiscoveryFactory = DiscoveryFactory(runner);
+	options.agents = [&agents, &refreshFlags](bool refresh) {
+		refreshFlags.push_back(refresh);
+		return agents;
+	};
+	options.activateAgent = [&activatedTerminal](std::uint64_t terminalId) {
+		activatedTerminal = terminalId;
+		return EProjectsActivationStatus::FocusedCurrentWindow;
+	};
+	options.agentsChanged = [&agentsChanged](std::function<void()> listener) {
+		agentsChanged = std::move(listener);
+	};
+
+	const HWND hostWindow = ::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+		0, 0, 420, 400, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, hostWindow);
+	auto page = CreateProjectsPage(hostWindow, std::move(options));
+	ASSERT_NE(nullptr, page);
+	const auto nativeHost = reinterpret_cast<workbench::viewcontainer::ViewContainerNativeHandle>(hostWindow);
+	ASSERT_EQ(workbench::viewcontainer::EViewContainerPageReparentStatus::Reparented,
+		page->Reparent(nativeHost));
+	const workbench::viewcontainer::ViewContainerPageHost host{
+		"workbench.parts.sidebar", workbench::layout::EViewContainerLocation::Sidebar, nativeHost };
+	ASSERT_EQ(workbench::viewcontainer::EViewContainerPageAttachStatus::Attached,
+		page->Attach(host));
+	auto* nativePage = dynamic_cast<workbench::viewcontainer::IViewContainerPageProjection*>(page.get());
+	ASSERT_NE(nullptr, nativePage);
+	const RECT bounds{ 0, 0, 420, 400 };
+	nativePage->LayoutProjection(bounds, bounds, 96);
+	nativePage->SetProjectionVisible(true);
+	nativePage->ActivateProjection();
+
+	const HWND pageWindow = ::FindWindowExW(hostWindow, nullptr, L"SakuraProjectsPage", nullptr);
+	ASSERT_NE(nullptr, pageWindow);
+	const HWND list = ::FindWindowExW(pageWindow, nullptr, L"LISTBOX", nullptr);
+	ASSERT_NE(nullptr, list);
+	// Activation pulls agents(true) once; no agent rows exist yet.
+	ASSERT_EQ(1U, refreshFlags.size());
+	EXPECT_TRUE(refreshFlags.front());
+	// The current worktree row's label is its branch; the rest of its text is
+	// localized, so match the label only. Wait for both Projects' discovery so
+	// the call count below is not racing the second request.
+	const auto isCurrentWorktreeRow = [](const std::wstring& row) {
+		return row.starts_with(L"main, ");
+	};
+	std::vector<std::wstring> rows;
+	for (int attempt = 0; attempt < 400; ++attempt) {
+		(void)::SendMessageW(pageWindow, WM_TIMER, 0x7072, 0);
+		rows = ListBoxRows(list);
+		if (runner->Calls().size() == 2U && runner->Active() == 0
+			&& std::ranges::any_of(rows, isCurrentWorktreeRow)) break;
+		std::this_thread::sleep_for(5ms);
+	}
+	std::string rowDiagnostic;
+	for (const auto& row : rows) {
+		if (!rowDiagnostic.empty()) rowDiagnostic += " | ";
+		for (const wchar_t character : row) {
+			rowDiagnostic.push_back(static_cast<unsigned int>(character) <= 0x7fU
+				? static_cast<char>(character) : '?');
+		}
+	}
+	ASSERT_TRUE(std::ranges::any_of(rows, isCurrentWorktreeRow)) << rowDiagnostic;
+	ASSERT_EQ(2U, runner->Calls().size());
+	(void)::SendMessageW(pageWindow, WM_TIMER, 0x7072, 0);
+
+	// A change notification posts one message, rebuilds with agents(false),
+	// and never restarts Git discovery.
+	agents.push_back({ .identity = L"terminal-instance:7", .terminalId = 7,
+		.name = L"Claude Code", .detail = L"fix login bug" });
+	ASSERT_TRUE(static_cast<bool>(agentsChanged));
+	agentsChanged();
+	for (int attempt = 0; attempt < 100; ++attempt) {
+		MSG pump{};
+		while (::PeekMessageW(&pump, pageWindow, 0, 0, PM_REMOVE)) {
+			::TranslateMessage(&pump);
+			::DispatchMessageW(&pump);
+		}
+		rows = ListBoxRows(list);
+		if (std::ranges::any_of(rows, [](const auto& row) {
+			return row.find(L"Claude Code, fix login bug") != std::wstring::npos;
+		})) break;
+		std::this_thread::sleep_for(5ms);
+	}
+	ASSERT_TRUE(std::ranges::any_of(rows, [](const auto& row) {
+		return row.find(L"Claude Code, fix login bug") != std::wstring::npos;
+	}));
+	EXPECT_EQ(2U, refreshFlags.size());
+	EXPECT_FALSE(refreshFlags.back());
+	EXPECT_EQ(2U, runner->Calls().size());
+	// The agent row nests under the current worktree row.
+	const auto worktreeRow = std::ranges::find_if(rows, isCurrentWorktreeRow);
+	const auto agentRow = std::ranges::find_if(rows, [](const auto& row) {
+		return row.starts_with(L"Claude Code, ");
+	});
+	ASSERT_NE(rows.end(), worktreeRow);
+	ASSERT_NE(rows.end(), agentRow);
+	EXPECT_EQ(worktreeRow + 1, agentRow);
+
+	// Enter on the Agent row activates it by terminal id.
+	for (int index = 0; index < static_cast<int>(rows.size()); ++index) {
+		if (rows[static_cast<std::size_t>(index)].find(L"Claude Code") != std::wstring::npos) {
+			ASSERT_NE(LB_ERR, ::SendMessageW(list, LB_SETCURSEL, index, 0));
+			break;
+		}
+	}
+	MSG message{};
+	message.hwnd = list;
+	message.message = WM_KEYDOWN;
+	message.wParam = VK_RETURN;
+	EXPECT_TRUE(nativePage->PreTranslateProjection(message));
+	ASSERT_TRUE(activatedTerminal.has_value());
+	EXPECT_EQ(7U, *activatedTerminal);
+
+	nativePage->DeactivateProjection();
+	EXPECT_EQ(workbench::viewcontainer::EViewContainerPageCloseStatus::Closed, page->Close());
+	EXPECT_FALSE(static_cast<bool>(agentsChanged));
 	page.reset();
 	::DestroyWindow(hostWindow);
 }

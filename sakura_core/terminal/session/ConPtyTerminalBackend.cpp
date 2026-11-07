@@ -9,7 +9,10 @@
 #include <cwchar>
 #include <limits>
 #include <mutex>
+#include <iterator>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -148,6 +151,70 @@ bool HaveAllProcessesExited( HANDLE process, HANDLE job ) noexcept
 	return rootExited;
 }
 
+std::uint64_t FileTimeValue( const FILETIME& value ) noexcept
+{
+	ULARGE_INTEGER result{};
+	result.LowPart = value.dwLowDateTime;
+	result.HighPart = value.dwHighDateTime;
+	return result.QuadPart;
+}
+
+//! Final path component of a process image, or empty when it cannot be read.
+std::wstring QueryProcessImageFileName( HANDLE process )
+{
+	wchar_t path[MAX_PATH * 2]{};
+	DWORD length = static_cast<DWORD>(std::size(path));
+	if( !::QueryFullProcessImageNameW(process, 0, path, &length) || length == 0 ) return {};
+	const std::wstring_view full(path, length);
+	const auto separator = full.find_last_of(L"\\/");
+	return std::wstring(separator == std::wstring_view::npos ? full : full.substr(separator + 1));
+}
+
+// Completion keys for the per-backend job notification port (#402).
+constexpr ULONG_PTR kJobNotificationKey = 1;
+constexpr ULONG_PTR kJobNotificationStopKey = 2;
+
+//! Blocks on the job's completion port and forwards membership hints. The port
+//! is idle while nothing in the terminal starts or exits a process, so this
+//! worker costs no CPU between events. One image-name query per new process is
+//! the only work, and it runs here rather than on the UI thread.
+void RunJobNotificationWorker( HANDLE port, const TerminalJobProcessListener& listener ) noexcept
+{
+	for( ;; ) {
+		DWORD message = 0;
+		ULONG_PTR key = 0;
+		LPOVERLAPPED overlapped = nullptr;
+		if( !::GetQueuedCompletionStatus(port, &message, &key, &overlapped, INFINITE) ) {
+			// A null overlapped means the port itself failed or was closed.
+			if( overlapped == nullptr ) return;
+			continue;
+		}
+		if( key == kJobNotificationStopKey ) return;
+		if( key != kJobNotificationKey ) continue;
+		try {
+			TerminalJobProcessEvent event;
+			event.processId = static_cast<std::uint32_t>(reinterpret_cast<ULONG_PTR>(overlapped));
+			switch( message ) {
+			case JOB_OBJECT_MSG_NEW_PROCESS: {
+				event.kind = TerminalJobProcessEventKind::Started;
+				UniqueHandle process(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, event.processId));
+				if( process ) event.imageFileName = QueryProcessImageFileName(process.Get());
+				break;
+			}
+			case JOB_OBJECT_MSG_EXIT_PROCESS:
+			case JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS:
+				event.kind = TerminalJobProcessEventKind::Exited;
+				break;
+			default:
+				continue;
+			}
+			listener(event);
+		} catch( ... ) {
+			// A hint consumer is advisory; it must not end membership observation.
+		}
+	}
+}
+
 void JoinPseudoConsoleClose( std::thread& worker ) noexcept
 {
 	if( !worker.joinable() ) return;
@@ -211,6 +278,22 @@ public:
 		JOBOBJECT_EXTENDED_LIMIT_INFORMATION jobLimits{};
 		jobLimits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 		if( !::SetInformationJobObject(job.Get(), JobObjectExtendedLimitInformation, &jobLimits, sizeof(jobLimits)) ) return StartFailure(::GetLastError(), L"Configure terminal job object");
+		// Membership hints are optional (#402): only a backend with a listener
+		// pays for a port and a worker, and a refused association leaves the
+		// terminal fully functional without hints. The association precedes
+		// CreateProcess so the root shell's own NEW_PROCESS message is queued.
+		UniqueHandle jobNotificationPort;
+		if( m_jobProcessListener ) {
+			jobNotificationPort.Reset(::CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1));
+			if( jobNotificationPort ) {
+				JOBOBJECT_ASSOCIATE_COMPLETION_PORT association{};
+				association.CompletionKey = reinterpret_cast<PVOID>(kJobNotificationKey);
+				association.CompletionPort = jobNotificationPort.Get();
+				if( !::SetInformationJobObject(job.Get(), JobObjectAssociateCompletionPortInformation, &association, sizeof(association)) ) {
+					jobNotificationPort.Reset();
+				}
+			}
+		}
 
 		SIZE_T attributeBytes = 0;
 		::InitializeProcThreadAttributeList(nullptr, 2, 0, &attributeBytes);
@@ -272,8 +355,66 @@ public:
 		m_pseudoConsole = std::move(pseudoConsole);
 		m_rootProcessIdentity = TerminalBackendProcessIdentity{
 			processInfo.dwProcessId, creationValue.QuadPart };
+		if( jobNotificationPort ) {
+			try {
+				const HANDLE port = jobNotificationPort.Get();
+				m_jobNotificationWorker = std::thread([port, listener = m_jobProcessListener] {
+					RunJobNotificationWorker(port, listener);
+				});
+				m_jobNotificationPort = std::move(jobNotificationPort);
+			} catch( ... ) {
+				// No worker means no hints; the terminal itself is unaffected.
+			}
+		}
 		m_started = true;
 		return TerminalStartResult::Success();
+	}
+
+	void SetJobProcessListener( TerminalJobProcessListener listener ) noexcept override
+	{
+		const std::lock_guard lock(m_mutex);
+		if( m_started || m_closed ) return;
+		m_jobProcessListener = std::move(listener);
+	}
+
+	std::optional<TerminalBackendJobProcesses> ObserveJobProcesses() const noexcept override
+	{
+		UniqueHandle job;
+		{
+			const std::lock_guard lock(m_mutex);
+			job = DuplicateLocalHandle(m_job.Get());
+		}
+		if( !job ) return std::nullopt;
+		try {
+			// JOBOBJECT_BASIC_PROCESS_ID_LIST ends in a one-element array; the
+			// ULONG_PTR storage keeps the header and the tail correctly aligned.
+			constexpr std::size_t headerWords =
+				(sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + sizeof(ULONG_PTR) - 1) / sizeof(ULONG_PTR);
+			std::vector<ULONG_PTR> storage(headerWords + kMaximumObservedJobProcesses);
+			auto* list = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(storage.data());
+			const DWORD bytes = static_cast<DWORD>(storage.size() * sizeof(ULONG_PTR));
+			// ERROR_MORE_DATA still fills as many IDs as fit; that is the bound.
+			if( !::QueryInformationJobObject(job.Get(), JobObjectBasicProcessIdList, list, bytes, nullptr)
+				&& ::GetLastError() != ERROR_MORE_DATA ) return std::nullopt;
+			const std::size_t listed = std::min<std::size_t>(list->NumberOfProcessIdsInList, kMaximumObservedJobProcesses);
+			TerminalBackendJobProcesses result;
+			result.truncated = list->NumberOfAssignedProcesses > listed;
+			result.processes.reserve(listed);
+			for( std::size_t index = 0; index < listed; ++index ) {
+				const auto processId = static_cast<DWORD>(list->ProcessIdList[index]);
+				UniqueHandle process(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId));
+				if( !process ) continue;
+				// The PID may have been reused between the list and the open.
+				BOOL member = FALSE;
+				if( !::IsProcessInJob(process.Get(), job.Get(), &member) || !member ) continue;
+				FILETIME creation{}, exitTime{}, kernelTime{}, userTime{};
+				if( !::GetProcessTimes(process.Get(), &creation, &exitTime, &kernelTime, &userTime) ) continue;
+				result.processes.push_back({ processId, FileTimeValue(creation), QueryProcessImageFileName(process.Get()) });
+			}
+			return result;
+		} catch( ... ) {
+			return std::nullopt;
+		}
 	}
 
 	std::optional<TerminalBackendProcessIdentity> GetProcessIdentity() const noexcept override
@@ -456,6 +597,8 @@ public:
 		UniqueHandle job;
 		HPCON pseudoConsole = nullptr;
 		std::thread pseudoConsoleCloseThread;
+		UniqueHandle jobNotificationPort;
+		std::thread jobNotificationWorker;
 		{
 			const std::lock_guard lock(m_mutex);
 			if( !m_closed ) {
@@ -465,9 +608,26 @@ public:
 				process.Reset(m_process.Release());
 				job.Reset(m_job.Release());
 				pseudoConsole = m_pseudoConsole.Release();
+				jobNotificationPort.Reset(m_jobNotificationPort.Release());
+				m_jobProcessListener = {};
 			}
 			if( m_pseudoConsoleCloseThread.joinable() ) pseudoConsoleCloseThread = std::move(m_pseudoConsoleCloseThread);
+			if( m_jobNotificationWorker.joinable() ) jobNotificationWorker = std::move(m_jobNotificationWorker);
 		}
+		// Stop membership hints first so no listener call can begin after Close
+		// returns. Without a stop packet, closing the port wakes the worker with a
+		// failed dequeue instead. The listener only posts, so the join is short.
+		if( jobNotificationWorker.joinable() ) {
+			if( !jobNotificationPort || !::PostQueuedCompletionStatus(jobNotificationPort.Get(), 0, kJobNotificationStopKey, nullptr) ) {
+				jobNotificationPort.Reset();
+			}
+			try {
+				jobNotificationWorker.join();
+			} catch( ... ) {
+				std::terminate();
+			}
+		}
+		jobNotificationPort.Reset();
 		if( !input && !output && !process && !job && pseudoConsole == nullptr && !pseudoConsoleCloseThread.joinable() ) return;
 		// Pipe clients are closed before ClosePseudoConsole, preventing a full
 		// output pipe from turning backend finalization into an unbounded wait.
@@ -521,6 +681,9 @@ private:
 	std::thread m_pseudoConsoleCloseThread;
 	std::optional<std::uint32_t> m_rootExitCode;
 	std::optional<TerminalBackendProcessIdentity> m_rootProcessIdentity;
+	TerminalJobProcessListener m_jobProcessListener;
+	UniqueHandle m_jobNotificationPort;
+	std::thread m_jobNotificationWorker;
 	bool m_started = false;
 	bool m_closed = false;
 };

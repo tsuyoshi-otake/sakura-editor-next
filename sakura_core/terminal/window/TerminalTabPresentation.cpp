@@ -6,14 +6,18 @@
 */
 #include "StdAfx.h"
 #include "terminal/window/TerminalTabPresentation.h"
+#include "terminal/window/TerminalAgentPresence.h"
 
 #include <algorithm>
 #include <cstdint>
-#include <cwctype>
 #include <limits>
 #include <vector>
 
 namespace terminal {
+
+static_assert(kMaximumTerminalAgentTitleLength == kMaximumTerminalTabTextLength,
+	"an Agent CLI title is bounded like any other tab text");
+
 namespace {
 
 constexpr bool IsBlank( wchar_t character ) noexcept
@@ -48,80 +52,6 @@ std::wstring_view Trim( std::wstring_view text ) noexcept
 bool IsBlankText( std::wstring_view text ) noexcept
 {
 	return Trim(text).empty();
-}
-
-bool IsWordCharacter( wchar_t character ) noexcept
-{
-	return (character >= L'a' && character <= L'z')
-		|| (character >= L'A' && character <= L'Z')
-		|| (character >= L'0' && character <= L'9')
-		|| character == L'_';
-}
-
-bool MatchesIgnoreCase( wchar_t left, wchar_t right ) noexcept
-{
-	return static_cast<wchar_t>(std::towlower(static_cast<std::wint_t>(left)))
-		== static_cast<wchar_t>(std::towlower(static_cast<std::wint_t>(right)));
-}
-
-//! Implements the upstream `/claude\\s*code/i` and `/command\\s*code/i`
-//! patterns without pulling a regular-expression engine into the resolver.
-bool ContainsSpacedWordsIgnoreCase( std::wstring_view text,
-	std::wstring_view first, std::wstring_view second ) noexcept
-{
-	for( std::size_t begin = 0; begin < text.size(); ++begin ) {
-		if( begin + first.size() > text.size() ) break;
-		bool firstMatches = true;
-		for( std::size_t index = 0; index < first.size(); ++index ) {
-			if( !MatchesIgnoreCase(text[begin + index], first[index]) ) {
-				firstMatches = false;
-				break;
-			}
-		}
-		if( !firstMatches ) continue;
-		std::size_t secondBegin = begin + first.size();
-		while( secondBegin < text.size() && IsBlank(text[secondBegin]) ) ++secondBegin;
-		if( secondBegin + second.size() > text.size() ) continue;
-		bool secondMatches = true;
-		for( std::size_t index = 0; index < second.size(); ++index ) {
-			if( !MatchesIgnoreCase(text[secondBegin + index], second[index]) ) {
-				secondMatches = false;
-				break;
-			}
-		}
-		if( secondMatches ) return true;
-	}
-	return false;
-}
-
-bool ContainsWordIgnoreCase( std::wstring_view text, std::wstring_view word ) noexcept
-{
-	if( word.empty() || text.size() < word.size() ) return false;
-	for( std::size_t begin = 0; begin + word.size() <= text.size(); ++begin ) {
-		if( begin > 0 && IsWordCharacter(text[begin - 1]) ) continue;
-		if( begin + word.size() < text.size() && IsWordCharacter(text[begin + word.size()]) ) continue;
-		bool matches = true;
-		for( std::size_t index = 0; index < word.size(); ++index ) {
-			if( !MatchesIgnoreCase(text[begin + index], word[index]) ) {
-				matches = false;
-				break;
-			}
-		}
-		if( matches ) return true;
-	}
-	return false;
-}
-
-bool IsPathShapedTitle( std::wstring_view text ) noexcept
-{
-	if( text.empty() ) return false;
-	if( text.front() == L'/' ) return true;
-	if( text.size() >= 2 && text[0] == L'\\' && text[1] == L'\\' ) return true;
-	if( text.size() >= 3
-		&& ((text[0] >= L'a' && text[0] <= L'z') || (text[0] >= L'A' && text[0] <= L'Z'))
-		&& text[1] == L':' && (text[2] == L'/' || text[2] == L'\\') ) return true;
-	return text.starts_with(L"./") || text.starts_with(L".\\")
-		|| text.starts_with(L"../") || text.starts_with(L"..\\");
 }
 
 int ScaleDip( const int dip, const unsigned int dpi ) noexcept
@@ -288,20 +218,10 @@ TerminalTabPresentationContext ContextFromSnapshot(
 
 bool IsRecognizedAgentCliTitle( std::wstring_view sequenceTitle ) noexcept
 {
-	const auto trimmed = Trim(sequenceTitle);
-	if( trimmed.empty() || trimmed.size() > kMaximumTerminalTabTextLength ) return false;
-	// pwsh reports its working directory through OSC 0. A rooted path is a shell
-	// title, never an Agent CLI announcing a product name. Do not reject a valid
-	// upstream Agent CLI title merely because it contains punctuation such as
-	// `Claude Code: project`.
-	if( IsPathShapedTitle(trimmed) ) return false;
-	// These are the exact OSC-title patterns used by current VS Code. Codex is
-	// intentionally absent: upstream allows it by detected shell type, but the
-	// CLI does not report an OSC title, so a raw title cannot prove that identity.
-	return ContainsSpacedWordsIgnoreCase(trimmed, L"claude", L"code")
-		|| ContainsSpacedWordsIgnoreCase(trimmed, L"command", L"code")
-		|| ContainsWordIgnoreCase(trimmed, L"copilot")
-		|| ContainsWordIgnoreCase(trimmed, L"gemini");
+	// VS Code's pattern list has one owner, TerminalAgentKindFromTitle (#402).
+	// The Projects agent rows also recognize fork-only titles such as Pi's; the
+	// tab label must not, because VS Code's allowAgentCliTitle does not.
+	return TerminalAgentKindFromTitle(sequenceTitle).has_value();
 }
 
 std::optional<TerminalTabsHideCondition> ParseTerminalTabsHideCondition(

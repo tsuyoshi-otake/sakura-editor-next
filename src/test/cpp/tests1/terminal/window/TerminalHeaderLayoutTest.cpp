@@ -21,6 +21,7 @@ constexpr std::array kVisualOrder{
 	TerminalHeaderTarget::New,
 	TerminalHeaderTarget::Dropdown,
 	TerminalHeaderTarget::Split,
+	TerminalHeaderTarget::SplitDown,
 	TerminalHeaderTarget::Kill,
 	TerminalHeaderTarget::More,
 	TerminalHeaderTarget::Maximize,
@@ -77,8 +78,12 @@ TEST(TerminalHeaderLayout, ReturnsNoneForActionGapsAndOutsideHeader)
 {
 	const auto layout = CalculateTerminalHeaderLayout(RECT{ 0, 0, 800, 100 }, 96);
 	const auto& split = layout.RectFor(TerminalHeaderTarget::Split);
+	const auto& splitDown = layout.RectFor(TerminalHeaderTarget::SplitDown);
 	const auto& kill = layout.RectFor(TerminalHeaderTarget::Kill);
-	ASSERT_LT(split.right, kill.left);
+	ASSERT_LT(split.right, splitDown.left);
+	ASSERT_LT(splitDown.right, kill.left);
+	EXPECT_EQ(TerminalHeaderTarget::None,
+		layout.HitTest(POINT{ splitDown.right, (splitDown.top + splitDown.bottom) / 2 }));
 	EXPECT_EQ(TerminalHeaderTarget::None,
 		layout.HitTest(POINT{ split.right, (split.top + split.bottom) / 2 }));
 	EXPECT_EQ(TerminalHeaderTarget::None, layout.HitTest(POINT{ -1, 10 }));
@@ -104,7 +109,8 @@ TEST(TerminalHeaderLayout, HiddenActionsTakeNoSpaceAndAreNotHitTestable)
 	const auto hidden = CalculateTerminalHeaderLayout(bounds, 96, false, 34,
 		TerminalHeaderActionVisibility{ false, false });
 
-	for (const auto target : { TerminalHeaderTarget::Profile, TerminalHeaderTarget::Split, TerminalHeaderTarget::Kill }) {
+	for (const auto target : { TerminalHeaderTarget::Profile, TerminalHeaderTarget::Split,
+		TerminalHeaderTarget::SplitDown, TerminalHeaderTarget::Kill }) {
 		const auto& rect = hidden.RectFor(target);
 		EXPECT_EQ(rect.left, rect.right);
 		ExpectValidRect(rect, hidden.header);
@@ -125,8 +131,8 @@ TEST(TerminalHeaderLayout, HiddenActionsTakeNoSpaceAndAreNotHitTestable)
 
 TEST(TerminalHeaderLayout, HiddenActionsLeaveTheirSpaceToTheRemainingActions)
 {
-	// 100 DIP fits More, Kill and Split but not Dropdown. Without Split and Kill,
-	// New and Dropdown fit instead of collapsing with them.
+	// 100 DIP fits More, Kill and Split Down but not Split or Dropdown. Without
+	// the inline actions, New and Dropdown fit instead of collapsing with them.
 	const RECT bounds{ 0, 0, 100, 34 };
 	const auto all = CalculateTerminalHeaderLayout(bounds, 96, false, 34);
 	EXPECT_EQ(all.RectFor(TerminalHeaderTarget::Dropdown).left, all.RectFor(TerminalHeaderTarget::Dropdown).right);

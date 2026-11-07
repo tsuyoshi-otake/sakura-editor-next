@@ -744,6 +744,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalTabPresentationTest.cpp">
 	  <Filter>Test Files\terminal\window</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalAgentPresenceTest.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalLinkTest.cpp">
       <Filter>Test Files\terminal\window</Filter>
     </ClCompile>

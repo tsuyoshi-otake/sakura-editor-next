@@ -397,8 +397,14 @@ panes on the right:
 
 - `workbench.action.terminal.split` / `Ctrl+Shift+5` / the Split header action
   add a horizontal (side-by-side) pane.
-- `SplitTerminalDown` / `Ctrl+Alt+5` / Alt+Split header action / the context
-  menu "Split Terminal Down" entry add a vertical (stacked) pane.
+- `SplitTerminalDown` / `Ctrl+Alt+5` / Alt+Split header action / the Split
+  Down header button / the context menu "Split Terminal Down" entry add a
+  vertical (stacked) pane.
+
+The Split Down header button (owner request, 2026-11-07) is a fork extension:
+VS Code's terminal view title has only Split, whose Alt variant is the
+orthogonal split. It sits between Split and Kill, shares their
+`inlineActions` visibility, and Alt+click on it splits right, mirroring Split.
 
 `TerminalPaneLayout` is the one geometry authority: it uses a 4-DIP inter-pane
 divider, honors the 80-DIP minimum along each split axis when the available
@@ -444,7 +450,7 @@ action gets an empty rectangle and leaves its space to the actions to its left.
 - Active-terminal entry (Profile slot, VS Code's single-tab Focus item):
   `ShouldShowTerminalHeaderActiveTerminal`, always present when `tabs.enabled`
   is false (VS Code's switch-terminal select box takes that place).
-- Split and Kill: `ShouldShowTerminalHeaderInlineActions`, VS Code's
+- Split, Split Down (fork extension) and Kill: `ShouldShowTerminalHeaderInlineActions`, VS Code's
   `shouldShowViewInlineActions`. They are absent when `tabs.hideCondition` is
   `never` (the visible list has its own inline actions), present when
   `tabs.enabled` is false, otherwise decided by `showActions`.
@@ -810,3 +816,133 @@ viewport projection. Preserve these invariants:
   enters continuous eviction earlier. Preserve session-age, first/last eviction,
   cumulative append/evict, limit, and viewport fields so a trace can prove which
   boundary is actually cycling.
+
+## The terminal menu dispatches its own result (2026-11-07)
+
+Reported symptom: with one terminal open, the header `...` menu (and a right
+click on the Panel header) showed "New Terminal", "Split Terminal", and "Split
+Terminal Down", but choosing any of them did nothing.
+
+Root cause: `ShowContextMenu` is shared by the tool window and the hosted Panel
+header. From the header its owner is the `SakuraBottomPanel` window, and the
+menu used notify mode, so the chosen ID arrived as `WM_COMMAND` at
+`CBottomPanelTool`, which does not know the terminal IDs and dropped them. Only
+the tool window's own `WM_COMMAND` case dispatched them.
+
+Rule: the menu uses `TPM_RETURNCMD | TPM_NONOTIFY` and runs the returned ID
+through `ExecuteContextMenuCommand`, so the owner HWND only positions and owns
+the popup and never decides whether a command runs. Do not reintroduce a
+`WM_COMMAND` dispatch path for these IDs. Every other `TrackPopupMenu` call in
+`sakura_core/` already returns its command (audited on the same day).
+
+Verified 2026-11-07 on x64 Debug with a throwaway `-PROF=` profile. The probe
+posted `WM_RBUTTONUP` to the Panel header, read the popup through
+`MN_GETHMENU`, and selected the item with posted arrow/Enter keys. The metrics
+were pwsh children of the editor and visible `SakuraNativeTerminalWindow` panes:
+
+| Header-menu item | Before | After |
+|---|---|---|
+| Split Terminal Down (1 pane) | pwsh 1, panes 1 | pwsh 2, panes 2 |
+| New Terminal | pwsh 1, panes 1 | pwsh 3, panes 1 (new group) |
+| Split Terminal | pwsh 1, panes 1 | pwsh 4, panes 2 |
+
+## Closing a pane keeps its own group (2026-11-07)
+
+Reported during the same inspection: with T1 and T2 in separate groups, select
+T1, split it (T3), then close the split. The panel switched to T2's group and
+hid T1.
+
+`DeleteTerminal` used to take `TerminalTabManager`'s successor, which follows
+global creation order and can live in another group. It now follows VS Code's
+`TerminalGroup` removal rule: when the removed terminal was active, activate
+the one now at the same index in its group, or the last one when it was last.
+Only when the group is emptied does selection move to the group that
+`RemoveTabFromGroups` chose (same index, else the previous group); that group
+has no per-group active-pane memory yet, so its first pane is selected. The
+manager successor remains the fallback when neither applies.
+
+Verified 2026-11-07: `TerminalTool.ClosingAFocusedSplitPaneKeepsItsOwnGroupActive`
+failed before the change (active terminal 2 instead of 1) and passes after;
+the 61 `TerminalTool`/`TerminalTabManager`/`TerminalPaneLayout`/
+`TerminalShortcutPreset` tests pass. The same header-menu probe as above showed
+T2 before and T1 after.
+
+## Agent presence comes from the job, not from polling (2026-11-07, #402 Phase A)
+
+The Projects view lists the AI agent CLIs running in this window's integrated
+terminals, as child rows of the current Project. This is a fork extension:
+VS Code has no such view. Phase A reports presence only, never Working/Idle.
+
+**Evidence, in trust order:**
+
+1. **Job membership.** `ITerminalBackend::ObserveJobProcesses` lists the
+   job's live processes, bounded to `kMaximumObservedJobProcesses` (64). Each
+   process is re-checked with `IsProcessInJob`, so a reused PID cannot pass.
+   - A tab's agent is the earliest-created agent process, so Claude Code
+     running `codex` as a tool is still Claude Code.
+   - Image names are exact and case-insensitive: `claude.exe`, `codex.exe`,
+     `devin.exe`, `opencode.exe`. OpenCode 1.19.5's npm package ships the
+     native `bin/opencode.exe` (verified 2026-11-07); its title (`OpenCode`,
+     `OC | <session>`) is not needed.
+2. **The OSC title**, only when no agent process is observed. It covers
+   node-hosted CLIs, which run as `node.exe` and therefore have no telling
+   image name.
+   - VS Code's own patterns (`TerminalAgentKindFromTitle`).
+   - Pi's own title, checked first: Pi 1.3.0 writes `π - <folder>` or
+     `π - <session> - <folder>` through OSC 0, with `π` as U+03C0
+     (verified from its installed source). This is a fork extension on top of
+     a fork extension. `TerminalAgentKindFromTitle` stays exactly VS Code's
+     list because it is also the tab label's `allowAgentCliTitle` allow-list,
+     so a Pi tab keeps VS Code's label while its Projects row says Pi.
+
+Devin and Codex emit no OSC title, which is why title-only detection could not
+see them.
+
+**No timers, no polling (#400).**
+
+- ConPTY associates an IO completion port with the job, but only when the
+  session has a job-process listener, which means interactive terminals only.
+  Task runs start no extra thread.
+- The one notification worker per session blocks in
+  `GetQueuedCompletionStatus(INFINITE)`. It filters on its own thread:
+  - a process start passes only for an agent image name;
+  - an exit passes only for a PID the UI last observed as an agent.
+- A build that starts thousands of `cl.exe` processes therefore never wakes
+  the UI thread. Wakes coalesce per tab (`jobWakePending`).
+
+**Job notifications are hints.** Windows does not guarantee their delivery, so
+an event never decides presence by itself. The UI thread re-observes the job:
+
+- on a hint;
+- on a session state change;
+- on a workspace switch;
+- on an explicit Projects refresh (`AgentPresence(true)`).
+
+A closed tab is dropped from the tracker without touching any process. An
+explicit refresh does not call the sink, so the page's own refresh cannot loop
+back into it. Each re-observation is bounded by the tab count.
+
+**Ownership and identity.**
+
+- `CTerminalTool` owns the window-local `TerminalAgentPresenceTracker`.
+  `CEditWnd` composes it into `ProjectsPageOptions`.
+- A row's identity is `terminal-instance:<TerminalInstanceId>`, never a PID or a
+  title. The tab ID only routes a double-click back to `SelectTerminal`, after
+  `ActivateBuiltinWorkbenchView(Terminal)` reveals the Panel.
+- The tracker is window-owned on purpose. #402's checklist names a
+  runtime-owned registry, but in Phase A nothing outside this window reads it.
+  The shared registry belongs to Phase C, which aggregates other windows'
+  agents. Phase B, structured Working / Needs You state from hooks, does not
+  need it either. A detached workspace's terminals are not this window's
+  current project's agents.
+
+**Known limits.**
+
+- An agent started through a wrapper that is not one of these images, for
+  example `npx`, appears only once it announces itself through the title.
+- A title-only agent (npm Claude Code, Gemini, Copilot, Pi) stays listed until
+  the title changes, normally at the shell's next prompt. A Pi rebranded
+  through `piConfigName` writes its own name instead of `π` and is not
+  recognized.
+- More than 64 job processes reports `truncated`. The observed prefix still
+  decides presence.

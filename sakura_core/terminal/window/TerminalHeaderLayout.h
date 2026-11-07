@@ -22,6 +22,7 @@ enum class TerminalHeaderTarget : std::uint8_t {
 	New,
 	Dropdown,
 	Split,
+	SplitDown,
 	Kill,
 	More,
 	Maximize,
@@ -35,7 +36,7 @@ enum class TerminalHeaderTarget : std::uint8_t {
 struct TerminalHeaderActionVisibility {
 	//! The active-terminal entry (VS Code's single-tab Focus item).
 	bool activeTerminal{ true };
-	//! Split and Kill (VS Code's `shouldShowViewInlineActions`).
+	//! Split, Split Down and Kill (VS Code's `shouldShowViewInlineActions`).
 	bool inlineActions{ true };
 };
 
@@ -59,6 +60,7 @@ struct TerminalHeaderLayout {
 			TerminalHeaderTarget::Maximize,
 			TerminalHeaderTarget::More,
 			TerminalHeaderTarget::Kill,
+			TerminalHeaderTarget::SplitDown,
 			TerminalHeaderTarget::Split,
 			TerminalHeaderTarget::Dropdown,
 			TerminalHeaderTarget::New,
@@ -138,8 +140,10 @@ constexpr int kTerminalHeaderDefaultDpi = 96;
 		}
 	};
 
-	// Visual order, left-to-right: profile, new, dropdown, split, kill, more,
-	// separator, maximize, close.  Allocation proceeds from the stable right edge.
+	// Visual order, left-to-right: profile, new, dropdown, split, split down,
+	// kill, more, separator, maximize, close.  Allocation proceeds from the
+	// stable right edge.  Split Down is a fork extension: VS Code has only the
+	// Split action, whose Alt variant is the orthogonal split.
 	// Maximize and close belong to the physical Panel Part. They are omitted when
 	// the containing Part supplies that common chrome above this view.
 	if (includePanelActions) {
@@ -148,6 +152,7 @@ constexpr int kTerminalHeaderDefaultDpi = 96;
 	}
 	reserve(TerminalHeaderTarget::More, 28);
 	reserve(TerminalHeaderTarget::Kill, 28, 0, visibility.inlineActions);
+	reserve(TerminalHeaderTarget::SplitDown, 28, 0, visibility.inlineActions);
 	reserve(TerminalHeaderTarget::Split, 28, 0, visibility.inlineActions);
 	reserve(TerminalHeaderTarget::Dropdown, 18);
 	reserve(TerminalHeaderTarget::New, 24);
