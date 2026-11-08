@@ -141,13 +141,14 @@ namespace {
 }
 
 [[nodiscard]] TmuxCommandResult RevalidateTarget(ITmuxRuntimePort& runtime,
-	TmuxResolvedTarget& target, TmuxTargetKind kind, const std::optional<std::string>& selector)
+	TmuxResolvedTarget& target, TmuxTargetKind kind, const std::optional<std::string>& selector,
+	const TmuxCallerContext& caller)
 {
 	const auto latest = runtime.Snapshot();
 	if (latest.revision == target.revision) return Result(TmuxCommandResultCode::Succeeded);
 	if (!target.usedStableIdentity) return Result(TmuxCommandResultCode::TopologyChanged, "topology-changed");
 	const auto resolved = TmuxTargetResolver::Resolve(latest, kind,
-		selector ? std::optional<std::string_view>(*selector) : std::nullopt);
+		selector ? std::optional<std::string_view>(*selector) : std::nullopt, caller);
 	if (!resolved.Succeeded()) return MapTarget(resolved);
 	if (!SameTarget(target, resolved.target)) return Result(TmuxCommandResultCode::TargetMissing, "target-missing");
 	target = resolved.target;
@@ -157,8 +158,8 @@ namespace {
 } // namespace
 
 TmuxCommandDispatcher::TmuxCommandDispatcher(ITmuxRuntimePort& runtime,
-	TmuxCompatibilityProfile profile, TmuxDispatcherLimits limits) noexcept
-	: m_runtime(runtime), m_profile(std::move(profile)), m_limits(std::move(limits))
+	TmuxCompatibilityProfile profile, TmuxDispatcherLimits limits, TmuxCallerContext caller) noexcept
+	: m_runtime(runtime), m_profile(std::move(profile)), m_limits(std::move(limits)), m_caller(caller)
 {
 }
 
@@ -222,7 +223,7 @@ TmuxCommandResult TmuxCommandDispatcher::DispatchList(const TmuxCommand& command
 			for (const auto& session : snapshot.sessions) for (const auto& window : session.windows) windows.emplace_back(&session, &window);
 		} else {
 			const auto target = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Window, command.target
-				? std::optional<std::string_view>(*command.target) : std::nullopt);
+				? std::optional<std::string_view>(*command.target) : std::nullopt, m_caller);
 			if (!target.Succeeded()) return MapTarget(target);
 			const auto* session = FindSession(snapshot, target.target.sessionId);
 			if (!session) return Result(TmuxCommandResultCode::TargetMissing, "target-missing");
@@ -245,7 +246,7 @@ TmuxCommandResult TmuxCommandDispatcher::DispatchList(const TmuxCommand& command
 			for (const auto& session : snapshot.sessions) for (const auto& window : session.windows) windows.emplace_back(&session, &window);
 		} else {
 			const auto target = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Window, command.target
-				? std::optional<std::string_view>(*command.target) : std::nullopt);
+				? std::optional<std::string_view>(*command.target) : std::nullopt, m_caller);
 			if (!target.Succeeded()) return MapTarget(target);
 			const auto* session = FindSession(snapshot, target.target.sessionId);
 			const auto* window = FindWindow(snapshot, target.target.sessionId, target.target.windowId);
@@ -272,10 +273,10 @@ TmuxCommandResult TmuxCommandDispatcher::DispatchSend(const TmuxCommand& command
 	const TmuxRuntimeSnapshot& snapshot)
 {
 	auto target = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, command.target
-		? std::optional<std::string_view>(*command.target) : std::nullopt);
+		? std::optional<std::string_view>(*command.target) : std::nullopt, m_caller);
 	if (!target.Succeeded()) return MapTarget(target);
 	auto resolvedTarget = target.target;
-	const auto revalidated = RevalidateTarget(m_runtime, resolvedTarget, TmuxTargetKind::Pane, command.target);
+	const auto revalidated = RevalidateTarget(m_runtime, resolvedTarget, TmuxTargetKind::Pane, command.target, m_caller);
 	if (!revalidated.Succeeded()) return revalidated;
 	std::uint64_t repeat = 1;
 	if (command.length && (!ParseUnsigned(*command.length, repeat) || repeat == 0 || repeat > 100)) {
@@ -319,10 +320,10 @@ TmuxCommandResult TmuxCommandDispatcher::DispatchCapture(const TmuxCommand& comm
 {
 	if (!command.operands.empty()) return Result(TmuxCommandResultCode::UnsupportedSurface, "command-tail-unsupported");
 	auto target = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, command.target
-		? std::optional<std::string_view>(*command.target) : std::nullopt);
+		? std::optional<std::string_view>(*command.target) : std::nullopt, m_caller);
 	if (!target.Succeeded()) return MapTarget(target);
 	auto resolvedTarget = target.target;
-	const auto revalidated = RevalidateTarget(m_runtime, resolvedTarget, TmuxTargetKind::Pane, command.target);
+	const auto revalidated = RevalidateTarget(m_runtime, resolvedTarget, TmuxTargetKind::Pane, command.target, m_caller);
 	if (!revalidated.Succeeded()) return revalidated;
 	TmuxCaptureRequest request;
 	request.target = resolvedTarget;
@@ -352,7 +353,7 @@ TmuxCommandResult TmuxCommandDispatcher::DispatchDisplay(const TmuxCommand& comm
 {
 	if (command.operands.size() > 1) return Result(TmuxCommandResultCode::UnsupportedSurface, "unsupported-operand");
 	auto target = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, command.target
-		? std::optional<std::string_view>(*command.target) : std::nullopt);
+		? std::optional<std::string_view>(*command.target) : std::nullopt, m_caller);
 	if (!target.Succeeded()) return MapTarget(target);
 	const auto format = command.format ? *command.format : command.operands.empty() ? m_profile.displayFormat : command.operands.front();
 	const auto context = Context(snapshot, target.target.sessionId, target.target.windowId, target.target.paneId);
@@ -376,10 +377,10 @@ TmuxCommandResult TmuxCommandDispatcher::DispatchTopology(const TmuxCommand& com
 	}
 	if (command.kind == TmuxCommandKind::NewWindow) {
 		auto target = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Window, command.target
-			? std::optional<std::string_view>(*command.target) : std::nullopt);
+			? std::optional<std::string_view>(*command.target) : std::nullopt, m_caller);
 		if (!target.Succeeded()) return MapTarget(target);
 		auto resolvedTarget = target.target;
-		const auto revalidated = RevalidateTarget(m_runtime, resolvedTarget, TmuxTargetKind::Window, command.target);
+		const auto revalidated = RevalidateTarget(m_runtime, resolvedTarget, TmuxTargetKind::Window, command.target, m_caller);
 		if (!revalidated.Succeeded()) return revalidated;
 		const auto runtime = m_runtime.CreateTerminalWindow(TmuxCreateWindowRequest{
 			resolvedTarget.sessionId, command.windowName.value_or(std::string{}), command.directory.value_or(std::string{}), command.detached, resolvedTarget.revision });
@@ -396,10 +397,10 @@ TmuxCommandResult TmuxCommandDispatcher::DispatchTopology(const TmuxCommand& com
 	}
 	if (command.kind == TmuxCommandKind::SplitWindow) {
 		auto target = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, command.target
-			? std::optional<std::string_view>(*command.target) : std::nullopt);
+			? std::optional<std::string_view>(*command.target) : std::nullopt, m_caller);
 		if (!target.Succeeded()) return MapTarget(target);
 		auto resolvedTarget = target.target;
-		const auto revalidated = RevalidateTarget(m_runtime, resolvedTarget, TmuxTargetKind::Pane, command.target);
+		const auto revalidated = RevalidateTarget(m_runtime, resolvedTarget, TmuxTargetKind::Pane, command.target, m_caller);
 		if (!revalidated.Succeeded()) return revalidated;
 		if (command.length && command.percentage) return Result(TmuxCommandResultCode::InvalidUsage, "conflicting-size");
 		TmuxSplitWindowRequest request{ resolvedTarget,
@@ -421,10 +422,10 @@ TmuxCommandResult TmuxCommandDispatcher::DispatchTopology(const TmuxCommand& com
 		? TmuxTargetKind::Window : command.kind == TmuxCommandKind::SelectPane || command.kind == TmuxCommandKind::KillPane
 		? TmuxTargetKind::Pane : TmuxTargetKind::Session;
 	auto target = TmuxTargetResolver::Resolve(snapshot, targetKind, command.target
-		? std::optional<std::string_view>(*command.target) : std::nullopt);
+		? std::optional<std::string_view>(*command.target) : std::nullopt, m_caller);
 	if (!target.Succeeded()) return MapTarget(target);
 	auto resolvedTarget = target.target;
-	const auto revalidated = RevalidateTarget(m_runtime, resolvedTarget, targetKind, command.target);
+	const auto revalidated = RevalidateTarget(m_runtime, resolvedTarget, targetKind, command.target, m_caller);
 	if (!revalidated.Succeeded()) return revalidated;
 	TmuxRuntimeResult runtime;
 	if (command.kind == TmuxCommandKind::SelectWindow) runtime = m_runtime.SelectWindow(TmuxSelectRequest{ resolvedTarget, resolvedTarget.revision });

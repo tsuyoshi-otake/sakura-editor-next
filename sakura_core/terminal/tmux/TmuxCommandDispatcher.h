@@ -20,8 +20,10 @@ struct TmuxDispatcherLimits final {
 
 class TmuxCommandDispatcher final {
 public:
+	//! `caller` is the pane the command ran from; see TmuxCallerContext.
 	explicit TmuxCommandDispatcher(ITmuxRuntimePort& runtime,
-		TmuxCompatibilityProfile profile = {}, TmuxDispatcherLimits limits = {}) noexcept;
+		TmuxCompatibilityProfile profile = {}, TmuxDispatcherLimits limits = {},
+		TmuxCallerContext caller = {}) noexcept;
 
 	[[nodiscard]] TmuxCommandResult Dispatch(const TmuxCommand& command) noexcept;
 
@@ -36,6 +38,7 @@ private:
 	ITmuxRuntimePort& m_runtime;
 	TmuxCompatibilityProfile m_profile;
 	TmuxDispatcherLimits m_limits;
+	TmuxCallerContext m_caller;
 };
 
 } // namespace terminal::tmux

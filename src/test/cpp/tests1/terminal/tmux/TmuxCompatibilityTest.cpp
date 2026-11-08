@@ -274,4 +274,153 @@ TEST(TmuxCompatibility, WaitAliasesPreserveOperationAndChannel)
 	EXPECT_EQ("ready", fake.lastWait.channel);
 }
 
+
+//! Adds a second, inactive session "agent" ($5) with window @6 holding %7
+//! (active) and %8, so an implicit target can be told apart from the active one.
+void AddAgentSession(TmuxRuntimeSnapshot& snapshot)
+{
+	TmuxSessionView session;
+	session.id = MakeId<terminal::TerminalSessionId>(5);
+	session.name = "agent";
+	session.index = 1;
+	TmuxWindowView window;
+	window.id = MakeId<terminal::TerminalWindowId>(6);
+	window.name = "work";
+	window.index = 0;
+	window.active = true;
+	for (const std::uint64_t id : { 7u, 8u }) {
+		TmuxPaneView pane;
+		pane.id = MakeId<terminal::TerminalPaneId>(id);
+		pane.instanceId = MakeId<terminal::TerminalInstanceId>(id + 10);
+		pane.index = id - 7;
+		pane.active = id == 7;
+		pane.coordinate.sessionId = session.id;
+		pane.coordinate.windowId = window.id;
+		pane.coordinate.paneId = pane.id;
+		pane.coordinate.instanceId = pane.instanceId;
+		window.panes.push_back(pane);
+	}
+	session.windows.push_back(std::move(window));
+	snapshot.sessions.push_back(std::move(session));
+}
+
+TEST(TmuxCompatibility, ImplicitTargetIsTheCallersPaneNotTheActiveOne)
+{
+	FakeRuntimePort fake;
+	AddAgentSession(fake.m_snapshot);
+	const auto& snapshot = fake.m_snapshot;
+	TmuxCallerContext caller;
+	caller.paneId = MakeId<terminal::TerminalPaneId>(8);
+
+	const auto pane = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, std::nullopt, caller);
+	ASSERT_TRUE(pane.Succeeded());
+	EXPECT_EQ(8u, pane.target.paneId.value);
+	EXPECT_EQ(5u, pane.target.sessionId.value);
+	EXPECT_TRUE(pane.target.usedStableIdentity);
+
+	const auto window = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Window, std::nullopt, caller);
+	ASSERT_TRUE(window.Succeeded());
+	EXPECT_EQ(6u, window.target.windowId.value);
+
+	const auto session = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Session, std::nullopt, caller);
+	ASSERT_TRUE(session.Succeeded());
+	EXPECT_EQ(5u, session.target.sessionId.value);
+
+	// A bare pane index is scoped to the caller's window.
+	const auto indexed = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, "0", caller);
+	ASSERT_TRUE(indexed.Succeeded());
+	EXPECT_EQ(7u, indexed.target.paneId.value);
+
+	// An explicitly named window still means that window's active pane.
+	const auto named = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, "agent:0", caller);
+	ASSERT_TRUE(named.Succeeded());
+	EXPECT_EQ(7u, named.target.paneId.value);
+
+	// No caller, or a caller whose pane has closed, keeps the old fallback.
+	const auto none = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane);
+	ASSERT_TRUE(none.Succeeded());
+	EXPECT_EQ(3u, none.target.paneId.value);
+	EXPECT_FALSE(none.target.usedStableIdentity);
+	TmuxCallerContext gone;
+	gone.paneId = MakeId<terminal::TerminalPaneId>(99);
+	const auto stale = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, std::nullopt, gone);
+	ASSERT_TRUE(stale.Succeeded());
+	EXPECT_EQ(3u, stale.target.paneId.value);
+}
+
+TEST(TmuxCompatibility, CommandsWithoutTargetActOnTheCallingPane)
+{
+	FakeRuntimePort fake;
+	AddAgentSession(fake.m_snapshot);
+	TmuxCallerContext caller;
+	caller.paneId = MakeId<terminal::TerminalPaneId>(8);
+
+	const auto display = TmuxCli::Run({ "display-message", "-p", "#{session_name}:#{pane_id}" }, fake, {}, {}, caller);
+	EXPECT_EQ(0, display.exitCode);
+	EXPECT_EQ("agent:%8\n", display.stdoutText);
+
+	const auto sent = TmuxCli::Run({ "send-keys", "echo", "Enter" }, fake, {}, {}, caller);
+	EXPECT_EQ(0, sent.exitCode);
+	EXPECT_EQ(8u, fake.lastInput.target.paneId.value);
+
+	const auto listed = TmuxCli::Run({ "list-panes", "-F", "#{pane_id}" }, fake, {}, {}, caller);
+	EXPECT_EQ(0, listed.exitCode);
+	EXPECT_EQ("%7\n%8\n", listed.stdoutText);
+
+	// Without a caller the same command still reaches the active session.
+	const auto fallback = TmuxCli::Run({ "display-message", "-p", "#{pane_id}" }, fake);
+	EXPECT_EQ("%3\n", fallback.stdoutText);
+}
+
+TEST(TmuxCompatibility, WindowIdsReachOtherSessionsAndWindowDotPaneNeedsNoSession)
+{
+	FakeRuntimePort fake;
+	AddAgentSession(fake.m_snapshot);
+	const auto& snapshot = fake.m_snapshot;
+	TmuxCallerContext caller;
+	caller.paneId = MakeId<terminal::TerminalPaneId>(3);
+
+	// @N names one window everywhere, like %N names one pane: an agent in
+	// session dev reaches window @6 of session agent without naming it.
+	const auto window = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Window, "@6", caller);
+	ASSERT_TRUE(window.Succeeded());
+	EXPECT_EQ(5u, window.target.sessionId.value);
+	EXPECT_EQ(6u, window.target.windowId.value);
+	EXPECT_TRUE(window.target.usedStableIdentity);
+	const auto activePane = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, "@6", caller);
+	ASSERT_TRUE(activePane.Succeeded());
+	EXPECT_EQ(7u, activePane.target.paneId.value);
+	const auto indexedPane = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, "@6.1", caller);
+	ASSERT_TRUE(indexedPane.Succeeded());
+	EXPECT_EQ(8u, indexedPane.target.paneId.value);
+	EXPECT_EQ(5u, indexedPane.target.sessionId.value);
+
+	// An explicit session still scopes the window ID, and unknown IDs stay missing.
+	EXPECT_EQ(TmuxTargetCode::TargetMissing,
+		TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Window, "dev:@6", caller).code);
+	EXPECT_EQ(TmuxTargetCode::TargetMissing,
+		TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Window, "@99", caller).code);
+
+	// window.pane without a session is read in the caller's session.
+	const auto devPane = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, "0.1", caller);
+	ASSERT_TRUE(devPane.Succeeded());
+	EXPECT_EQ(4u, devPane.target.paneId.value);
+	EXPECT_FALSE(devPane.target.usedStableIdentity);
+	TmuxCallerContext agentCaller;
+	agentCaller.paneId = MakeId<terminal::TerminalPaneId>(7);
+	const auto agentPane = TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, "0.1", agentCaller);
+	ASSERT_TRUE(agentPane.Succeeded());
+	EXPECT_EQ(8u, agentPane.target.paneId.value);
+	EXPECT_EQ(TmuxTargetCode::InvalidSyntax,
+		TmuxTargetResolver::Resolve(snapshot, TmuxTargetKind::Pane, "0.1.2", caller).code);
+
+	// The commands agents send reach those panes through the CLI.
+	const auto sent = TmuxCli::Run({ "send-keys", "-t", "@6.1", "echo", "Enter" }, fake, {}, {}, caller);
+	EXPECT_EQ(0, sent.exitCode);
+	EXPECT_EQ(8u, fake.lastInput.target.paneId.value);
+	const auto selected = TmuxCli::Run({ "select-window", "-t", "@6" }, fake, {}, {}, caller);
+	EXPECT_EQ(0, selected.exitCode);
+	EXPECT_EQ(1, fake.selectWindowCalls);
+}
+
 } // namespace

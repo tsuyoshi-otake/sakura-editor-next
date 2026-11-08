@@ -4,6 +4,9 @@
 #include "terminal/window/TerminalTabPresentation.h"
 #include "terminal/window/CTerminalTool.h"
 #include "terminal/window/CTerminalWnd.h"
+#include "terminal/tmux/TmuxCli.h"
+#include "terminal/tmux/TmuxRuntimeAdapter.h"
+#include "terminal/tmux/TmuxWaitChannelService.h"
 #include "terminal/window/TerminalFontMetrics.h"
 #include "terminal/window/TerminalViewportGeometry.h"
 #include "workbench/panel/CBottomPanelTool.h"
@@ -1871,6 +1874,179 @@ TEST(TerminalTool, AgentPresenceCarriesTheGlyphStrippedSessionTitle)
 
 	tool.Close();
 	::DestroyWindow(parent);
+}
+
+
+terminal::HarnessOperationId MakeOperation( std::uint8_t value )
+{
+	terminal::HarnessOperationId id;
+	id.value[0] = value;
+	return id;
+}
+
+//! A runtime the test drives directly, the way the tmux facade does: the
+//! panel only projects it.
+std::shared_ptr<terminal::CTerminalRuntimeService> SharedRuntime( ToolHarness& harness )
+{
+	auto base = harness.Dependencies();
+	terminal::TerminalRuntimeServiceDependencies runtime;
+	runtime.createSession = std::move(base.createSession);
+	runtime.resolveLaunch = std::move(base.resolveLaunch);
+	return std::make_shared<terminal::CTerminalRuntimeService>(std::move(runtime));
+}
+
+std::optional<std::uint64_t> TabForPane( const terminal::CTerminalTool& tool, terminal::TerminalPaneId paneId )
+{
+	for( const auto& record : tool.TerminalProjectionSnapshot() ) {
+		if( record.paneId == paneId ) return record.tabId;
+	}
+	return std::nullopt;
+}
+
+TEST(TerminalTool, TmuxCreatedWindowsAndPanesJoinThePanelAndLeaveWithTheirPanes)
+{
+	ToolHarness harness;
+	const auto runtime = SharedRuntime(harness);
+	auto dependencies = harness.Dependencies();
+	dependencies.runtimeService = runtime;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(std::move(dependencies));
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 900, 320 }, 96);
+	tool.Activate();
+	PumpToolMessages(tool.GetHwnd());
+	ASSERT_EQ(1u, tool.TabCount());
+	const auto original = tool.TerminalProjectionSnapshot().front();
+
+	// tmux split-window -h, run in the panel's terminal: a split in its group.
+	terminal::TerminalPaneSplitRequest split;
+	split.operationId = MakeOperation(1);
+	split.paneId = original.paneId;
+	split.orientation = terminal::TerminalPaneOrientation::Horizontal;
+	const auto right = runtime->SplitPane(split);
+	ASSERT_EQ(terminal::TerminalRuntimeOperationCode::Succeeded, right.code);
+	PumpToolMessages(tool.GetHwnd());
+	ASSERT_EQ(2u, tool.TabCount());
+	EXPECT_EQ(2u, tool.VisiblePaneCount());
+	const auto rightTab = TabForPane(tool, *right.paneId);
+	ASSERT_TRUE(rightTab.has_value());
+	EXPECT_EQ(rightTab, tool.ActiveTerminalId());
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Horizontal, tool.ActivePaneOrientation());
+
+	// tmux new-window -d: another terminal group; the selection stays.
+	terminal::TerminalWindowCreateRequest create;
+	create.operationId = MakeOperation(2);
+	create.sessionId = original.sessionId;
+	create.detached = true;
+	const auto background = runtime->CreateTerminalWindow(create);
+	ASSERT_EQ(terminal::TerminalRuntimeOperationCode::Succeeded, background.code);
+	PumpToolMessages(tool.GetHwnd());
+	ASSERT_EQ(3u, tool.TabCount());
+	EXPECT_EQ(2u, tool.VisiblePaneCount());
+	EXPECT_EQ(rightTab, tool.ActiveTerminalId());
+	ASSERT_TRUE(TabForPane(tool, *background.paneId).has_value());
+
+	// tmux kill-pane of the split: its tab goes, its group-mate is selected.
+	terminal::TerminalPaneCloseRequest close;
+	close.operationId = MakeOperation(3);
+	close.paneId = *right.paneId;
+	ASSERT_EQ(terminal::TerminalRuntimeOperationCode::Succeeded, runtime->ClosePane(close).code);
+	PumpToolMessages(tool.GetHwnd());
+	ASSERT_EQ(2u, tool.TabCount());
+	EXPECT_EQ(1u, tool.VisiblePaneCount());
+	EXPECT_EQ(original.tabId, tool.ActiveTerminalId());
+
+	// Closing the panel's own terminal closes only its pane: the tmux window
+	// in the same session survives as the remaining terminal.
+	ASSERT_TRUE(tool.DeleteTerminal(original.tabId));
+	PumpToolMessages(tool.GetHwnd());
+	ASSERT_EQ(1u, tool.TabCount());
+	EXPECT_EQ(TabForPane(tool, *background.paneId), tool.ActiveTerminalId());
+	const auto snapshot = runtime->CollectionSnapshot();
+	ASSERT_TRUE(snapshot.has_value());
+	ASSERT_EQ(1u, snapshot->sessions.size());
+	ASSERT_EQ(1u, snapshot->sessions.front().windows.size());
+	EXPECT_EQ(*background.windowId, snapshot->sessions.front().windows.front().id);
+
+	tool.Close();
+	runtime->BeginClose();
+	EXPECT_NE(terminal::TerminalRuntimeCloseWaitStatus::InProgress,
+		runtime->WaitForClose(std::chrono::steady_clock::now() + 5s).status);
+	::DestroyWindow(parent);
+}
+
+//! The whole editor-side tmux path (CLI, caller-relative resolver, adapter,
+//! runtime) driven from the panel's own terminal, as the bridge does (#403).
+TEST(TerminalTool, TmuxWindowCommandsFromThePanelTerminalMoveThePanel)
+{
+	ToolHarness harness;
+	const auto runtime = SharedRuntime(harness);
+	auto dependencies = harness.Dependencies();
+	dependencies.runtimeService = runtime;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(std::move(dependencies));
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 900, 320 }, 96);
+	tool.Activate();
+	PumpToolMessages(tool.GetHwnd());
+	ASSERT_EQ(1u, tool.TabCount());
+	const auto original = tool.TerminalProjectionSnapshot().front();
+
+	terminal::tmux::TmuxWaitChannelService waits;
+	auto adapter = terminal::tmux::TmuxRuntimeAdapter::ForConcrete(*runtime, waits);
+	terminal::tmux::TmuxCallerContext caller;
+	caller.paneId = original.paneId;
+	const auto tmux = [&]( const std::vector<std::string>& argv ) {
+		auto response = terminal::tmux::TmuxCli::Run(argv, adapter, {}, {}, caller);
+		PumpToolMessages(tool.GetHwnd());
+		return response;
+	};
+	const auto firstLine = []( const std::string& text ) { return text.substr(0, text.find('\n')); };
+
+	const auto self = tmux({ "display-message", "-p", "#{window_id}" });
+	ASSERT_TRUE(self.Succeeded()) << self.stderrText;
+	const auto ownWindow = firstLine(self.stdoutText);
+
+	const auto created = tmux({ "new-window", "-P", "-F", "#{window_id}" });
+	ASSERT_TRUE(created.Succeeded()) << created.stderrText;
+	const auto newWindow = firstLine(created.stdoutText);
+	ASSERT_EQ(2u, tool.TabCount());
+	EXPECT_NE(original.tabId, tool.ActiveTerminalId());
+
+	const auto back = tmux({ "select-window", "-t", ownWindow });
+	ASSERT_TRUE(back.Succeeded()) << back.stderrText;
+	EXPECT_EQ(original.tabId, tool.ActiveTerminalId());
+
+	const auto killed = tmux({ "kill-window", "-t", newWindow });
+	ASSERT_TRUE(killed.Succeeded()) << killed.stderrText;
+	EXPECT_EQ(1u, tool.TabCount());
+	EXPECT_EQ(original.tabId, tool.ActiveTerminalId());
+
+	adapter.BeginShutdown();
+	tool.Close();
+	runtime->BeginClose();
+	EXPECT_NE(terminal::TerminalRuntimeCloseWaitStatus::InProgress,
+		runtime->WaitForClose(std::chrono::steady_clock::now() + 5s).status);
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, TmuxPresetClosePaneClosesALonePane)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetShortcutPreset(terminal::TerminalShortcutPreset::Tmux);
+	tool.Activate();
+	ASSERT_EQ(1u, tool.TabCount());
+
+	const terminal::TerminalPresetKey prefix{ 'B', false, true, false };
+	const terminal::TerminalPresetKey closePane{ 'X', false, false, false };
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(prefix));
+	EXPECT_TRUE(tool.DispatchShortcutPresetKey(closePane));
+	EXPECT_EQ(0u, tool.TabCount());
+
+	tool.Close();
 }
 
 } // namespace

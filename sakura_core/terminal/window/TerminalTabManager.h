@@ -29,6 +29,9 @@ enum class TerminalTabEventKind : std::uint8_t {
 	StateChanged,
 	//! A process entered or left the tab's job (#402); `jobProcess` is set.
 	JobProcess,
+	//! The runtime's session/window/pane topology changed (#403), possibly by
+	//! the tmux facade. `tabId` is 0; the owner calls ReconcileTopology().
+	TopologyChanged,
 };
 
 struct TerminalTabEvent {
@@ -106,6 +109,34 @@ struct TerminalDrainResult {
 	std::optional<std::wstring> clipboardWrite;
 };
 
+//! A pane the runtime gained in a session this projection shows, adopted as a
+//! new tab by ReconcileTopology() (#403).
+struct TerminalTabAdoption final {
+	std::uint64_t tabId{};
+	//! Tab of the pane this one was split from: a tab in the same runtime
+	//! window. Absent when the pane opened a new runtime window.
+	std::optional<std::uint64_t> splitOf;
+	//! Axis of the runtime split; meaningful only with splitOf.
+	TerminalPaneOrientation orientation{ TerminalPaneOrientation::Horizontal };
+};
+
+struct TerminalTabTopologyReconcileResult final {
+	//! In runtime layout order, so a later adoption's splitOf may name an
+	//! earlier adoption of the same call.
+	std::vector<TerminalTabAdoption> adopted;
+	//! Tabs dropped because their pane left the runtime topology. Their
+	//! instances were already closed by whoever removed the pane.
+	std::vector<std::uint64_t> removed;
+	//! The tab of the runtime's current pane when that pane changed since the
+	//! previous reconcile and is not already the active tab.
+	std::optional<std::uint64_t> selected;
+
+	[[nodiscard]] bool Changed() const noexcept
+	{
+		return !adopted.empty() || !removed.empty() || selected.has_value();
+	}
+};
+
 struct TerminalTabScrollbackChange final {
 	std::uint64_t tabId{};
 	TerminalScrollbackChange change;
@@ -177,6 +208,13 @@ public:
 	//! Attaches a previously detached projection. Fails closed if any referenced
 	//! runtime instance is missing; the current projection is left untouched.
 	[[nodiscard]] TerminalTabProjectionAttachResult AttachTabs( TerminalDetachedTabProjection projection ) noexcept;
+	//! Brings the projection in line with the runtime topology (#403). Only the
+	//! sessions that already hold one of this projection's tabs are read: a
+	//! pane another client (the tmux facade) added to such a session becomes a
+	//! tab, a tab whose pane was removed is dropped without closing anything,
+	//! and a change of the runtime's current pane is reported once. Bounded by
+	//! the pane count; never starts or closes a process.
+	[[nodiscard]] TerminalTabTopologyReconcileResult ReconcileTopology();
 	void Resize( TerminalSize size );
 	[[nodiscard]] bool ResizeTab( std::uint64_t tabId, TerminalSize size );
 	//! Applies the stable terminal.integrated.scrollback policy to existing tabs

@@ -45,13 +45,13 @@ namespace {
 } // namespace
 
 TmuxCliResponse TmuxCli::Run(const std::vector<std::string>& argv, ITmuxRuntimePort& runtime,
-	TmuxCompatibilityProfile profile, TmuxDispatcherLimits limits) noexcept
+	TmuxCompatibilityProfile profile, TmuxDispatcherLimits limits, const TmuxCallerContext caller) noexcept
 {
 	try {
 		TmuxCommand command;
 		const auto parse = TmuxArgumentParser::Parse(argv, command);
 		if (parse.code != TmuxParseCode::Succeeded) return FromParse(parse);
-		return FromDispatch(TmuxCommandDispatcher(runtime, std::move(profile), std::move(limits)).Dispatch(command));
+		return FromDispatch(TmuxCommandDispatcher(runtime, std::move(profile), std::move(limits), caller).Dispatch(command));
 	} catch (...) {
 		return TmuxCliResponse{ 1, {}, Diagnostic("internal-error") };
 	}

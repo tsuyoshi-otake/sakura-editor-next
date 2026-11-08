@@ -263,6 +263,12 @@ enum class TerminalInstanceEventKind : std::uint8_t {
 	//! A process entered or left the instance's job (#402). A hint only; see
 	//! TerminalJobProcessEvent.
 	JobProcess,
+	//! The session/window/pane topology changed (#403): a pane or window was
+	//! created, selected or closed, possibly by the tmux facade rather than by
+	//! a projection. Not an instance fact: `coordinate` carries only the
+	//! runtime generation and the affected session. Projections reread
+	//! CollectionSnapshot(); the event says nothing about which pane changed.
+	TopologyChanged,
 };
 
 struct TerminalInstanceEvent final {

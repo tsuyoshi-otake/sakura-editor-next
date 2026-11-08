@@ -31,12 +31,19 @@ struct TmuxTargetResult final {
 //! Resolves only exact tmux-shaped selectors against one immutable snapshot.
 //! It never performs special-target, fuzzy-name, or active-target fallback for
 //! an explicitly supplied selector.
+//!
+//! The implicit current target follows tmux: the caller's pane, its window
+//! and its session. A selector that leaves the session out (":2", "1") is
+//! scoped to that session and window. An explicitly named window still means
+//! that window's active pane. Only a caller without a live pane falls back to
+//! the runtime's active session, window and pane.
 class TmuxTargetResolver final {
 public:
 	[[nodiscard]] static TmuxTargetResult Resolve(
 		const TmuxRuntimeSnapshot& snapshot,
 		TmuxTargetKind kind,
-		std::optional<std::string_view> selector = std::nullopt) noexcept;
+		std::optional<std::string_view> selector = std::nullopt,
+		const TmuxCallerContext& caller = {}) noexcept;
 };
 
 } // namespace terminal::tmux

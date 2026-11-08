@@ -671,8 +671,12 @@ HarnessBridgeOperationResponseDto CHarnessBridgeOperationDispatcher::DispatchTmu
 			request.deadline - std::chrono::steady_clock::now());
 		tmuxLimits.maximumWait = (std::min)(tmuxLimits.maximumWait, (std::max)(std::chrono::seconds::zero(), remaining));
 	}
+	// request.target is the pane the authenticated session proved the client
+	// runs in (job membership), so it is tmux's $TMUX_PANE for this command.
+	terminal::tmux::TmuxCallerContext caller;
+	caller.paneId.value = request.target.paneId;
 	const auto response = terminal::tmux::TmuxCli::Run(decoded.argv, *m_tmuxRuntime,
-		m_options.tmuxProfile, tmuxLimits);
+		m_options.tmuxProfile, tmuxLimits, caller);
 	HarnessBridgeTmuxResponse encodedResponse{ response.exitCode, response.stdoutText, response.stderrText };
 	const auto payload = EncodeHarnessBridgeTmuxResponse(encodedResponse);
 	if (!payload) return { EHarnessTerminalStatus::ResourceExhausted, {} };

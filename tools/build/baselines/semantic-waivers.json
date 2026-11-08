@@ -210,12 +210,9 @@
       "files": {
         "sakura_core/terminal/runtime/TerminalInstance.cpp": "sha256:e410ebce08bc9339092762b0c7aad1c2afcd25de5475b7b391f68da1ebed1021",
         "sakura_core/terminal/runtime/TerminalInstance.h": "sha256:aa1ac7e631ef52651a14940f5c0b4c77f6039f3c3244a3772a71aae56ccee2e0",
-        "sakura_core/terminal/runtime/TerminalRuntimeTypes.h": "sha256:be8c460ec6e6832602257ed47690e4bfa0a3c5c8b3c47aee6ed4c9ce2efc7d10",
         "sakura_core/terminal/session/ConPtyTerminalBackend.cpp": "sha256:84e14d7a248ea45d5454abd078b7d7dcaf98b000c2fb536288c2e210a694c5ae",
         "sakura_core/terminal/session/TerminalSession.cpp": "sha256:73a39ab7e1cb0cf794a1ed071bd9f0f2c55ee03fb6af90ed1ca60aebbaccea38",
         "sakura_core/terminal/session/TerminalSession.h": "sha256:a45b5e51dc4e6714580692bb179924448ca04bcb5997e6c4f189cfa588b2915c",
-        "sakura_core/terminal/window/TerminalTabManager.cpp": "sha256:a727bb0a6d6a19d03bf824e744dd8b9da3c1936c0b3e98dd8f21f00e3655bc8e",
-        "sakura_core/terminal/window/TerminalTabManager.h": "sha256:ebf46e0964fa8bea023e5ac96f3ee054fc2ba7e3f0eb134780ae3ca157d8707b",
         "sakura_core/terminal/window/TerminalTabPresentation.cpp": "sha256:e05262b1b26543d071561e2e2de7996d3d63aec3791a925ebf8fb978ce787fe5",
         "sakura_core/window/CEditWnd.h": "sha256:852acbeb1b4f579563dda046b8cf76fd658614fa2d0f627bb90ab43220fa0599",
         "sakura_core/workbench/projects/CProjectsPage.h": "sha256:0a69592784aad8c0fd454b350b958d9acdac8769966f5c9630dbafb8d9d63f6b",
@@ -228,13 +225,6 @@
           "line": 183,
           "column": 5,
           "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
-        },
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
-          "line": 276,
-          "column": 41,
-          "evidence_sha256": "sha256:19acaa66b63bf38facce88ad852640a95cc834f9b3b24f43b219ac303fa46c9c"
         },
         {
           "rule_id": "error.catch_all",
@@ -349,13 +339,6 @@
           "evidence_sha256": "sha256:4a3c3e752de07249846076495ffa653c7243b50fd65a34df0b1089f2e949a136"
         },
         {
-          "rule_id": "state.public_mutable_field",
-          "path": "sakura_core/terminal/window/TerminalTabManager.h",
-          "line": 39,
-          "column": 41,
-          "evidence_sha256": "sha256:19acaa66b63bf38facce88ad852640a95cc834f9b3b24f43b219ac303fa46c9c"
-        },
-        {
           "rule_id": "boundary.private_include",
           "path": "sakura_core/terminal/window/TerminalTabPresentation.cpp",
           "line": 9,
@@ -394,10 +377,6 @@
           "baseline_finding_count": 1
         },
         {
-          "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
-          "baseline_finding_count": 97
-        },
-        {
           "path": "sakura_core/terminal/session/ConPtyTerminalBackend.cpp",
           "baseline_finding_count": 8
         },
@@ -408,14 +387,6 @@
         {
           "path": "sakura_core/terminal/session/TerminalSession.h",
           "baseline_finding_count": 33
-        },
-        {
-          "path": "sakura_core/terminal/window/TerminalTabManager.cpp",
-          "baseline_finding_count": 17
-        },
-        {
-          "path": "sakura_core/terminal/window/TerminalTabManager.h",
-          "baseline_finding_count": 19
         },
         {
           "path": "sakura_core/terminal/window/TerminalTabPresentation.cpp",
@@ -443,7 +414,6 @@
       "expires": "2027-02-05",
       "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
       "files": {
-        "sakura_core/terminal/window/CTerminalTool.cpp": "sha256:2b46614793de24fe3deb5626f8fdf44c351832fdb608da8cf9a0116e5479ae23",
         "sakura_core/terminal/window/CTerminalTool.h": "sha256:fc40b982a43be1f9806434fddd35003aafaa54386a24a6e6b5d028e93a801ab9",
         "sakura_core/terminal/window/TerminalAgentPresence.cpp": "sha256:7a2ad78c0a77e95bdc0ac028385a0e1904efb70b08028cf9b807733d8be86bae",
         "sakura_core/terminal/window/TerminalAgentPresence.h": "sha256:d44f39ab8ede2907682a78c1b7050c4f526c93388f348c2d348f53d7f5351d49",
@@ -451,45 +421,9 @@
         "sakura_core/workbench/projects/CProjectsPage.cpp": "sha256:09fbac4f38fa2a48f6f24cc8e61b0ea6d48fcc2880f68e3baab0bcc462437ef3",
         "sakura_core/workbench/projects/ProjectsModel.h": "sha256:2cc634893ae5c2f058fa8f06cb7bc0c1cc1a5d40adbda391756ef94f5866c3c4",
         "src/test/cpp/tests1/terminal/window/TerminalAgentPresenceTest.cpp": "sha256:bb072a3d9d225a51b9aa639e3dc1549b0bf7af89053b924babf11ecf3fc2a2a6",
-        "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp": "sha256:3af3d711ee1e93d306233397dd43128c37f7f1a1ff7dfe3edfe297e640361ac9",
         "src/test/cpp/tests1/workbench/ProjectsTest.cpp": "sha256:56ad47be3180610c82137b84d921b4541ab5c70e51bd32035665b1e56d9c0a45"
       },
       "new_findings": [
-        {
-          "rule_id": "boundary.private_include",
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "line": 18,
-          "column": 11,
-          "evidence_sha256": "sha256:dcd0886304af13466473af33729faa056798a9e5b1fd8914c9d93ae180f276f5"
-        },
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "line": 106,
-          "column": 36,
-          "evidence_sha256": "sha256:acf746e7641f1cc28a987beb8e7dd09104454ee265b5c4515a2f4574a048e4dd"
-        },
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "line": 110,
-          "column": 64,
-          "evidence_sha256": "sha256:a90e6e9b9e74f095a28d0753ee84792325f7439c1fcf022c74e55121fdd6b1db"
-        },
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "line": 370,
-          "column": 31,
-          "evidence_sha256": "sha256:95c795d3434b5cbfcb5288ed30712943759065279e59837bcaedcef0d5818724"
-        },
-        {
-          "rule_id": "error.catch_all",
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "line": 1552,
-          "column": 5,
-          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c"
-        },
         {
           "rule_id": "boundary.private_include",
           "path": "sakura_core/terminal/window/CTerminalTool.h",
@@ -652,62 +586,6 @@
           "evidence_sha256": "sha256:2a1e0e708a078958922b4ac68b29b873bdf1ecebc851d8d8a9ec12539f0ccc04"
         },
         {
-          "rule_id": "state.mutable_member",
-          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
-          "line": 45,
-          "column": 2,
-          "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49"
-        },
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
-          "line": 45,
-          "column": 21,
-          "evidence_sha256": "sha256:51ceb5550fe2e983504e76c6b785c21e1d33140f646156605343cf131c2cb192"
-        },
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
-          "line": 46,
-          "column": 39,
-          "evidence_sha256": "sha256:bd794aa599e3d1b6f3a3a44fcd21fa54f5613cdeba626f86f59d8c6eb6334536"
-        },
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
-          "line": 47,
-          "column": 51,
-          "evidence_sha256": "sha256:ffe02c4e4da587bdad386164c2f45997287e459d0ce1f9ce021dc43ddd626963"
-        },
-        {
-          "rule_id": "boundary.win32_type",
-          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
-          "line": 202,
-          "column": 24,
-          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
-        },
-        {
-          "rule_id": "boundary.win32_type",
-          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
-          "line": 1545,
-          "column": 8,
-          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
-        },
-        {
-          "rule_id": "boundary.win32_type",
-          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
-          "line": 1767,
-          "column": 8,
-          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
-        },
-        {
-          "rule_id": "boundary.win32_type",
-          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
-          "line": 1844,
-          "column": 8,
-          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
-        },
-        {
           "rule_id": "boundary.win32_type",
           "path": "src/test/cpp/tests1/workbench/ProjectsTest.cpp",
           "line": 223,
@@ -843,10 +721,6 @@
       ],
       "missing_touched_reductions": [
         {
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "baseline_finding_count": 64
-        },
-        {
           "path": "sakura_core/terminal/window/CTerminalTool.h",
           "baseline_finding_count": 16
         },
@@ -863,12 +737,309 @@
           "baseline_finding_count": 25
         },
         {
-          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
-          "baseline_finding_count": 49
-        },
-        {
           "path": "src/test/cpp/tests1/workbench/ProjectsTest.cpp",
           "baseline_finding_count": 18
+        }
+      ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#403 tmux panel reconciliation re-touches files reviewed for 88ec66d76 and 5964b0a16 and the tmux facade: tmux commands now resolve their implicit target from the authenticated caller pane, the topology model honors -d, the runtime announces topology changes, and the panel adopts, removes and selects terminals to match. Each new finding was reviewed: TmuxCallerContext::paneId and the TerminalTabAdoption / TerminalTabTopologyReconcileResult members are fields of plain value structs; the TmuxCli.h and TmuxCommandDispatcher.h hits are a defaulted function parameter that the scanner reads as a field; lastRuntimeCurrentPane is pimpl-internal state; the two catch-alls in TerminalTabManager.cpp are the advisory event-publish boundary (as in PublishTabEvent) and reconcile containment that returns the consistent partial result; the HWND mentions are the panel's own pane windows (PaneHasKeyboardFocus) and native test fixtures; the runtime test's Subscribe result is an RAII TerminalSubscription released before the service. The remaining findings and missing reductions are the previous records' debt with shifted lines. Reducing unrelated debt would widen this change. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "tracking_issue": 389,
+      "created": "2026-11-07",
+      "expires": "2027-02-05",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/platform/harnessbridge/HarnessBridgeOperationDispatcher.cpp": "sha256:9ae9599f3fd368103c20186bd176ef346a2ad5d3e6068024043b05abf6b9db29",
+        "sakura_core/terminal/runtime/TerminalCollectionModel.h": "sha256:c99f2f13511235793cca3af44272348a831cc60954ceef688712d068f83559a4",
+        "sakura_core/terminal/runtime/TerminalRuntimeService.cpp": "sha256:8db3933bef179693d20713a8f56a09079874747ce2233589f41c2cecb9e50e49",
+        "sakura_core/terminal/runtime/TerminalRuntimeTypes.h": "sha256:7c9cc7ac32f836da14dd2514b0e7c87a02d0d4d835b4b3be2c8aa7263f33f55d",
+        "sakura_core/terminal/tmux/TmuxCli.cpp": "sha256:e9e71cf67296a4ea975fec1bd7dc74a55159417860de3fc6f4eab1c9dfb78a44",
+        "sakura_core/terminal/tmux/TmuxCli.h": "sha256:1de20b027c48c902cc3dde49c1e18554f81d950bcc18beb2ceca11fe78c5d270",
+        "sakura_core/terminal/tmux/TmuxCommandDispatcher.cpp": "sha256:b1573025ffc6e9b00f3121b839e5325653b6f88d6dfca6f4d02de95c75fa6fa9",
+        "sakura_core/terminal/tmux/TmuxCommandDispatcher.h": "sha256:dbe46d0c157ac3c085afe1095221551d39e856312ae0e244565016402cd549e3",
+        "sakura_core/terminal/tmux/TmuxCommandTypes.h": "sha256:eef0abc5eb6f0e24bc5aa8b70788a6a80815dd5719ae8915bf02afff3fefe523",
+        "sakura_core/terminal/tmux/TmuxTargetResolver.cpp": "sha256:92b2feb3de2f4a79b4cefbe29bb26d2ceb3488af2da0a1adee245efb4c01cea4",
+        "sakura_core/terminal/window/CTerminalTool.cpp": "sha256:0dfc0e74c2c68207609b9c8c07742beda7bb8d77d646d94b8515c42cba79f271",
+        "sakura_core/terminal/window/TerminalTabManager.cpp": "sha256:e674e8dddaa8e48c7489c613ecc2221fe5920fb63aa0cd388f17d05cc5daf616",
+        "sakura_core/terminal/window/TerminalTabManager.h": "sha256:2fb02fa287081ddd76bc36fdbe14a062873f9d9a7bc64f7f756ad136569425b8",
+        "src/test/cpp/tests1/platform/harnessbridge/HarnessBridgeOperationDispatcherTest.cpp": "sha256:218df4785a100032af1bcdd4d3adf70e01b225bd719196ebfe856c0e28f3ea41",
+        "src/test/cpp/tests1/terminal/runtime/TerminalRuntimeServiceTest.cpp": "sha256:619e164c9a758d2c39c6a63d373187127d9fdc5bdd559ce4632fbb9048e15a03",
+        "src/test/cpp/tests1/terminal/tmux/TmuxCompatibilityTest.cpp": "sha256:b0e20909dc21f0a24e3e0c22ee6bb417a5683644292ae03233f93592c36ea3b3",
+        "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp": "sha256:5db52f33b79fdd2d7ffe5c6ba4be5203b064bfa1df2960fd2bb83c7f3fdbaed5"
+      },
+      "new_findings": [
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
+          "line": 282,
+          "column": 41,
+          "evidence_sha256": "sha256:19acaa66b63bf38facce88ad852640a95cc834f9b3b24f43b219ac303fa46c9c"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/tmux/TmuxCli.h",
+          "line": 31,
+          "column": 21,
+          "evidence_sha256": "sha256:845670e6012f6be8b96d939c5c28cc77d3985b55f4dac88fa7c41eb9f5cce015"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/tmux/TmuxCommandDispatcher.h",
+          "line": 26,
+          "column": 21,
+          "evidence_sha256": "sha256:845670e6012f6be8b96d939c5c28cc77d3985b55f4dac88fa7c41eb9f5cce015"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/tmux/TmuxCommandTypes.h",
+          "line": 328,
+          "column": 17,
+          "evidence_sha256": "sha256:bab9149614f612a1513a280636aa6e76fdc73f4626b22a549f8f54ba5c99fc58"
+        },
+        {
+          "rule_id": "boundary.private_include",
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "line": 18,
+          "column": 11,
+          "evidence_sha256": "sha256:dcd0886304af13466473af33729faa056798a9e5b1fd8914c9d93ae180f276f5"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "line": 109,
+          "column": 36,
+          "evidence_sha256": "sha256:acf746e7641f1cc28a987beb8e7dd09104454ee265b5c4515a2f4574a048e4dd"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "line": 113,
+          "column": 64,
+          "evidence_sha256": "sha256:a90e6e9b9e74f095a28d0753ee84792325f7439c1fcf022c74e55121fdd6b1db"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "line": 380,
+          "column": 31,
+          "evidence_sha256": "sha256:95c795d3434b5cbfcb5288ed30712943759065279e59837bcaedcef0d5818724"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "line": 1562,
+          "column": 5,
+          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "line": 1633,
+          "column": 9,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "line": 1636,
+          "column": 10,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/TerminalTabManager.cpp",
+          "line": 136,
+          "column": 17,
+          "evidence_sha256": "sha256:9c40c4a5ffad64995c4cdf8d21df3cf0a576e0bfe7a28100c552c43984681720"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/terminal/window/TerminalTabManager.cpp",
+          "line": 294,
+          "column": 5,
+          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/terminal/window/TerminalTabManager.cpp",
+          "line": 663,
+          "column": 4,
+          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/TerminalTabManager.h",
+          "line": 42,
+          "column": 41,
+          "evidence_sha256": "sha256:19acaa66b63bf38facce88ad852640a95cc834f9b3b24f43b219ac303fa46c9c"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/TerminalTabManager.h",
+          "line": 118,
+          "column": 31,
+          "evidence_sha256": "sha256:87d1311f8ffc586a54c5473f4a918175a26d0188785d35bb6f67a001149a273b"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/TerminalTabManager.h",
+          "line": 126,
+          "column": 35,
+          "evidence_sha256": "sha256:18fec4f556537456d77835415878681604692ea3b107e48f6643bff301834fea"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/TerminalTabManager.h",
+          "line": 129,
+          "column": 29,
+          "evidence_sha256": "sha256:85e35bb5b0366dfe08c58f7a5339e6cedbe5d0d16ec932c9f29481697ff38f0d"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/terminal/window/TerminalTabManager.h",
+          "line": 132,
+          "column": 31,
+          "evidence_sha256": "sha256:ec7359552fa51c21579bb2e45e7a7ced34c3a610eed5968525d3bb8e24dd95f3"
+        },
+        {
+          "rule_id": "resource.stop_required_acquisition",
+          "path": "src/test/cpp/tests1/terminal/runtime/TerminalRuntimeServiceTest.cpp",
+          "line": 341,
+          "column": 30,
+          "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8"
+        },
+        {
+          "rule_id": "state.mutable_member",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 48,
+          "column": 2,
+          "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 48,
+          "column": 21,
+          "evidence_sha256": "sha256:51ceb5550fe2e983504e76c6b785c21e1d33140f646156605343cf131c2cb192"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 49,
+          "column": 39,
+          "evidence_sha256": "sha256:bd794aa599e3d1b6f3a3a44fcd21fa54f5613cdeba626f86f59d8c6eb6334536"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 50,
+          "column": 51,
+          "evidence_sha256": "sha256:ffe02c4e4da587bdad386164c2f45997287e459d0ce1f9ce021dc43ddd626963"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 205,
+          "column": 24,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 1548,
+          "column": 8,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 1770,
+          "column": 8,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 1847,
+          "column": 8,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 1912,
+          "column": 8,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "line": 1987,
+          "column": 8,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        }
+      ],
+      "missing_touched_reductions": [
+        {
+          "path": "sakura_core/platform/harnessbridge/HarnessBridgeOperationDispatcher.cpp",
+          "baseline_finding_count": 16
+        },
+        {
+          "path": "sakura_core/terminal/runtime/TerminalCollectionModel.h",
+          "baseline_finding_count": 78
+        },
+        {
+          "path": "sakura_core/terminal/runtime/TerminalRuntimeService.cpp",
+          "baseline_finding_count": 24
+        },
+        {
+          "path": "sakura_core/terminal/runtime/TerminalRuntimeTypes.h",
+          "baseline_finding_count": 97
+        },
+        {
+          "path": "sakura_core/terminal/tmux/TmuxCli.cpp",
+          "baseline_finding_count": 1
+        },
+        {
+          "path": "sakura_core/terminal/tmux/TmuxCommandDispatcher.cpp",
+          "baseline_finding_count": 1
+        },
+        {
+          "path": "sakura_core/terminal/tmux/TmuxCommandTypes.h",
+          "baseline_finding_count": 73
+        },
+        {
+          "path": "sakura_core/terminal/tmux/TmuxTargetResolver.cpp",
+          "baseline_finding_count": 2
+        },
+        {
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "baseline_finding_count": 64
+        },
+        {
+          "path": "sakura_core/terminal/window/TerminalTabManager.cpp",
+          "baseline_finding_count": 17
+        },
+        {
+          "path": "sakura_core/terminal/window/TerminalTabManager.h",
+          "baseline_finding_count": 19
+        },
+        {
+          "path": "src/test/cpp/tests1/platform/harnessbridge/HarnessBridgeOperationDispatcherTest.cpp",
+          "baseline_finding_count": 4
+        },
+        {
+          "path": "src/test/cpp/tests1/terminal/runtime/TerminalRuntimeServiceTest.cpp",
+          "baseline_finding_count": 6
+        },
+        {
+          "path": "src/test/cpp/tests1/terminal/tmux/TmuxCompatibilityTest.cpp",
+          "baseline_finding_count": 3
+        },
+        {
+          "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+          "baseline_finding_count": 49
         }
       ]
     }

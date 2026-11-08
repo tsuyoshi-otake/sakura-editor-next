@@ -239,5 +239,51 @@ TEST(HarnessBridgeOperationDispatcher, DispatchesTypedBrokerRegistrationAndListi
 	broker.Stop();
 }
 
+
+class TwoSessionTmuxRuntime final : public NoopTmuxRuntime {
+public:
+	[[nodiscard]] terminal::tmux::TmuxRuntimeSnapshot Snapshot() const override
+	{
+		terminal::tmux::TmuxRuntimeSnapshot snapshot;
+		snapshot.revision.value = 1;
+		snapshot.activeSession = terminal::TerminalSessionId{ 1 };
+		for (const std::uint64_t id : { 1u, 2u }) {
+			terminal::tmux::TmuxSessionView session;
+			session.id.value = id;
+			session.name = id == 1 ? "user" : "agent";
+			session.active = id == 1;
+			terminal::tmux::TmuxWindowView window;
+			window.id.value = id * 10;
+			window.active = true;
+			terminal::tmux::TmuxPaneView pane;
+			pane.id.value = id * 100;
+			pane.instanceId.value = id * 100;
+			pane.active = true;
+			window.panes.push_back(pane);
+			session.windows.push_back(window);
+			snapshot.sessions.push_back(session);
+		}
+		return snapshot;
+	}
+};
+
+TEST(HarnessBridgeOperationDispatcher, TmuxImplicitTargetIsTheAuthenticatedCallerPane)
+{
+	TwoSessionTmuxRuntime runtime;
+	CHarnessBridgeOperationDispatcher dispatcher(nullptr, &runtime);
+	HarnessBridgeOperationRequestDto request;
+	request.operation = EHarnessOperationKind::ExecuteTmux;
+	request.operationId.value[0] = 3;
+	request.target = Target(2);
+	request.target.paneId = 200;
+	request.payload = *EncodeHarnessBridgeTmuxArgv({ "display-message", "-p", "#{pane_id}" });
+	request.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+	const auto response = dispatcher.Dispatch({}, request);
+	ASSERT_EQ(EHarnessTerminalStatus::Succeeded, response.status);
+	const auto decoded = DecodeHarnessBridgeTmuxResponse(response.payload);
+	ASSERT_TRUE(decoded);
+	EXPECT_EQ("%200\n", decoded->stdoutText);
+}
+
 } // namespace
 } // namespace platform::harnessbridge

@@ -171,4 +171,50 @@ TEST(TerminalCollectionModel, RejectsInvalidNamesDuplicatesAndIdentityExhaustion
 	EXPECT_TRUE(model.ValidateInvariants());
 }
 
+
+TEST(TerminalCollectionModel, DetachedWindowAndSplitLeaveTheCurrentSelectionAlone)
+{
+	TerminalCollectionModel model;
+	const auto first = model.CreateSession("first");
+	const auto other = model.CreateSession("other");
+	ASSERT_TRUE(first.Succeeded() && other.Succeeded());
+
+	TerminalCollectionWindowCreateRequest window;
+	window.sessionId = *first.sessionId;
+	window.name = "background";
+	window.detached = true;
+	const auto created = model.CreateTerminalWindow(window);
+	ASSERT_TRUE(created.Succeeded());
+	auto snapshot = model.Snapshot();
+	ASSERT_TRUE(snapshot.activeSession);
+	EXPECT_EQ(*other.sessionId, *snapshot.activeSession);
+	const auto session = model.FindSession(*first.sessionId);
+	ASSERT_TRUE(session.has_value());
+	EXPECT_EQ(*first.windowId, session->activeWindow);
+
+	TerminalCollectionPaneSplitRequest split;
+	split.sessionId = *first.sessionId;
+	split.windowId = *first.windowId;
+	split.paneId = *first.paneId;
+	split.detached = true;
+	const auto right = model.SplitPane(split);
+	ASSERT_TRUE(right.Succeeded());
+	snapshot = model.Snapshot();
+	EXPECT_EQ(*other.sessionId, *snapshot.activeSession);
+	auto splitWindow = model.FindWindow(*first.sessionId, *first.windowId);
+	ASSERT_TRUE(splitWindow.has_value());
+	EXPECT_EQ(*first.paneId, splitWindow->activePane);
+
+	// Without -d the new pane becomes current, as before.
+	split.detached = false;
+	const auto attached = model.SplitPane(split);
+	ASSERT_TRUE(attached.Succeeded());
+	snapshot = model.Snapshot();
+	EXPECT_EQ(*first.sessionId, *snapshot.activeSession);
+	splitWindow = model.FindWindow(*first.sessionId, *first.windowId);
+	ASSERT_TRUE(splitWindow.has_value());
+	EXPECT_EQ(*attached.paneId, splitWindow->activePane);
+	EXPECT_TRUE(model.ValidateInvariants());
+}
+
 } // namespace

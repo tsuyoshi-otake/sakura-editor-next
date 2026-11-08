@@ -23,6 +23,142 @@ the shim path. Do not mutate the editor process, user, or system PATH. Terminal
 content and structured payloads remain absent from diagnostics; queues, capture,
 input, waits, frames, argv, stdin, and responses all retain hard bounds.
 
+## tmux commands drive the panel (2026-11-08, #403)
+
+Reported: an agent's `tmux new-window` / `split-window` created runtime panes
+that the panel never showed, `kill-pane` / `kill-window` left their tabs behind,
+`select-window` / `select-pane` did not move the panel, `-d` was ignored, a
+command without `-t` acted on whichever pane the runtime selected last, and the
+preset's ClosePane did nothing on a lone pane.
+
+**The implicit target is the caller's pane (`$TMUX_PANE`).**
+
+- `HarnessBridgeOperationDispatcher` passes the authenticated
+  `request.target.paneId` as a `TmuxCallerContext`. It travels through
+  `TmuxCli::Run` and `TmuxCommandDispatcher` into `TmuxTargetResolver::Resolve`.
+- Without `-t`, a command targets the caller's pane, window and session.
+- A selector with no session part (a bare window or pane index) is scoped to the
+  caller's session and window. An explicitly named window still means that
+  window's active pane.
+- A caller with no live pane falls back to the active session, as before. Test
+  harnesses and a pane closed in the meantime take this path.
+- A caller-derived target counts as a stable identity (`usedStableIdentity`).
+
+**IDs reach every session; `window.pane` needs no session.** The facade exists
+so agents (Codex, Claude Code) can drive other windows and panes, and every
+panel terminal is its own runtime session. So the resolver follows tmux's
+`cmd-find` grammar for the forms agents write:
+
+- `%N` and `@N` name one pane / one window in any session. `@N` with no
+  session part searches every session and is a stable identity. `s:@N`
+  still requires the window to be in `s`.
+- `w.p` without a colon means window `w`, pane `p` (`0.1`, `@6.1`). The window
+  is looked up in the caller's session. More than one `.` is a syntax error.
+  As in tmux, a window *name* containing `.` is therefore never matched by
+  name: `-t my.win` and `-t s:my.win` both mean window `my`, pane `win` (a
+  window command ignores the pane part). Target such a window by `@N`.
+- A no-session `@N` / `%N` still needs some current session to start from.
+  With the real runtime that always exists: the model keeps an active session
+  while any session exists, and an empty snapshot is rejected first.
+- Test: `TmuxCompatibility.WindowIdsReachOtherSessionsAndWindowDotPaneNeedsNoSession`.
+
+**`-d` is honored by the topology model.** For a detached create or split,
+`TerminalCollectionModel` leaves the session's active window, the window's
+active pane and the active session alone. The first window of an empty session
+still becomes active.
+
+**Topology changes are announced.** `CTerminalRuntimeService` publishes
+`TerminalInstanceEventKind::TopologyChanged` after every successful
+create/split/select/close that changed something.
+
+- It publishes outside the runtime lock.
+- It publishes only after the new instance exists, so a listener that rereads
+  `CollectionSnapshot()` can resolve it.
+- The event names no pane; listeners reread the snapshot.
+- A create or split whose instance fails to start rolls its topology back and
+  still publishes. That is deliberate: the revision moved twice, and a listener
+  woken by another operation may have reconciled against the intermediate
+  snapshot. The extra wake costs one no-op reconcile; skipping it could leave a
+  tab for a pane that no longer exists.
+
+**The panel reconciles; it never guesses.** The event reaches `CTerminalTool`
+as one coalesced `kTopologyChangedMessage` (gate flag `topologyWakePending`).
+`TerminalTabManager::ReconcileTopology()` does three things:
+
+- It removes tabs whose pane is gone, without a close request: the runtime has
+  already closed it.
+- It adopts each untabbed pane of a session the panel already holds, walking
+  windows in order and leaves in layout order.
+- It reports the runtime's current pane when it changed since the last
+  reconcile.
+
+`CTerminalTool` applies the result with these rules:
+
+- A tmux window is a terminal group, as the preset digit chords already assume.
+- A runtime split becomes a split in its sibling's group, on the runtime
+  orientation.
+- Selection follows `select-window`, `select-pane` and attached creates.
+- When the active terminal is removed, the `DeleteTerminal` successor rule
+  picks the next one.
+- Keyboard focus moves only if it was already in a pane, so a background agent
+  never takes it from the editor.
+
+**Closing a panel terminal closes only its pane.** A session can now hold
+tmux-created siblings, so `DeleteTab` and `RestartTab` close only the tab's own
+pane. They try `ClosePane`, then `CloseSession` for a lone pane, then the
+instance itself. `ClearTabs` still closes everything.
+
+**Preset ClosePane closes a lone pane.** tmux `x` / Screen `X` on a group's last
+pane closes that terminal instead of doing nothing. Like Kill on the last
+terminal, this leaves the panel's empty placeholder renderer (tab 0).
+
+Not covered, deliberately:
+
+- Panel-created splits and groups are still separate runtime sessions. `tmux
+  list-panes` run from one of them does not list the others.
+- A detached workspace projection is not reconciled until it is reattached.
+- Preset CloseTerminal (tmux `&`) still closes only the focused pane, not the
+  whole group.
+- A tmux-created pane starts in the runtime's default working directory (the
+  editor process's), not the session's start directory. The E2E found this; it
+  is a separate issue.
+- Every reconcile rebuilds the pane renderers, even for a background
+  `new-window -d`. Pane HWNDs are not stable across topology changes.
+
+Verified 2026-11-08 on x64 Debug:
+
+- **Fail-before.** Each of the 9 new tests failed with its fix disabled and
+  passes with it:
+  - the bridge wiring;
+  - the resolver (`TmuxCompatibility.ImplicitTarget*`, `CommandsWithoutTarget*`;
+    `WindowIdsReachOtherSessions*` fails without the global `@N` lookup and,
+    separately, without the `w.p` split);
+  - `detached` (`TerminalCollectionModel.DetachedWindowAndSplit*`);
+  - the publish (`TerminalRuntimeService.TopologyChanges*`);
+  - the panel (`TerminalTool.TmuxCreatedWindowsAndPanes*`,
+    `TmuxWindowCommandsFromThePanelTerminal*`);
+  - the preset (`TerminalTool.TmuxPresetClosePane*`).
+- **Real window.** A throwaway `-PROF=` profile was driven with PostMessage
+  only. All 11 checks passed:
+  - `split-window -h` gives two side-by-side panes in one group;
+  - `display-message -p '#{pane_id}'` answers per caller;
+  - `send-keys` without `-t` from the left pane runs in the left pane's pwsh,
+    while the right pane is the runtime's current pane;
+  - `new-window -d` keeps the visible group;
+  - `new-window` switches to a new group, and `select-window` switches back;
+  - `kill-pane` removes its pane;
+  - `kill-window` removes its windows, and the list hides again (the pane
+    regains its single-terminal width);
+  - a second panel terminal is its own session (`$2` beside `$1`); from it,
+    `select-window -t '@1'` brings T1's group back, and from T1
+    `kill-window -t '@4'` removes the second terminal;
+  - `Ctrl+A X` closes the lone terminal, and no shell restarts.
+- **Probe pitfalls:**
+  - Pane HWNDs are recreated on every topology change. Locate panes by position
+    and identify each one by asking it for `#{pane_id}`.
+  - In pwsh, a bare `@1` is splatting, so quote window IDs (`-t '@1'`).
+    Unquoted, the command silently loses its target.
+
 ## Ownership
 
 The terminal session service owns PTY/process creation, environment, input,
@@ -608,6 +744,9 @@ VS Code capability.
   split right/down, close pane, close terminal, focus pane/group, select group,
   focus the terminal list). A preset must never invent a capability, and must
   never approximate a missing one with unrelated state.
+- Close pane (tmux `x`, Screen `X`) closes the focused pane even when it is the
+  group's last one, so that terminal closes. It used to require a split and did
+  nothing on a lone pane (#403).
 - Pressing the prefix twice is deliberately reported as *not consumed*, so the
   ordinary encoder delivers the literal control byte. That is tmux's
   `send-prefix` and Screen's `C-a a`, and it is what a nested multiplexer needs.

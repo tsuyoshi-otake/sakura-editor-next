@@ -410,6 +410,20 @@ struct CTerminalRuntimeService::Impl final : std::enable_shared_from_this<Impl> 
 		}
 	}
 
+	//! Announces a committed topology change (#403). Call with `mutex` unheld,
+	//! after any instance the change created exists, so a projection that
+	//! rereads CollectionSnapshot() can also resolve the new pane's instance.
+	void PublishTopologyChanged(const runtime::topology::TerminalTopologyResult& result) noexcept
+	{
+		if (!result.Succeeded() || !result.changed) return;
+		TerminalInstanceEvent event;
+		event.kind = TerminalInstanceEventKind::TopologyChanged;
+		event.coordinate = dependencies.coordinateBase;
+		event.coordinate.runtimeGeneration = runtimeGeneration;
+		if (result.sessionId) event.coordinate.sessionId = *result.sessionId;
+		Dispatch(event);
+	}
+
 	void BeginCloseAll() noexcept
 	{
 		std::vector<std::shared_ptr<TerminalInstance>> values;
@@ -580,6 +594,7 @@ TerminalTopologyResult CTerminalRuntimeService::CreateSession(const TerminalSess
 		}
 		completed.code = create.code;
 	}
+	m_impl->PublishTopologyChanged(topologyResult);
 	return completed;
 }
 
@@ -593,7 +608,11 @@ TerminalTopologyResult CTerminalRuntimeService::CreateTerminalWindow(const Termi
 		std::lock_guard lock(m_impl->mutex);
 		if (m_impl->closing) return { TerminalRuntimeOperationCode::ServerStopping };
 		m_impl->EnsureCollectionInstanceIdLocked();
-		topologyResult = m_impl->collection.CreateTerminalWindow(request.sessionId, request.name);
+		runtime::topology::TerminalCollectionWindowCreateRequest topologyRequest;
+		topologyRequest.sessionId = request.sessionId;
+		topologyRequest.name = request.name;
+		topologyRequest.detached = request.detached;
+		topologyResult = m_impl->collection.CreateTerminalWindow(topologyRequest);
 	}
 	const auto result = MapTopologyResult(topologyResult);
 	if (!topologyResult.Succeeded() || !topologyResult.sessionId || !topologyResult.windowId
@@ -612,6 +631,7 @@ TerminalTopologyResult CTerminalRuntimeService::CreateTerminalWindow(const Termi
 		}
 		completed.code = create.code;
 	}
+	m_impl->PublishTopologyChanged(topologyResult);
 	return completed;
 }
 
@@ -630,8 +650,13 @@ TerminalTopologyResult CTerminalRuntimeService::SplitPane(const TerminalPaneSpli
 		if (!found) return { TerminalRuntimeOperationCode::TargetMissing,
 			m_impl->collection.Revision() };
 		source = *found;
-		topologyResult = m_impl->collection.SplitPane(source.sessionId, source.windowId,
-			request.paneId, request.orientation);
+		runtime::topology::TerminalCollectionPaneSplitRequest topologyRequest;
+		topologyRequest.sessionId = source.sessionId;
+		topologyRequest.windowId = source.windowId;
+		topologyRequest.paneId = request.paneId;
+		topologyRequest.orientation = request.orientation;
+		topologyRequest.detached = request.detached;
+		topologyResult = m_impl->collection.SplitPane(topologyRequest);
 	}
 	const auto result = MapTopologyResult(topologyResult);
 	if (!topologyResult.Succeeded() || !topologyResult.sessionId || !topologyResult.windowId
@@ -651,6 +676,7 @@ TerminalTopologyResult CTerminalRuntimeService::SplitPane(const TerminalPaneSpli
 		}
 		completed.code = create.code;
 	}
+	m_impl->PublishTopologyChanged(topologyResult);
 	return completed;
 }
 
@@ -659,11 +685,16 @@ TerminalTopologyResult CTerminalRuntimeService::SelectWindow(const TerminalWindo
 	if (!m_impl || !IsValidOperation(request.operationId) || !request.windowId.IsValid()) {
 		return { TerminalRuntimeOperationCode::InvalidRequest };
 	}
-	std::lock_guard lock(m_impl->mutex);
-	if (m_impl->closing) return { TerminalRuntimeOperationCode::ServerStopping };
-	const auto window = FindWindow(m_impl->collection.Snapshot(), request.windowId);
-	if (!window) return { TerminalRuntimeOperationCode::TargetMissing, m_impl->collection.Revision() };
-	return MapTopologyResult(m_impl->collection.SelectWindow(window->sessionId, request.windowId));
+	runtime::topology::TerminalTopologyResult topologyResult;
+	{
+		std::lock_guard lock(m_impl->mutex);
+		if (m_impl->closing) return { TerminalRuntimeOperationCode::ServerStopping };
+		const auto window = FindWindow(m_impl->collection.Snapshot(), request.windowId);
+		if (!window) return { TerminalRuntimeOperationCode::TargetMissing, m_impl->collection.Revision() };
+		topologyResult = m_impl->collection.SelectWindow(window->sessionId, request.windowId);
+	}
+	m_impl->PublishTopologyChanged(topologyResult);
+	return MapTopologyResult(topologyResult);
 }
 
 TerminalTopologyResult CTerminalRuntimeService::SelectPane(const TerminalPaneSelectRequest& request)
@@ -671,11 +702,16 @@ TerminalTopologyResult CTerminalRuntimeService::SelectPane(const TerminalPaneSel
 	if (!m_impl || !IsValidOperation(request.operationId) || !request.paneId.IsValid()) {
 		return { TerminalRuntimeOperationCode::InvalidRequest };
 	}
-	std::lock_guard lock(m_impl->mutex);
-	if (m_impl->closing) return { TerminalRuntimeOperationCode::ServerStopping };
-	const auto pane = m_impl->collection.FindPane(request.paneId);
-	if (!pane) return { TerminalRuntimeOperationCode::TargetMissing, m_impl->collection.Revision() };
-	return MapTopologyResult(m_impl->collection.SelectPane(request.paneId));
+	runtime::topology::TerminalTopologyResult topologyResult;
+	{
+		std::lock_guard lock(m_impl->mutex);
+		if (m_impl->closing) return { TerminalRuntimeOperationCode::ServerStopping };
+		const auto pane = m_impl->collection.FindPane(request.paneId);
+		if (!pane) return { TerminalRuntimeOperationCode::TargetMissing, m_impl->collection.Revision() };
+		topologyResult = m_impl->collection.SelectPane(request.paneId);
+	}
+	m_impl->PublishTopologyChanged(topologyResult);
+	return MapTopologyResult(topologyResult);
 }
 
 TerminalTopologyResult CTerminalRuntimeService::ClosePane(const TerminalPaneCloseRequest& request)
@@ -694,6 +730,7 @@ TerminalTopologyResult CTerminalRuntimeService::ClosePane(const TerminalPaneClos
 		topologyResult = m_impl->collection.ClosePane(pane->sessionId, pane->windowId, pane->id);
 	}
 	if (topologyResult.Succeeded() && instanceId) m_impl->BeginCloseInstance(*instanceId, TerminalInstanceCloseReason::Explicit);
+	m_impl->PublishTopologyChanged(topologyResult);
 	return MapTopologyResult(topologyResult);
 }
 
@@ -715,6 +752,7 @@ TerminalTopologyResult CTerminalRuntimeService::CloseWindow(const TerminalWindow
 	if (topologyResult.Succeeded()) {
 		for (const auto id : instanceIds) m_impl->BeginCloseInstance(id, TerminalInstanceCloseReason::Explicit);
 	}
+	m_impl->PublishTopologyChanged(topologyResult);
 	return MapTopologyResult(topologyResult);
 }
 
@@ -738,6 +776,7 @@ TerminalTopologyResult CTerminalRuntimeService::CloseSession(const TerminalSessi
 	if (topologyResult.Succeeded()) {
 		for (const auto id : instanceIds) m_impl->BeginCloseInstance(id, TerminalInstanceCloseReason::Explicit);
 	}
+	m_impl->PublishTopologyChanged(topologyResult);
 	return MapTopologyResult(topologyResult);
 }
 

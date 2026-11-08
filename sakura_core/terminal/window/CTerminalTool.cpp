@@ -44,6 +44,7 @@ constexpr int kTerminalTabsRowHeightDip = 24;
 constexpr UINT kOutputAvailableMessage = WM_APP + 0x3a1;
 constexpr UINT kStateChangedMessage = WM_APP + 0x3a2;
 constexpr UINT kJobProcessMessage = WM_APP + 0x3a3;
+constexpr UINT kTopologyChangedMessage = WM_APP + 0x3a4;
 constexpr UINT_PTR kSynchronizedOutputTimer = 0x5344;
 constexpr UINT_PTR kProtocolInputRetryTimer = 0x5346;
 constexpr UINT kProtocolInputRetryMilliseconds = 30;
@@ -101,6 +102,8 @@ struct NotificationGate {
 	HWND window{};
 	bool alive{ true };
 	bool stateWakePending{};
+	//! One coalesced wake for any number of runtime topology changes (#403).
+	bool topologyWakePending{};
 	std::unordered_set<std::uint64_t> outputWakePending;
 	//! Job-membership hints (#402) that could change a tab's agent presence.
 	std::unordered_set<std::uint64_t> jobWakePending;
@@ -337,6 +340,9 @@ struct CTerminalTool::Impl {
 					} else if( event.kind == TerminalTabEventKind::JobProcess ) {
 						post = IsAgentPresenceHint(*gate, event)
 							&& gate->jobWakePending.insert(event.tabId).second;
+					} else if( event.kind == TerminalTabEventKind::TopologyChanged ) {
+						post = !gate->topologyWakePending;
+						gate->topologyWakePending = true;
 					} else if( !gate->stateWakePending ) {
 						gate->stateWakePending = true;
 						post = true;
@@ -346,13 +352,17 @@ struct CTerminalTool::Impl {
 			if( !target || !post ) return;
 			const UINT message = event.kind == TerminalTabEventKind::OutputAvailable
 				? kOutputAvailableMessage
-				: event.kind == TerminalTabEventKind::JobProcess ? kJobProcessMessage : kStateChangedMessage;
+				: event.kind == TerminalTabEventKind::JobProcess ? kJobProcessMessage
+				: event.kind == TerminalTabEventKind::TopologyChanged ? kTopologyChangedMessage
+				: kStateChangedMessage;
 			if( ::PostMessageW(target, message, static_cast<WPARAM>(event.tabId), 0) ) return;
 			const std::lock_guard lock(gate->mutex);
 			if( event.kind == TerminalTabEventKind::OutputAvailable ) {
 				gate->outputWakePending.erase(event.tabId);
 			} else if( event.kind == TerminalTabEventKind::JobProcess ) {
 				gate->jobWakePending.erase(event.tabId);
+			} else if( event.kind == TerminalTabEventKind::TopologyChanged ) {
+				gate->topologyWakePending = false;
 			} else {
 				gate->stateWakePending = false;
 			}
@@ -1612,6 +1622,100 @@ struct CTerminalTool::Impl {
 		gate->stateWakePending = false;
 	}
 
+	void ConsumeTopologyWake()
+	{
+		const std::lock_guard lock(gate->mutex);
+		gate->topologyWakePending = false;
+	}
+
+	bool PaneHasKeyboardFocus() const noexcept
+	{
+		const HWND focused = ::GetFocus();
+		if( !focused ) return false;
+		return std::any_of(panes.begin(), panes.end(), [focused](const TerminalPane& pane) {
+			const HWND paneWindow = pane.window ? pane.window->GetHwnd() : nullptr;
+			return paneWindow && (focused == paneWindow || ::IsChild(paneWindow, focused));
+		});
+	}
+
+	//! Applies runtime topology changes made outside this panel (#403). A tmux
+	//! window is a terminal group here (the preset digit chords already say so),
+	//! so `new-window` opens a group and `split-window` splits the pane it came
+	//! from, on the runtime split's axis. `kill-pane`/`kill-window` drop their
+	//! tabs; `select-window`/`select-pane` and a non-detached create move the
+	//! selection. Keyboard focus follows only when it is already in a pane,
+	//! so an agent working in the background never takes it from the editor.
+	void ReconcileTopology()
+	{
+		if( closed ) return;
+		const auto activeBefore = manager->ActiveTabId();
+		std::vector<std::uint64_t> remainingInGroup;
+		std::size_t removedIndex = 0;
+		if( activeBefore ) {
+			if( const auto owner = FindGroup(*activeBefore) ) {
+				remainingInGroup = paneGroups[*owner].tabIds;
+				const auto found = std::find(remainingInGroup.begin(), remainingInGroup.end(), *activeBefore);
+				removedIndex = static_cast<std::size_t>(found - remainingInGroup.begin());
+			}
+		}
+		const auto change = manager->ReconcileTopology();
+		if( !change.Changed() ) return;
+		const bool hadFocus = PaneHasKeyboardFocus();
+		DestroyPaneRenderers();
+		for( const auto tabId : change.removed ) RemoveTabFromGroups(tabId);
+		for( const auto& adoption : change.adopted ) {
+			if( adoption.splitOf ) {
+				if( const auto group = FindGroup(*adoption.splitOf);
+					group && InsertPaneSplit(paneGroups[*group], *adoption.splitOf, adoption.tabId, adoption.orientation) ) {
+					continue;
+				}
+			}
+			TerminalPaneGroup groupState;
+			groupState.tabIds.push_back(adoption.tabId);
+			groupState.nodes.push_back(MakePaneLeaf(adoption.tabId));
+			paneGroups.push_back(std::move(groupState));
+		}
+
+		// Same successor rule as DeleteTerminal (VS Code TerminalGroup): the
+		// instance now at the removed one's index in its group, else the group
+		// RemoveTabFromGroups activated.
+		std::optional<std::uint64_t> target = change.selected;
+		const bool activeRemoved = activeBefore
+			&& std::find(change.removed.begin(), change.removed.end(), *activeBefore) != change.removed.end();
+		if( !target && activeRemoved ) {
+			std::erase_if(remainingInGroup, [&change](const std::uint64_t id) {
+				return std::find(change.removed.begin(), change.removed.end(), id) != change.removed.end();
+			});
+			if( !remainingInGroup.empty() ) {
+				target = remainingInGroup[(std::min)(removedIndex, remainingInGroup.size() - 1)];
+			} else if( activePaneGroup && *activePaneGroup < paneGroups.size()
+				&& !paneGroups[*activePaneGroup].tabIds.empty() ) {
+				target = paneGroups[*activePaneGroup].tabIds.front();
+			}
+		}
+		if( target && FindGroup(*target) ) static_cast<void>(manager->SelectTab(*target));
+		if( const auto activeId = manager->ActiveTabId() ) {
+			if( const auto group = FindGroup(*activeId) ) activePaneGroup = group;
+		}
+		if( activePaneGroup && *activePaneGroup >= paneGroups.size() ) activePaneGroup.reset();
+		if( !activePaneGroup && !paneGroups.empty() ) activePaneGroup = 0;
+		if( window ) {
+			static_cast<void>(RebuildPaneRenderers());
+			LayoutChildren();
+		}
+		if( const auto activeId = manager->ActiveTabId() ) {
+			EnsureTerminalTabVisible(*activeId);
+			if( hadFocus ) {
+				terminalTabsFocused = false;
+				if( auto* pane = FindPane(*activeId); pane && pane->window ) pane->window->Focus();
+			}
+		}
+		for( const auto& adoption : change.adopted ) HandleOutput(adoption.tabId);
+		InvalidateTabs();
+		InvalidateTerminalTabs();
+		if( ReconcileAgentPresence(false) ) NotifyAgentPresence();
+	}
+
 	void ShowContextMenu( int x, int y, HWND owner = nullptr )
 	{
 		const HMENU menu = ::CreatePopupMenu();
@@ -2043,6 +2147,10 @@ struct CTerminalTool::Impl {
 			ConsumeJobWake(static_cast<std::uint64_t>(wParam));
 			if( ObserveAgentProcesses(static_cast<std::uint64_t>(wParam)) ) NotifyAgentPresence();
 			return 0;
+		case kTopologyChangedMessage:
+			ConsumeTopologyWake();
+			ReconcileTopology();
+			return 0;
 		default:
 			return ::DefWindowProcW(window, message, wParam, lParam);
 		}
@@ -2462,7 +2570,12 @@ struct CTerminalTool::Impl {
 		case TerminalPresetAction::NewTerminal: return AddTerminal().has_value();
 		case TerminalPresetAction::SplitRight: return SplitTerminalRight();
 		case TerminalPresetAction::SplitDown: return SplitTerminalDown();
-		case TerminalPresetAction::ClosePane: return CloseTerminalSplit();
+		case TerminalPresetAction::ClosePane: {
+			// tmux kill-pane / Screen remove: the last pane of a group closes
+			// its terminal, so a lone pane is not a no-op (#403).
+			const auto id = FocusedTabId();
+			return id && DeleteTerminal(*id);
+		}
 		case TerminalPresetAction::CloseTerminal: {
 			const auto id = FocusedTabId();
 			return id && DeleteTerminal(*id);
@@ -2674,6 +2787,7 @@ void CTerminalTool::Close()
 		m_impl->gate->alive = false;
 		m_impl->gate->window = nullptr;
 		m_impl->gate->stateWakePending = false;
+		m_impl->gate->topologyWakePending = false;
 		m_impl->gate->outputWakePending.clear();
 		m_impl->gate->jobWakePending.clear();
 		m_impl->gate->agentProcessIds.clear();

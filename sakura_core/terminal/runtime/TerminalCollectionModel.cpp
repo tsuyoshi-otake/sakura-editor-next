@@ -371,10 +371,10 @@ TerminalTopologyResult TerminalCollectionModel::CreateTerminalWindow(const Termi
 		return BaseResult(ETerminalTopologyResultCode::NameConflict);
 	}
 	sessionIt->second.order.push_back(windowId);
-	sessionIt->second.activeWindow = windowId;
+	if (!request.detached || !sessionIt->second.activeWindow.IsValid()) sessionIt->second.activeWindow = windowId;
 	m_windows.emplace(windowId, WindowState{ windowId, windowName, TerminalLayoutNode::Leaf(paneId, instanceId), paneId });
 	m_panes.emplace(paneId, PaneState{ paneId, instanceId, request.sessionId, windowId });
-	m_activeSession = request.sessionId;
+	if (!request.detached || !m_activeSession) m_activeSession = request.sessionId;
 	AdvanceRevision();
 	result = BaseResult(ETerminalTopologyResultCode::Succeeded);
 	result.changed = true;
@@ -431,10 +431,12 @@ TerminalTopologyResult TerminalCollectionModel::SplitPane(const TerminalPaneSpli
 		return BaseResult(ETerminalTopologyResultCode::TargetMissing);
 	}
 	windowIt->second.root = std::move(replacement);
-	windowIt->second.activePane = newPaneId;
 	m_panes.emplace(newPaneId, PaneState{ newPaneId, newInstanceId, request.sessionId, request.windowId });
-	sessionIt->second.activeWindow = request.windowId;
-	m_activeSession = request.sessionId;
+	if (!request.detached) {
+		windowIt->second.activePane = newPaneId;
+		sessionIt->second.activeWindow = request.windowId;
+		m_activeSession = request.sessionId;
+	}
 	AdvanceRevision();
 	result = BaseResult(ETerminalTopologyResultCode::Succeeded);
 	result.changed = true;

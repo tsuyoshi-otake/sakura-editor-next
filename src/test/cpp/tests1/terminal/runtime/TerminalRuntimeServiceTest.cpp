@@ -9,6 +9,7 @@
 #include "terminal/runtime/TerminalRuntimeService.h"
 
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -328,6 +329,71 @@ TEST(TerminalRuntimeService, InputBatchIsAtomicAndCaptureUsesTheSharedExtractor)
 	service.BeginCloseInstance(created.instanceId);
 	EXPECT_EQ(terminal::TerminalInstanceCloseWaitStatus::Closed,
 		service.WaitForInstanceClose(created.instanceId, std::chrono::steady_clock::now() + 2s).status);
+}
+
+
+TEST(TerminalRuntimeService, TopologyChangesAreAnnouncedOnceTheirInstancesExist)
+{
+	auto backendState = std::make_shared<FakeBackendState>();
+	terminal::CTerminalRuntimeService service(Factory(backendState));
+	std::atomic<int> topologyEvents{};
+	std::atomic<int> panesWithoutInstance{};
+	auto subscription = service.Subscribe([&](const terminal::TerminalInstanceEvent& event) {
+		if (event.kind != terminal::TerminalInstanceEventKind::TopologyChanged) return;
+		++topologyEvents;
+		const auto snapshot = service.CollectionSnapshot();
+		if (!snapshot) return;
+		for (const auto& session : snapshot->sessions) {
+			for (const auto& window : session.windows) {
+				for (const auto& pane : window.panes) {
+					if (service.Instance(pane.instanceId) == nullptr) ++panesWithoutInstance;
+				}
+			}
+		}
+	});
+
+	terminal::TerminalSessionCreateRequest sessionRequest;
+	sessionRequest.operationId = Operation(40);
+	sessionRequest.launch = terminal::TerminalLaunchOptions{};
+	sessionRequest.launch->executablePath = L"fake-terminal.exe";
+	const auto session = service.CreateSession(sessionRequest);
+	ASSERT_EQ(terminal::TerminalRuntimeOperationCode::Succeeded, session.code);
+	EXPECT_EQ(1, topologyEvents.load());
+
+	terminal::TerminalPaneSplitRequest splitRequest;
+	splitRequest.operationId = Operation(41);
+	splitRequest.paneId = *session.paneId;
+	splitRequest.launch = sessionRequest.launch;
+	const auto split = service.SplitPane(splitRequest);
+	ASSERT_EQ(terminal::TerminalRuntimeOperationCode::Succeeded, split.code);
+	EXPECT_EQ(2, topologyEvents.load());
+
+	// Selecting the pane that is already current changes nothing.
+	terminal::TerminalPaneSelectRequest select;
+	select.operationId = Operation(42);
+	select.paneId = *split.paneId;
+	EXPECT_EQ(terminal::TerminalRuntimeOperationCode::Succeeded, service.SelectPane(select).code);
+	EXPECT_EQ(2, topologyEvents.load());
+	select.paneId = *session.paneId;
+	EXPECT_EQ(terminal::TerminalRuntimeOperationCode::Succeeded, service.SelectPane(select).code);
+	EXPECT_EQ(3, topologyEvents.load());
+
+	terminal::TerminalPaneCloseRequest close;
+	close.operationId = Operation(43);
+	close.paneId = *split.paneId;
+	EXPECT_EQ(terminal::TerminalRuntimeOperationCode::Succeeded, service.ClosePane(close).code);
+	EXPECT_EQ(4, topologyEvents.load());
+	EXPECT_EQ(0, panesWithoutInstance.load());
+
+	terminal::TerminalSessionCloseRequest sessionClose;
+	sessionClose.operationId = Operation(44);
+	sessionClose.sessionId = *session.sessionId;
+	EXPECT_EQ(terminal::TerminalRuntimeOperationCode::Succeeded, service.CloseSession(sessionClose).code);
+	EXPECT_EQ(5, topologyEvents.load());
+	EXPECT_EQ(terminal::TerminalInstanceCloseWaitStatus::Closed,
+		service.WaitForInstanceClose(*split.instanceId, std::chrono::steady_clock::now() + 2s).status);
+	EXPECT_EQ(terminal::TerminalInstanceCloseWaitStatus::Closed,
+		service.WaitForInstanceClose(*session.instanceId, std::chrono::steady_clock::now() + 2s).status);
 }
 
 } // namespace

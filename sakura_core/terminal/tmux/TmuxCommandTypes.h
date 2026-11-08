@@ -317,6 +317,17 @@ struct TmuxCompatibilityProfile final {
 	std::string displayFormat{ "#{pane_id}" };
 };
 
+//! The pane a tmux command was run from: real tmux's $TMUX_PANE. It defines
+//! the implicit current session, window and pane, so a command without -t
+//! acts on its own terminal rather than on whichever one was selected last.
+//! The bridge supplies the pane it authenticated by job membership; it is
+//! never read from the client's argv or environment. An invalid pane (a
+//! caller outside every pane, or a pane that has since closed) falls back to
+//! the runtime's active session.
+struct TmuxCallerContext final {
+	TerminalPaneId paneId;
+};
+
 enum class TmuxCommandResultCode : std::uint8_t {
 	Succeeded,
 	InvalidUsage,

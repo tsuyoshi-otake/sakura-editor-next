@@ -139,6 +139,9 @@ struct TerminalCollectionWindowCreateRequest final {
 	TerminalSessionId sessionId;
 	std::string name;
 	std::optional<TerminalTopologyRevision> expectedRevision;
+	//! tmux `new-window -d`: the window is added without becoming the session's
+	//! current window, and the active session does not move.
+	bool detached{};
 };
 
 struct TerminalCollectionPaneSplitRequest final {
@@ -147,6 +150,9 @@ struct TerminalCollectionPaneSplitRequest final {
 	TerminalPaneId paneId;
 	TerminalPaneOrientation orientation{ TerminalPaneOrientation::Horizontal };
 	std::optional<TerminalTopologyRevision> expectedRevision;
+	//! tmux `split-window -d`: the pane is added without becoming the active
+	//! pane, and neither the current window nor the active session moves.
+	bool detached{};
 };
 
 struct TerminalCollectionSessionSelectRequest final {

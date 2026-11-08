@@ -36,6 +36,72 @@ HarnessOperationId MakeOperationId( const std::uint64_t value ) noexcept
 	return result;
 }
 
+using runtime::topology::TerminalCollectionSnapshot;
+using runtime::topology::TerminalLayoutNode;
+using runtime::topology::TerminalPaneSnapshot;
+
+void CollectLeaves( const TerminalLayoutNode& node, std::vector<TerminalPaneId>& leaves )
+{
+	if( node.IsLeaf() ) {
+		if( node.pane.paneId.IsValid() ) leaves.push_back(node.pane.paneId);
+		return;
+	}
+	for( const auto& child : node.children ) CollectLeaves(child, leaves);
+}
+
+TerminalPaneId FirstLeaf( const TerminalLayoutNode& node ) noexcept
+{
+	const auto* current = &node;
+	while( !current->IsLeaf() && !current->children.empty() ) current = &current->children.front();
+	return current->IsLeaf() ? current->pane.paneId : TerminalPaneId{};
+}
+
+//! The pane `paneId` sits beside under its parent split, and that split's
+//! axis. SplitPane inserts the new leaf directly after the pane it split, so
+//! the preceding sibling is the split source; a first child falls back to the
+//! following one.
+bool FindSplitNeighbor( const TerminalLayoutNode& node, const TerminalPaneId paneId,
+	TerminalPaneId& neighbor, TerminalPaneOrientation& orientation ) noexcept
+{
+	if( node.IsLeaf() ) return false;
+	for( std::size_t index = 0; index < node.children.size(); ++index ) {
+		const auto& child = node.children[index];
+		if( child.IsLeaf() && child.pane.paneId == paneId ) {
+			if( node.children.size() < 2 ) return false;
+			neighbor = FirstLeaf(node.children[index > 0 ? index - 1 : 1]);
+			orientation = node.orientation;
+			return neighbor.IsValid();
+		}
+		if( FindSplitNeighbor(child, paneId, neighbor, orientation) ) return true;
+	}
+	return false;
+}
+
+const TerminalPaneSnapshot* FindPaneSnapshot( const TerminalCollectionSnapshot& snapshot,
+	const TerminalPaneId paneId ) noexcept
+{
+	for( const auto& session : snapshot.sessions ) {
+		for( const auto& window : session.windows ) {
+			for( const auto& pane : window.panes ) if( pane.id == paneId ) return &pane;
+		}
+	}
+	return nullptr;
+}
+
+//! The runtime's current pane: the active session's current window's active
+//! pane. A tmux command run outside every pane acts on this one.
+TerminalPaneId CurrentPane( const TerminalCollectionSnapshot& snapshot ) noexcept
+{
+	if( !snapshot.activeSession ) return {};
+	for( const auto& session : snapshot.sessions ) {
+		if( session.id != *snapshot.activeSession ) continue;
+		for( const auto& window : session.windows ) {
+			if( window.id == session.activeWindow ) return window.activePane;
+		}
+	}
+	return {};
+}
+
 } // namespace
 
 struct TerminalTabManager::Impl {
@@ -65,6 +131,9 @@ struct TerminalTabManager::Impl {
 	std::size_t scrollbackLimit{ TerminalModel::kDefaultScrollbackLines };
 	bool closed{};
 	bool startedAnySession{};
+	//! Runtime current pane seen by the previous ReconcileTopology (#403), so a
+	//! selection is reported once per change rather than on every reconcile.
+	TerminalPaneId lastRuntimeCurrentPane;
 
 	Tab* Find( std::uint64_t id ) noexcept
 	{
@@ -185,8 +254,54 @@ struct TerminalTabManager::Impl {
 			instance->SessionState(), instance->LastError());
 	}
 
+	//! Closes exactly one tab's terminal. A session can hold panes of other tabs
+	//! once tmux has split it or added windows to it (#403), so a tab closes
+	//! its own pane; the topology drops the window and the session with their
+	//! last pane. A tab without a pane (no topology) closes its instance.
+	void ClosePaneOrInstance( const TerminalPaneId paneId, const TerminalSessionId sessionId,
+		const TerminalInstanceId instanceId, const HarnessOperationId operationId ) noexcept
+	{
+		if( paneId.IsValid() ) {
+			TerminalPaneCloseRequest request;
+			request.operationId = operationId;
+			request.paneId = paneId;
+			if( runtimeService->ClosePane(request).code == TerminalRuntimeOperationCode::Succeeded ) return;
+		} else if( sessionId.IsValid() ) {
+			TerminalSessionCloseRequest request;
+			request.operationId = operationId;
+			request.sessionId = sessionId;
+			if( runtimeService->CloseSession(request).code == TerminalRuntimeOperationCode::Succeeded ) return;
+		}
+		// The pane may already be gone (a tmux kill-pane raced the panel). The
+		// instance close is idempotent and keeps the process from outliving the tab.
+		runtimeService->BeginCloseInstance(instanceId, TerminalInstanceCloseReason::Explicit);
+	}
+
+	//! Topology is not an instance fact, so it has no route: every change goes
+	//! to the owner, which reconciles against the snapshot (#403).
+	void PublishTopologyEvent() noexcept
+	{
+		TerminalTabEvent translated;
+		TerminalTabEventCallback callback;
+		try {
+			{
+				std::lock_guard lock(eventMutex);
+				if( !acceptingEvents || !eventCallback ) return;
+				translated.kind = TerminalTabEventKind::TopologyChanged;
+				callback = eventCallback;
+			}
+			callback(translated);
+		} catch( ... ) {
+			// Advisory, as in PublishTabEvent: never unwind the publishing thread.
+		}
+	}
+
 	void OnRuntimeEvent( const TerminalInstanceEvent& event ) noexcept
 	{
+		if( event.kind == TerminalInstanceEventKind::TopologyChanged ) {
+			PublishTopologyEvent();
+			return;
+		}
 		if( event.kind == TerminalInstanceEventKind::JobProcess ) {
 			// A hint is not a session state change; keep it out of the state wake.
 			if( event.jobProcess ) {
@@ -307,6 +422,7 @@ bool TerminalTabManager::RestartTab( std::uint64_t tabId, TerminalSize size, std
 	if( !created.instanceId || !created.instanceId->IsValid() ) return false;
 	const auto oldInstance = tab->instanceId;
 	const auto oldSession = tab->sessionId;
+	const auto oldPane = tab->paneId;
 	tab->instanceId = *created.instanceId;
 	if( created.sessionId ) tab->sessionId = *created.sessionId;
 	if( created.windowId ) tab->windowId = *created.windowId;
@@ -317,13 +433,9 @@ bool TerminalTabManager::RestartTab( std::uint64_t tabId, TerminalSize size, std
 		static_cast<void>(model->ConsumeScrollbackChange());
 	}
 	m_impl->startedAnySession = true;
-	if( m_impl->runtimeService && oldSession.IsValid() ) {
-		TerminalSessionCloseRequest closeRequest;
-		closeRequest.operationId = MakeOperationId(tabId ^ 0x8000000000000000ULL);
-		closeRequest.sessionId = oldSession;
-		static_cast<void>(m_impl->runtimeService->CloseSession(closeRequest));
-	} else if( m_impl->runtimeService ) {
-		m_impl->runtimeService->BeginCloseInstance(oldInstance, TerminalInstanceCloseReason::Explicit);
+	if( m_impl->runtimeService ) {
+		m_impl->ClosePaneOrInstance(oldPane, oldSession, oldInstance,
+			MakeOperationId(tabId ^ 0x8000000000000000ULL));
 	}
 	return created.code == TerminalRuntimeOperationCode::Succeeded;
 }
@@ -334,13 +446,9 @@ bool TerminalTabManager::DeleteTab( std::uint64_t tabId ) noexcept
 	const auto found = std::find_if( m_impl->tabs.begin(), m_impl->tabs.end(), [tabId](const auto& tab) { return tab->id == tabId; } );
 	if( found == m_impl->tabs.end() ) return false;
 	m_impl->RemoveEventRoute((*found)->instanceId);
-	if( m_impl->runtimeService && (*found)->sessionId.IsValid() ) {
-		TerminalSessionCloseRequest request;
-		request.operationId = MakeOperationId(tabId);
-		request.sessionId = (*found)->sessionId;
-		static_cast<void>(m_impl->runtimeService->CloseSession(request));
-	} else if( m_impl->runtimeService ) {
-		m_impl->runtimeService->BeginCloseInstance((*found)->instanceId);
+	if( m_impl->runtimeService ) {
+		m_impl->ClosePaneOrInstance((*found)->paneId, (*found)->sessionId, (*found)->instanceId,
+			MakeOperationId(tabId));
 	}
 	const auto index = static_cast<std::size_t>(found - m_impl->tabs.begin());
 	m_impl->tabs.erase(found);
@@ -459,6 +567,104 @@ TerminalTabProjectionAttachResult TerminalTabManager::AttachTabs(
 		result.errorCode = ERROR_NOT_ENOUGH_MEMORY;
 		return result;
 	}
+}
+
+TerminalTabTopologyReconcileResult TerminalTabManager::ReconcileTopology()
+{
+	TerminalTabTopologyReconcileResult result;
+	if( !m_impl || m_impl->closed || !m_impl->runtimeService ) return result;
+	try {
+		const auto snapshot = m_impl->runtimeService->CollectionSnapshot();
+		if( !snapshot ) return result;
+
+		// A pane that left the topology was closed by whoever removed it, so the
+		// tab goes without another close request.
+		for( std::size_t index = 0; index < m_impl->tabs.size(); ) {
+			const auto& tab = *m_impl->tabs[index];
+			if( !tab.paneId.IsValid() || FindPaneSnapshot(*snapshot, tab.paneId) != nullptr ) {
+				++index;
+				continue;
+			}
+			const auto tabId = tab.id;
+			m_impl->RemoveEventRoute(tab.instanceId);
+			m_impl->tabs.erase(m_impl->tabs.begin() + static_cast<std::ptrdiff_t>(index));
+			if( m_impl->activeTabId == tabId ) {
+				if( m_impl->tabs.empty() ) m_impl->activeTabId.reset();
+				else m_impl->activeTabId = m_impl->tabs[(std::min)(index, m_impl->tabs.size() - 1)]->id;
+			}
+			result.removed.push_back(tabId);
+		}
+
+		const auto tabForPane = [this]( const TerminalPaneId paneId ) -> std::optional<std::uint64_t> {
+			for( const auto& tab : m_impl->tabs ) if( tab->paneId == paneId ) return tab->id;
+			return std::nullopt;
+		};
+		const auto projectsSession = [this]( const TerminalSessionId sessionId ) {
+			return std::any_of(m_impl->tabs.begin(), m_impl->tabs.end(),
+				[sessionId]( const auto& tab ) { return tab->sessionId == sessionId; });
+		};
+		for( const auto& session : snapshot->sessions ) {
+			if( !projectsSession(session.id) ) continue;
+			for( const auto windowId : session.order ) {
+				const auto window = std::find_if(session.windows.begin(), session.windows.end(),
+					[windowId]( const auto& item ) { return item.id == windowId; });
+				if( window == session.windows.end() ) continue;
+				std::vector<TerminalPaneId> leaves;
+				CollectLeaves(window->root, leaves);
+				for( const auto paneId : leaves ) {
+					if( tabForPane(paneId) ) continue;
+					const auto* pane = FindPaneSnapshot(*snapshot, paneId);
+					// A pane whose instance is still being created is adopted on the
+					// event that follows its creation.
+					if( pane == nullptr || m_impl->runtimeService->Instance(pane->instanceId) == nullptr ) continue;
+					if( m_impl->nextTabId == std::numeric_limits<std::uint64_t>::max() ) return result;
+					TerminalTabAdoption adoption;
+					TerminalPaneId neighbor;
+					TerminalPaneOrientation orientation{ TerminalPaneOrientation::Horizontal };
+					if( FindSplitNeighbor(window->root, paneId, neighbor, orientation) ) {
+						adoption.splitOf = tabForPane(neighbor);
+						adoption.orientation = orientation;
+					}
+					if( !adoption.splitOf ) {
+						for( const auto sibling : leaves ) {
+							if( sibling == paneId ) continue;
+							if( const auto siblingTab = tabForPane(sibling) ) {
+								adoption.splitOf = siblingTab;
+								break;
+							}
+						}
+					}
+					auto tab = std::make_unique<Impl::Tab>();
+					tab->id = m_impl->nextTabId++;
+					tab->instanceId = pane->instanceId;
+					tab->sessionId = session.id;
+					tab->windowId = window->id;
+					tab->paneId = paneId;
+					if( auto* model = m_impl->runtimeService->Model(tab->instanceId) ) {
+						model->SetScrollbackLimit(m_impl->scrollbackLimit);
+						static_cast<void>(model->ConsumeScrollbackChange());
+					}
+					adoption.tabId = tab->id;
+					m_impl->tabs.emplace_back(std::move(tab));
+					m_impl->startedAnySession = true;
+					m_impl->RegisterEventRoute(pane->instanceId, adoption.tabId);
+					if( !m_impl->activeTabId ) m_impl->activeTabId = adoption.tabId;
+					result.adopted.push_back(adoption);
+				}
+			}
+		}
+
+		const auto current = CurrentPane(*snapshot);
+		if( current.IsValid() && current != m_impl->lastRuntimeCurrentPane ) {
+			m_impl->lastRuntimeCurrentPane = current;
+			const auto currentTab = tabForPane(current);
+			if( currentTab && currentTab != m_impl->activeTabId ) result.selected = currentTab;
+		}
+	} catch( ... ) {
+		// Partial progress stays consistent: every adopted tab is fully routed
+		// before the next one starts, and a removed tab never comes back.
+	}
+	return result;
 }
 
 void TerminalTabManager::Resize( TerminalSize rawSize )

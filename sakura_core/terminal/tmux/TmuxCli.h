@@ -27,7 +27,8 @@ public:
 		const std::vector<std::string>& argv,
 		ITmuxRuntimePort& runtime,
 		TmuxCompatibilityProfile profile = {},
-		TmuxDispatcherLimits limits = {}) noexcept;
+		TmuxDispatcherLimits limits = {},
+		TmuxCallerContext caller = {}) noexcept;
 
 	[[nodiscard]] static TmuxCliResponse FromParse(const TmuxParseResult&) noexcept;
 	[[nodiscard]] static TmuxCliResponse FromDispatch(const TmuxCommandResult&) noexcept;

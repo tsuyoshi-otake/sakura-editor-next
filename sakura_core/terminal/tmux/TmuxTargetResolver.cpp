@@ -72,6 +72,52 @@ template<typename Id>
 	return nullptr;
 }
 
+//! tmux's current state for a command without an explicit session. `window`
+//! and `pane` are set only when the caller's pane was found; otherwise the
+//! session is the runtime's active one and its active window/pane apply.
+struct CurrentTarget final {
+	const TmuxSessionView* session{};
+	const TmuxWindowView* window{};
+	const TmuxPaneView* pane{};
+};
+
+[[nodiscard]] CurrentTarget FindCurrent(const TmuxRuntimeSnapshot& snapshot,
+	const TmuxCallerContext& caller) noexcept
+{
+	if (caller.paneId.IsValid()) {
+		for (const auto& session : snapshot.sessions) {
+			for (const auto& window : session.windows) {
+				for (const auto& pane : window.panes) {
+					if (pane.id == caller.paneId) return { &session, &window, &pane };
+				}
+			}
+		}
+	}
+	return { ActiveSession(snapshot), nullptr, nullptr };
+}
+
+[[nodiscard]] const TmuxWindowView* ActiveWindowOf(const TmuxSessionView& session) noexcept
+{
+	const auto found = std::find_if(session.windows.begin(), session.windows.end(),
+		[](const auto& item) { return item.active; });
+	return found == session.windows.end() ? nullptr : &*found;
+}
+
+[[nodiscard]] const TmuxPaneView* ActivePaneOf(const TmuxWindowView& window) noexcept
+{
+	const auto found = std::find_if(window.panes.begin(), window.panes.end(),
+		[](const auto& item) { return item.active; });
+	return found == window.panes.end() ? nullptr : &*found;
+}
+
+//! The window a selector without a window part refers to: the caller's window
+//! inside the caller's session, the session's active window anywhere else.
+[[nodiscard]] const TmuxWindowView* CurrentWindowOf(const TmuxSessionView& session,
+	const CurrentTarget& current) noexcept
+{
+	return current.session == &session && current.window ? current.window : ActiveWindowOf(session);
+}
+
 [[nodiscard]] const TmuxSessionView* FindSession(const TmuxRuntimeSnapshot& snapshot,
 	const ParsedSelector& selector, TmuxTargetCode& code) noexcept
 {
@@ -165,11 +211,20 @@ template<typename Id>
 {
 	const auto colon = text.find(':');
 	if (colon == std::string_view::npos) {
+		// Like tmux's cmd-find, "window.pane" needs no session part.
 		session = {};
-		window = text;
-		pane = {};
-		hasPane = false;
-		return true;
+		const auto dot = text.find('.');
+		if (dot == std::string_view::npos) {
+			window = text;
+			pane = {};
+			hasPane = false;
+			return true;
+		}
+		if (text.find('.', dot + 1) != std::string_view::npos) return false;
+		window = text.substr(0, dot);
+		pane = text.substr(dot + 1);
+		hasPane = true;
+		return !window.empty() && !pane.empty();
 	}
 	if (text.find(':', colon + 1) != std::string_view::npos) return false;
 	session = text.substr(0, colon);
@@ -216,7 +271,8 @@ template<typename Id>
 } // namespace
 
 TmuxTargetResult TmuxTargetResolver::Resolve(const TmuxRuntimeSnapshot& snapshot,
-	const TmuxTargetKind kind, const std::optional<std::string_view> selector) noexcept
+	const TmuxTargetKind kind, const std::optional<std::string_view> selector,
+	const TmuxCallerContext& caller) noexcept
 {
 	try {
 		if (snapshot.sessions.empty()) return Error(TmuxTargetCode::TargetMissing, "target-missing");
@@ -228,7 +284,10 @@ TmuxTargetResult TmuxTargetResolver::Resolve(const TmuxRuntimeSnapshot& snapshot
 		if (selector && !SplitTarget(text, sessionText, windowText, paneText, hasPane)) {
 			return Error(TmuxTargetCode::InvalidSyntax, "invalid-target");
 		}
-		const auto activeSession = ActiveSession(snapshot);
+		// The caller's pane is a stable identity: re-resolving it after a
+		// topology change yields the same target or none, never a different one.
+		const auto current = FindCurrent(snapshot, caller);
+		const bool fromCaller = current.pane != nullptr;
 		const TmuxSessionView* session = nullptr;
 		TmuxTargetCode code = TmuxTargetCode::Succeeded;
 		bool stable = false;
@@ -239,7 +298,7 @@ TmuxTargetResult TmuxTargetResolver::Resolve(const TmuxRuntimeSnapshot& snapshot
 			stable = parsed.stable;
 			if (!session) return Error(code, code == TmuxTargetCode::Ambiguous ? "ambiguous-target" : "target-missing");
 		} else {
-			session = activeSession;
+			session = current.session;
 			if (!session) return Error(TmuxTargetCode::TargetMissing, "target-missing");
 		}
 
@@ -247,7 +306,7 @@ TmuxTargetResult TmuxTargetResolver::Resolve(const TmuxRuntimeSnapshot& snapshot
 			if (selector && (text.find(':') != std::string_view::npos || text.find('.') != std::string_view::npos)) {
 				return Error(TmuxTargetCode::InvalidSyntax, "invalid-session-target");
 			}
-			if (!selector) stable = false;
+			if (!selector) stable = fromCaller;
 			if (selector && sessionText.empty()) {
 				ParsedSelector parsed;
 				if (!ParseSelector(text, parsed)) return Error(TmuxTargetCode::InvalidSyntax, "invalid-session-target");
@@ -267,12 +326,12 @@ TmuxTargetResult TmuxTargetResolver::Resolve(const TmuxRuntimeSnapshot& snapshot
 		if (kind == TmuxTargetKind::Pane && sessionText.empty() && !hasPane && !text.empty() && text.front() != '@' && text.front() != '%') {
 			ParsedSelector paneSelector;
 			if (!ParseSelector(text, paneSelector)) return Error(TmuxTargetCode::InvalidSyntax, "invalid-pane-target");
-			const auto activeWindow = std::find_if(session->windows.begin(), session->windows.end(), [](const auto& item) { return item.active; });
-			if (activeWindow == session->windows.end()) return Error(TmuxTargetCode::TargetMissing, "target-missing");
+			const auto* currentWindow = CurrentWindowOf(*session, current);
+			if (!currentWindow) return Error(TmuxTargetCode::TargetMissing, "target-missing");
 			TmuxTargetCode paneCode;
-			const auto pane = FindPane(*activeWindow, paneSelector, paneCode);
+			const auto pane = FindPane(*currentWindow, paneSelector, paneCode);
 			if (!pane) return Error(paneCode, paneCode == TmuxTargetCode::Ambiguous ? "ambiguous-target" : "target-missing");
-			return MakeResult(snapshot, kind, *session, *activeWindow, pane, false);
+			return MakeResult(snapshot, kind, *session, *currentWindow, pane, false);
 		}
 		if (selector && sessionText.empty() && !hasPane && !text.empty() && text.front() == '$'
 			&& (kind == TmuxTargetKind::Window || kind == TmuxTargetKind::Pane)) {
@@ -292,18 +351,18 @@ TmuxTargetResult TmuxTargetResolver::Resolve(const TmuxRuntimeSnapshot& snapshot
 		}
 
 		if (!selector) {
-			if (!session->active || session->windows.empty()) return Error(TmuxTargetCode::TargetMissing, "target-missing");
-			const auto activeWindow = std::find_if(session->windows.begin(), session->windows.end(),
-				[](const auto& item) { return item.active; });
-			if (activeWindow == session->windows.end()) return Error(TmuxTargetCode::TargetMissing, "target-missing");
-			if (kind == TmuxTargetKind::Window) return MakeResult(snapshot, kind, *session, *activeWindow, nullptr, false);
-			const auto activePane = std::find_if(activeWindow->panes.begin(), activeWindow->panes.end(),
-				[](const auto& item) { return item.active; });
-			if (activePane == activeWindow->panes.end()) return Error(TmuxTargetCode::TargetMissing, "target-missing");
-			return MakeResult(snapshot, kind, *session, *activeWindow, &*activePane, false);
+			if (session->windows.empty() || (!fromCaller && !session->active)) {
+				return Error(TmuxTargetCode::TargetMissing, "target-missing");
+			}
+			const auto* currentWindow = CurrentWindowOf(*session, current);
+			if (!currentWindow) return Error(TmuxTargetCode::TargetMissing, "target-missing");
+			if (kind == TmuxTargetKind::Window) return MakeResult(snapshot, kind, *session, *currentWindow, nullptr, fromCaller);
+			const auto* currentPane = fromCaller ? current.pane : ActivePaneOf(*currentWindow);
+			if (!currentPane) return Error(TmuxTargetCode::TargetMissing, "target-missing");
+			return MakeResult(snapshot, kind, *session, *currentWindow, currentPane, fromCaller);
 		}
 
-		if (sessionText.empty()) session = activeSession;
+		if (sessionText.empty()) session = current.session;
 		if (!session) return Error(TmuxTargetCode::TargetMissing, "target-missing");
 		ParsedSelector windowSelector;
 		if (kind == TmuxTargetKind::Pane && sessionText.empty() && !hasPane && !text.empty() && text.front() == '%') {
@@ -322,10 +381,26 @@ TmuxTargetResult TmuxTargetResolver::Resolve(const TmuxRuntimeSnapshot& snapshot
 		if (!ParseSelector(windowText, windowSelector) || windowSelector.prefix == '%' || windowSelector.prefix == '$') {
 			return Error(TmuxTargetCode::InvalidSyntax, "invalid-window-target");
 		}
-		TmuxTargetCode windowCode;
-		const auto window = FindWindow(*session, windowSelector, windowCode);
+		TmuxTargetCode windowCode = TmuxTargetCode::TargetMissing;
+		const TmuxWindowView* window = nullptr;
+		if (sessionText.empty() && windowSelector.prefix == '@') {
+			// A window ID names one window in every session, as %N names one
+			// pane; only an explicit session part narrows it.
+			for (const auto& candidateSession : snapshot.sessions) {
+				TmuxTargetCode candidateCode;
+				const auto candidate = FindWindow(candidateSession, windowSelector, candidateCode);
+				if (!candidate) continue;
+				if (window) return Error(TmuxTargetCode::Ambiguous, "ambiguous-target");
+				window = candidate;
+				session = &candidateSession;
+				windowCode = TmuxTargetCode::Succeeded;
+			}
+			stable = true;
+		} else {
+			window = FindWindow(*session, windowSelector, windowCode);
+			stable = stable && windowSelector.stable;
+		}
 		if (!window) return Error(windowCode, windowCode == TmuxTargetCode::Ambiguous ? "ambiguous-target" : "target-missing");
-		stable = stable && windowSelector.stable;
 		if (kind == TmuxTargetKind::Window || !hasPane) {
 			if (kind == TmuxTargetKind::Pane) {
 				const auto activePane = std::find_if(window->panes.begin(), window->panes.end(), [](const auto& item) { return item.active; });
