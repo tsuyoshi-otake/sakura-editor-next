@@ -335,6 +335,25 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   (`contrib/update/browser/updateTitleBarEntry.ts`). Placing it in the title bar
   is upstream's own placement, not a divergence — Account and Manage sit on the
   Activity Bar for the default vertical position.
+- **It leads the title-control run** (#404):
+  `[Update][Layout][Primary][Panel][Secondary][Account][Manage]`.
+  - Upstream moved it on 2026-08-13 (microsoft/vscode `84ed7dda5`, #330726).
+    `titlebarPart.ts` appends `update-toolbar-container` to `.titlebar-right`
+    before `action-toolbar-container`. The CSS gives it `margin-left: auto` and
+    `margin-right: var(--vscode-spacing-size40)` (4px).
+  - This section was first written on 2026-08-06, before that move, and the
+    first implementation put the indicator after the Secondary Side Bar control.
+    That matched neither the old upstream order (after the whole action
+    toolbar) nor the new one.
+  - Because the run is right-aligned and the indicator comes first, showing or
+    hiding it moves no fixed control. It takes caption space instead.
+  - `CalculateCustomFrameLayout`, `kTitleControls`, and the paint loop in
+    `CCustomTitleBar::Paint` hold this order. Hit testing, painting, and the
+    UIA child order all follow it, so change all three together. The
+    `CustomFrameControl` enum is not one of them: it still lists Update after
+    SecondarySidebar, and its values only number the accessibility nodes.
+  - The 4 DIP margin inside the measured width leaves the same 4px gap that
+    upstream's `margin-right` leaves between the pill and the Layout control.
 - It is visible **only** for the three actionable states
   (`available for download`, `downloaded`, `ready`) and only while
   `update.titleBar` is true. `CCustomFrameController::SetUpdateIndicatorVisible`
@@ -353,8 +372,8 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   feedback, and the focus ring are confined to `CustomFrameUpdateIndicatorPillRect`:
   inset by 4 DIP horizontally, drawn at the 22 DIP button height rather than the 34 DIP
   caption height, and rounded by 4 DIP. `MeasureCustomFrameUpdateButtonWidth` reserves
-  that same horizontal margin, so the pill can never touch the Secondary Side Bar control
-  or the minimize button no matter what the caption font measures.
+  that same horizontal margin, so the pill can never touch the caption text or the
+  Layout control no matter what the caption font measures.
 - Prominence uses the `button.*` palette roles, not `activityBarBadge.*`; see
   [`../theme/CLAUDE.md`](../theme/CLAUDE.md) for why those are a separate role
   from `accent`.

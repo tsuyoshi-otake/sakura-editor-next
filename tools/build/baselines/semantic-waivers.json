@@ -1042,6 +1042,29 @@
           "baseline_finding_count": 49
         }
       ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#404 moves the title-bar Update indicator to the front of the title-control run, as VS Code did in 84ed7dda5 (#330726): CalculateCustomFrameLayout emits it before the Layout control, and kTitleControls and the CCustomTitleBar::Paint loop list it first so hit testing, painting and UIA order follow. No new finding is added; the touched files keep their pre-existing ratchet debt, and reducing unrelated debt would widen a placement fix. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "tracking_issue": 389,
+      "created": "2026-11-08",
+      "expires": "2027-02-06",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/window/CCustomFrameController.cpp": "sha256:f8f4db5c745ca0c48e4482f0be88eb8b9ccd410246fc0ba0f2836e2a03ead1d8",
+        "sakura_core/window/CCustomTitleBar.cpp": "sha256:a13729cff69016f0776b7d3fa65844e9e0b6b71bbbb4896505857c86340dcea3"
+      },
+      "new_findings": [],
+      "missing_touched_reductions": [
+        {
+          "path": "sakura_core/window/CCustomFrameController.cpp",
+          "baseline_finding_count": 16
+        },
+        {
+          "path": "sakura_core/window/CCustomTitleBar.cpp",
+          "baseline_finding_count": 1
+        }
+      ]
     }
   ]
 }

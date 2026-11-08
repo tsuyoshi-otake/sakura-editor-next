@@ -124,11 +124,11 @@ RECT TitleControlRect(const CustomFrameLayout& layout, CustomFrameControl contro
 //! invocation, and accessibility all consume the same left-to-right run. The
 //! Account/Manage rectangles are empty while the Activity Bar is vertical.
 constexpr std::array<CustomFrameControl, 7> kTitleControls = {
+	CustomFrameControl::Update,
 	CustomFrameControl::Layout,
 	CustomFrameControl::PrimarySidebar,
 	CustomFrameControl::BottomPanel,
 	CustomFrameControl::SecondarySidebar,
-	CustomFrameControl::Update,
 	CustomFrameControl::Account,
 	CustomFrameControl::Manage,
 };
@@ -467,15 +467,19 @@ CustomFrameLayout CalculateCustomFrameLayout(
 			controlLeft += controlWidth;
 			return rect;
 		};
+		// VS Code renders `MenuId.TitleBarUpdate` in its own toolbar before the
+		// right-aligned action toolbar (microsoft/vscode 84ed7dda5, #330726), so the
+		// indicator leads the run and the fixed controls keep their positions whether
+		// or not it is shown. A zero measured width means the update state is not
+		// actionable. `nextControl` would still produce a degenerate rectangle at the
+		// current offset, and an empty RECT is what every hit-test/paint/accessibility
+		// path treats as absent, so skip it outright rather than emitting one that
+		// starts and ends at the same x.
+		if (updateWidth > 0) layout.updateButton = nextControl(updateWidth);
 		layout.layoutButton = nextControl(titleControlWidth);
 		layout.primarySidebarButton = nextControl(titleControlWidth);
 		layout.bottomPanelButton = nextControl(titleControlWidth);
 		layout.secondarySidebarButton = nextControl(titleControlWidth);
-		// A zero measured width means the update state is not actionable. `nextControl`
-		// would still produce a degenerate rectangle at the current offset, and an empty
-		// RECT is what every hit-test/paint/accessibility path treats as absent, so skip
-		// it outright rather than emitting one that starts and ends at the same x.
-		if (updateWidth > 0) layout.updateButton = nextControl(updateWidth);
 		if (showActivityBarGlobalActions) {
 			layout.accountButton = nextControl(titleControlWidth);
 			layout.manageButton = nextControl(titleControlWidth);

@@ -572,8 +572,8 @@ TEST(CustomFrame, PlacesActivityBarGlobalActionsAfterTheUpdateIndicator)
 	EXPECT_FALSE(::IsRectEmpty(&layout.updateButton));
 	EXPECT_FALSE(::IsRectEmpty(&layout.accountButton));
 	EXPECT_FALSE(::IsRectEmpty(&layout.manageButton));
-	EXPECT_EQ(layout.secondarySidebarButton.right, layout.updateButton.left);
-	EXPECT_EQ(layout.updateButton.right, layout.accountButton.left);
+	EXPECT_EQ(layout.updateButton.right, layout.layoutButton.left);
+	EXPECT_EQ(layout.secondarySidebarButton.right, layout.accountButton.left);
 	EXPECT_EQ(layout.accountButton.right, layout.manageButton.left);
 	EXPECT_EQ(layout.manageButton.right, layout.minimizeButton.left);
 	EXPECT_EQ(CustomFrameControl::Update,
@@ -696,31 +696,33 @@ TEST(CustomFrameUpdateControl, LeavesEveryOtherRectangleUntouchedWhileTheStateIs
 	}
 }
 
-TEST(CustomFrameUpdateControl, InsertsTheLabelledIndicatorBetweenSecondarySideBarAndCaptionButtons)
+TEST(CustomFrameUpdateControl, PlacesTheLabelledIndicatorBeforeTheLayoutControls)
 {
 	constexpr int kIndicatorWidth = 56;
 	const auto hidden = CalculateCustomFrameLayout(1200, 96, 430, 0);
 	const auto shown = CalculateCustomFrameLayout(1200, 96, 430, kIndicatorWidth);
 
+	// VS Code renders `MenuId.TitleBarUpdate` in its own toolbar before the right-aligned
+	// action toolbar (microsoft/vscode 84ed7dda5, #330726), so the indicator leads the run.
 	EXPECT_FALSE(::IsRectEmpty(&shown.updateButton));
 	EXPECT_EQ(kIndicatorWidth, shown.updateButton.right - shown.updateButton.left);
 	EXPECT_EQ(shown.title.bottom, shown.updateButton.bottom);
-	EXPECT_EQ(shown.secondarySidebarButton.right, shown.updateButton.left);
-	EXPECT_EQ(shown.updateButton.right, shown.minimizeButton.left);
+	EXPECT_EQ(shown.updateButton.right, shown.layoutButton.left);
+	EXPECT_EQ(shown.secondarySidebarButton.right, shown.minimizeButton.left);
 	EXPECT_TRUE(::IsRectEmpty(&shown.accountButton));
 	EXPECT_TRUE(::IsRectEmpty(&shown.manageButton));
 
-	// The run is right-aligned against the native caption buttons. Inserting the
-	// indicator shifts the four glyph controls left by exactly the measured width;
-	// the caption buttons themselves do not move.
+	// The run is right-aligned against the native caption buttons. Showing the indicator
+	// moves no other control: it takes caption space to the left of the fixed run.
 	EXPECT_EQ(hidden.minimizeButton.left, shown.minimizeButton.left);
-	EXPECT_EQ(hidden.layoutButton.left - kIndicatorWidth, shown.layoutButton.left);
-	EXPECT_EQ(hidden.primarySidebarButton.left - kIndicatorWidth, shown.primarySidebarButton.left);
-	EXPECT_EQ(hidden.bottomPanelButton.left - kIndicatorWidth, shown.bottomPanelButton.left);
-	EXPECT_EQ(hidden.secondarySidebarButton.left - kIndicatorWidth, shown.secondarySidebarButton.left);
+	EXPECT_EQ(hidden.layoutButton.left, shown.layoutButton.left);
+	EXPECT_EQ(hidden.primarySidebarButton.left, shown.primarySidebarButton.left);
+	EXPECT_EQ(hidden.bottomPanelButton.left, shown.bottomPanelButton.left);
+	EXPECT_EQ(hidden.secondarySidebarButton.left, shown.secondarySidebarButton.left);
+	EXPECT_EQ(hidden.layoutButton.left - kIndicatorWidth, shown.updateButton.left);
 	// The indicator takes its width from its label; the glyph controls keep the fixed one.
 	EXPECT_EQ(ScaleCustomFrameDip(30, 96), shown.layoutButton.right - shown.layoutButton.left);
-	EXPECT_LE(shown.captionText.right, shown.layoutButton.left);
+	EXPECT_LE(shown.captionText.right, shown.updateButton.left);
 }
 
 TEST(CustomFrameUpdateControl, CollapsesTheWholeRunWhenTheIndicatorNoLongerFits)
@@ -741,7 +743,8 @@ TEST(CustomFrameUpdateControl, CollapsesTheWholeRunWhenTheIndicatorNoLongerFits)
 	// system(42) + controls(4*30+56) + captionButtons(46*2+48) = 42+176+140 = 358.
 	const auto fits = CalculateCustomFrameLayout(358, 96, 300, 56);
 	EXPECT_FALSE(::IsRectEmpty(&fits.updateButton));
-	EXPECT_EQ(ScaleCustomFrameDip(42, 96), fits.layoutButton.left);
+	EXPECT_EQ(ScaleCustomFrameDip(42, 96), fits.updateButton.left);
+	EXPECT_EQ(ScaleCustomFrameDip(42, 96) + 56, fits.layoutButton.left);
 }
 
 TEST(CustomFrameUpdateControl, HitTestsTheIndicatorWithTheSameHalfOpenBoundsAsEveryOtherControl)
@@ -752,19 +755,20 @@ TEST(CustomFrameUpdateControl, HitTestsTheIndicatorWithTheSameHalfOpenBoundsAsEv
 	};
 	EXPECT_EQ(CustomFrameControl::Update, HitTestCustomFrameControl(layout, center(layout.updateButton)));
 	EXPECT_EQ(CustomFrameControl::Update, HitTestCustomFrameControl(layout, { layout.updateButton.left, 16 }));
-	EXPECT_EQ(CustomFrameControl::SecondarySidebar,
+	// The indicator leads the run: caption space to its left, the Layout control to its right.
+	EXPECT_EQ(CustomFrameControl::None,
 		HitTestCustomFrameControl(layout, { layout.updateButton.left - 1, 16 }));
-	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(layout, { layout.updateButton.right, 16 }));
+	EXPECT_EQ(CustomFrameControl::Layout, HitTestCustomFrameControl(layout, { layout.updateButton.right, 16 }));
 	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, center(layout.updateButton), 1200, 700, 8, false));
 
 	// While the indicator is hidden its empty rectangle can never contain a point, so no
-	// client point anywhere in the caption resolves to Update.  The point that used to be
-	// the indicator is not caption drag either: the layout is right-aligned, so the fixed
-	// controls reclaim exactly the width the indicator gave up and one of them now owns
-	// that x.  Asserting None there would pin a false fact about right alignment.
+	// client point anywhere in the caption resolves to Update. The fixed controls do not
+	// move when it hides; the x it occupied returns to the caption.
 	const auto hidden = CalculateCustomFrameLayout(1200, 96, 300, 0);
 	EXPECT_TRUE(::IsRectEmpty(&hidden.updateButton));
 	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(hidden, { 0, 0 }));
+	EXPECT_EQ(CustomFrameControl::None,
+		HitTestCustomFrameControl(hidden, { (layout.updateButton.left + layout.updateButton.right) / 2, 16 }));
 	for (int x = 0; x < 1200; ++x) {
 		ASSERT_NE(CustomFrameControl::Update, HitTestCustomFrameControl(hidden, { x, 16 }))
 			<< "x = " << x;
@@ -802,7 +806,7 @@ TEST(CustomFrameUpdateControl, FallsBackToAMinimumButtonWidthWhenTheCaptionFontC
 {
 	// A zero width here would mean "hidden", which is a different fact from "unmeasurable".
 	// The fallback covers the button itself plus the 4 DIP margin on each side that keeps
-	// the painted pill clear of the Secondary Side Bar control and the caption buttons.
+	// the painted pill clear of the caption to its left and the Layout control to its right.
 	for (const UINT dpi : { 96u, 120u, 144u, 192u }) {
 		const int expected = ScaleCustomFrameDip(56, dpi) + ScaleCustomFrameDip(4, dpi) * 2;
 		EXPECT_EQ(expected, MeasureCustomFrameUpdateButtonWidth(nullptr, dpi));

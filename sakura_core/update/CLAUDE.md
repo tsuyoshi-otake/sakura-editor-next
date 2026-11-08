@@ -47,6 +47,25 @@ re-grouped:
 Each entry below is a place this product cannot or does not do what upstream
 does, with the reason. An undocumented divergence is a bug.
 
+### The title-bar indicator still follows upstream's August visibility rule
+
+This entry was recorded with #404 on 2026-11-08, after reading upstream
+`updateTitleBarEntry.ts` at `db129c638`. Upstream's indicator now shows more
+than the three actionable states:
+
+- the labels `Checking...`, `Downloading...`, `Installing...`, `Updating...`,
+  `Cancelling...` and `Restarting...`;
+- a tooltip with progress;
+- explicit (user-started) downloads and updates;
+- `Cancelling` and `Restarting`.
+
+Upstream also hides it while a chat request is in progress
+(`updateTitleBarChatRequestInProgress`). This product still shows the indicator
+only for `available for download` / `downloaded` / `ready`, as upstream did when
+it was written (2026-08-06). The divergence exists because nobody has ported the
+newer rule yet. No platform constraint forces it, so porting it is open work,
+not a design decision.
+
 ### The feed is this fork's GitHub Releases, and only stable releases count
 
 Upstream talks to Microsoft's update service, which has no counterpart here. The

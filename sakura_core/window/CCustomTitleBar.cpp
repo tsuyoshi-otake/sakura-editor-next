@@ -377,11 +377,11 @@ void CCustomTitleBar::Paint(
 	PaintButtonBackground(dc, layout.maximizeButton, HTMAXBUTTON, hotHit, pressedHit, palette);
 	PaintButtonBackground(dc, layout.closeButton, HTCLOSE, hotHit, pressedHit, palette);
 	for (const CustomFrameControl control : {
+		CustomFrameControl::Update,
 		CustomFrameControl::Layout,
 		CustomFrameControl::PrimarySidebar,
 		CustomFrameControl::BottomPanel,
 		CustomFrameControl::SecondarySidebar,
-		CustomFrameControl::Update,
 		CustomFrameControl::Account,
 		CustomFrameControl::Manage,
 	}) {
