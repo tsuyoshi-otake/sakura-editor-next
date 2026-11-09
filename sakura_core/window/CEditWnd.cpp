@@ -102,6 +102,7 @@
 #include "workbench/activity/ActivityBarEntryProjection.h"
 #include "workbench/activity/CActivityBar.h"
 #include "workbench/projects/CProjectsPage.h"
+#include "workbench/projects/AgentSessionDiscovery.h"
 #include "workbench/panel/CBottomPanelTool.h"
 #include "workbench/explorer/CExplorerTool.h"
 #include "workbench/explorer/ExplorerDeleteConfirmation.h"
@@ -3175,6 +3176,38 @@ bool CEditWnd::InitializeWorkbench()
 				};
 				options.agentsChanged = [this](std::function<void()> listener) {
 					m_projectsAgentsListener = std::move(listener);
+				};
+				// #406: agent CLI session history for the current folder. The
+				// provider runs on the page's worker thread, so it captures nothing
+				// of this window; the roots are re-read there on every discovery.
+				options.agentSessions = [](std::wstring folder, HANDLE stop) {
+					return workbench::projects::DiscoverAgentSessions(folder,
+						workbench::projects::ResolveAgentSessionDiscoveryRoots(), {}, stop);
+				};
+				options.resumeAgentSession = [this](
+					const workbench::projects::AgentSessionRecord& session, const std::wstring_view folder) {
+					using workbench::projects::EProjectsActivationStatus;
+					if (m_terminalTool == nullptr || GetHwnd() == nullptr || folder.empty()) {
+						return EProjectsActivationStatus::Failed;
+					}
+					const auto command = workbench::projects::BuildAgentSessionResumeCommand(
+						session.provider, session.id);
+					if (!command) return EProjectsActivationStatus::Failed;
+					// The command is ASCII by construction (validated id); like VS
+					// Code's sendText(text, true), the line ends with CR.
+					std::string input;
+					input.reserve(command->size() + 1U);
+					for (const wchar_t character : *command) input.push_back(static_cast<char>(character));
+					input.push_back('\r');
+					// Create the terminal before revealing the view, so revealing an
+					// empty Terminal does not start a second, default terminal.
+					const auto terminalId = m_terminalTool->AddTerminalWithInput(folder, input);
+					if (!terminalId
+						|| !ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Terminal, true)
+						|| !m_terminalTool->SelectTerminal(*terminalId)) {
+						return EProjectsActivationStatus::Failed;
+					}
+					return EProjectsActivationStatus::FocusedCurrentWindow;
 				};
 				return workbench::projects::CreateProjectsPage(GetHwnd(), std::move(options));
 			},

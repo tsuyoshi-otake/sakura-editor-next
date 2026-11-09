@@ -694,6 +694,142 @@ TEST(ProjectsModel, PreferredAgentIdentitySelectsTheMatchingRowAndFallsBackWhenU
 	EXPECT_TRUE(unmatched.rows[*unmatched.selectedRowIndex].currentProject);
 }
 
+TEST(ProjectsModel, SessionRowsFollowTheAgentsAndPrecedeTheWorktreesToggle)
+{
+	const std::vector<ProjectEntry> projects{
+		ProjectFolder(L"C:\\repo", L"repo"),
+		ProjectFolder(L"D:\\other", L"other"),
+	};
+	config::WorkspaceContextSnapshot workspace;
+	workspace.kind = config::EWorkspaceKind::Folder;
+	workspace.folders.push_back({ FileUri(L"C:\\repo"), L"repo" });
+	auto worktrees = Worktrees();
+	const std::vector<ProjectAgentEntry> agents{
+		{ .identity = L"terminal-instance:3", .terminalId = 3, .name = L"Claude Code" },
+	};
+	constexpr std::int64_t now = 1'000'000;
+	const std::vector<AgentSessionRecord> sessions{
+		{ EAgentSessionProvider::Codex, L"019a-codex", L"Add a sessions node", now - 120 },
+		{ EAgentSessionProvider::ClaudeCode, L"0f1e-claude", L"", 0 },
+	};
+	const ProjectSessionsInput ready{ .state = EProjectSessionsState::Ready, .sessions = sessions,
+		.expanded = true, .nowUnixSeconds = now };
+
+	const auto projection = ProjectProjects(projects, workspace, &worktrees, false,
+		{}, std::nullopt, {}, {}, agents, {}, ready);
+	ASSERT_EQ(8U, projection.rows.size());
+	EXPECT_EQ(EProjectsRowKind::Project, projection.rows[0].kind);
+	EXPECT_EQ(EProjectsRowKind::CurrentWorktree, projection.rows[1].kind);
+	EXPECT_EQ(EProjectsRowKind::Agent, projection.rows[2].kind);
+	const auto& toggle = projection.rows[3];
+	ASSERT_EQ(EProjectsRowKind::SessionsToggle, toggle.kind);
+	EXPECT_EQ(L"Sessions", toggle.label);
+	EXPECT_EQ(L"2", toggle.trailing);
+	EXPECT_EQ(2U, toggle.sessionCount);
+	EXPECT_TRUE(toggle.expanded);
+	EXPECT_TRUE(toggle.currentProject);
+	EXPECT_EQ(0U, toggle.projectIndex);
+	EXPECT_EQ(L"Sessions, 2 sessions", ProjectsAccessibleLabel(toggle));
+
+	const auto& codex = projection.rows[4];
+	ASSERT_EQ(EProjectsRowKind::Session, codex.kind);
+	ASSERT_TRUE(codex.sessionIndex.has_value());
+	EXPECT_EQ(0U, *codex.sessionIndex);
+	EXPECT_FALSE(codex.agentIndex.has_value());
+	EXPECT_FALSE(codex.worktreeIndex.has_value());
+	EXPECT_EQ(L"Add a sessions node", codex.label);
+	EXPECT_EQ(L"Codex", codex.description);
+	EXPECT_EQ(L"2m", codex.trailing);
+	EXPECT_EQ(L"Add a sessions node\nCodex - 019a-codex\nDouble-click to resume in a new terminal",
+		codex.tooltip);
+	EXPECT_EQ(L"Add a sessions node, Codex, 2m", ProjectsAccessibleLabel(codex));
+
+	const auto& untitled = projection.rows[5];
+	ASSERT_EQ(EProjectsRowKind::Session, untitled.kind);
+	EXPECT_EQ(1U, untitled.sessionIndex.value_or(99U));
+	EXPECT_EQ(L"Untitled session", untitled.label);
+	EXPECT_EQ(L"Claude Code", untitled.description);
+	EXPECT_TRUE(untitled.trailing.empty());
+	EXPECT_EQ(L"Untitled session, Claude Code", ProjectsAccessibleLabel(untitled));
+
+	EXPECT_EQ(EProjectsRowKind::WorktreesToggle, projection.rows[6].kind);
+	EXPECT_EQ(EProjectsRowKind::Project, projection.rows[7].kind);
+	EXPECT_EQ(1U, projection.rows[7].projectIndex);
+
+	// Collapsed: the group row stays with its count; the sessions are hidden.
+	auto collapsedInput = ready;
+	collapsedInput.expanded = false;
+	const auto collapsed = ProjectProjects(projects, workspace, &worktrees, false,
+		{}, std::nullopt, {}, {}, agents, {}, collapsedInput);
+	ASSERT_EQ(6U, collapsed.rows.size());
+	EXPECT_EQ(EProjectsRowKind::SessionsToggle, collapsed.rows[3].kind);
+	EXPECT_FALSE(collapsed.rows[3].expanded);
+	EXPECT_EQ(L"2", collapsed.rows[3].trailing);
+	EXPECT_EQ(EProjectsRowKind::WorktreesToggle, collapsed.rows[4].kind);
+
+	// Loading with nothing accepted yet shows a loading marker and no count.
+	const ProjectSessionsInput loading{ .state = EProjectSessionsState::Loading, .nowUnixSeconds = now };
+	const auto first = ProjectProjects(projects, workspace, nullptr, false,
+		{}, std::nullopt, {}, {}, {}, {}, loading);
+	ASSERT_EQ(3U, first.rows.size());
+	EXPECT_EQ(EProjectsRowKind::SessionsToggle, first.rows[1].kind);
+	EXPECT_EQ(L"Loading...", first.rows[1].trailing);
+	EXPECT_EQ(0U, first.rows[1].sessionCount);
+	EXPECT_EQ(L"Sessions, Loading...", ProjectsAccessibleLabel(first.rows[1]));
+
+	// Reloading keeps the last accepted sessions on screen.
+	auto reloading = ready;
+	reloading.state = EProjectSessionsState::Loading;
+	const auto reloaded = ProjectProjects(projects, workspace, nullptr, false,
+		{}, std::nullopt, {}, {}, {}, {}, reloading);
+	ASSERT_EQ(5U, reloaded.rows.size());
+	EXPECT_EQ(L"2", reloaded.rows[1].trailing);
+	EXPECT_EQ(EProjectsRowKind::Session, reloaded.rows[2].kind);
+
+	// Ready with no sessions, and Unavailable, show no group at all.
+	const ProjectSessionsInput empty{ .state = EProjectSessionsState::Ready };
+	const ProjectSessionsInput unavailable{ .state = EProjectSessionsState::Unavailable, .sessions = sessions };
+	for (const auto& input : { empty, unavailable }) {
+		const auto none = ProjectProjects(projects, workspace, nullptr, false,
+			{}, std::nullopt, {}, {}, {}, {}, input);
+		ASSERT_EQ(2U, none.rows.size());
+		EXPECT_TRUE(std::ranges::none_of(none.rows, [](const auto& row) {
+			return row.kind == EProjectsRowKind::SessionsToggle || row.kind == EProjectsRowKind::Session;
+		}));
+	}
+
+	// Sessions belong to the current Project only.
+	config::WorkspaceContextSnapshot noProject;
+	noProject.kind = config::EWorkspaceKind::Empty;
+	const auto orphaned = ProjectProjects(projects, noProject, nullptr, false,
+		{}, std::nullopt, {}, {}, {}, {}, ready);
+	EXPECT_EQ(2U, orphaned.rows.size());
+}
+
+TEST(ProjectsModel, PreferredSessionIdentitySelectsTheMatchingSessionRow)
+{
+	const std::vector<ProjectEntry> projects{ ProjectFolder(L"C:\\repo", L"repo") };
+	config::WorkspaceContextSnapshot workspace;
+	workspace.kind = config::EWorkspaceKind::Folder;
+	workspace.folders.push_back({ FileUri(L"C:\\repo"), L"repo" });
+	const std::vector<AgentSessionRecord> sessions{
+		{ EAgentSessionProvider::Codex, L"same-id", L"Codex thread", 20 },
+		{ EAgentSessionProvider::ClaudeCode, L"same-id", L"Claude session", 10 },
+	};
+	ProjectSessionsInput input{ .state = EProjectSessionsState::Ready, .sessions = sessions,
+		.nowUnixSeconds = 100, .preferredIdentity = L"claude-code:same-id" };
+	const auto matched = ProjectProjects(projects, workspace, nullptr, false,
+		{}, EProjectsRowKind::Session, {}, {}, {}, {}, input);
+	ASSERT_TRUE(matched.selectedRowIndex.has_value());
+	EXPECT_EQ(L"Claude session", matched.rows[*matched.selectedRowIndex].label);
+
+	input.preferredIdentity = L"pi:missing";
+	const auto unmatched = ProjectProjects(projects, workspace, nullptr, false,
+		{}, EProjectsRowKind::Session, {}, {}, {}, {}, input);
+	ASSERT_TRUE(unmatched.selectedRowIndex.has_value());
+	EXPECT_EQ(EProjectsRowKind::Project, unmatched.rows[*unmatched.selectedRowIndex].kind);
+}
+
 TEST(ProjectsPage, DeleteRemovesTheCatalogEntryWithoutChangingWorkspaceState)
 {
 	std::vector<ProjectEntry> projects{
@@ -1151,6 +1287,238 @@ TEST(ProjectsPage, AgentNotificationAddsRowsAndActivatesWithoutGitRediscovery)
 	EXPECT_FALSE(static_cast<bool>(agentsChanged));
 	page.reset();
 	::DestroyWindow(hostWindow);
+}
+
+TEST(ProjectsPage, SessionsLoadOffTheUiThreadResumeFromTheRowAndCancelOnClose)
+{
+	tests1::ScopedLanguageSelection restoreLanguage;
+	CSelectLang::InitializeLanguageEnvironment();
+	for (const wchar_t* dll : { L"", L"sakura_lang_zh_CN.dll", L"sakura_lang_en_US.dll" }) {
+		CSelectLang::ChangeLang(dll);
+		// Direct selected-module reads reject silent Japanese fallback.
+		for (UINT id = STR_WORKBENCH_PROJECTS_SESSIONS; id <= STR_WORKBENCH_PROJECTS_SESSION_AGE_DAYS; ++id) {
+			wchar_t value[256]{};
+			EXPECT_GT(::LoadStringW(CSelectLang::getLangRsrcInstance(), id, value, 256), 0) << id;
+		}
+	}
+	ASSERT_EQ(L"Sessions", CSelectLang::LoadStringW(STR_WORKBENCH_PROJECTS_SESSIONS));
+
+	TemporaryProjectRoots roots;
+	std::vector<ProjectEntry> projects{
+		ProjectFolder(roots.current.wstring(), L"Current"),
+		ProjectFolder(roots.other.wstring(), L"Other"),
+	};
+	config::WorkspaceContextSnapshot workspace;
+	workspace.kind = config::EWorkspaceKind::Folder;
+	workspace.folders.push_back({ FileUri(roots.current.wstring()), L"repo" });
+	const auto runner = std::make_shared<ScriptedBranchRunner>();
+	runner->branches.emplace(roots.current.wstring(), "main");
+
+	// The provider runs on the page's worker. It blocks until the test
+	// releases it, or returns nullopt as soon as the page signals stop.
+	struct SessionProbe final {
+		std::mutex mutex;
+		std::vector<std::wstring> folders;
+		std::vector<DWORD> threads;
+		std::atomic<int> stopped{ 0 };
+	};
+	const auto probe = std::make_shared<SessionProbe>();
+	const HANDLE release = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+	ASSERT_NE(nullptr, release);
+	constexpr std::int64_t now = 1'000'000;
+	const std::wstring codexId = L"019a0000-0000-7000-8000-000000000001";
+	const std::wstring claudeId = L"0f1e2d3c-4b5a-4968-8776-655443322110";
+	const std::vector<AgentSessionRecord> available{
+		{ EAgentSessionProvider::Codex, codexId, L"Add a sessions node", now - 120 },
+		{ EAgentSessionProvider::ClaudeCode, claudeId, L"Fix login bug", now - 7200 },
+	};
+	std::vector<std::pair<AgentSessionRecord, std::wstring>> resumed;
+
+	ProjectsPageOptions options;
+	options.projects = [&projects] { return std::optional(projects); };
+	options.workspace = [&workspace] { return workspace; };
+	options.workspaceRoot = [&roots] { return roots.current.wstring(); };
+	options.repositoryRoots = [](const ProjectEntry& project) {
+		const auto path = project.uri.ToWindowsPath();
+		return path.value ? std::optional(std::vector<std::wstring>{ *path.value })
+			: std::nullopt;
+	};
+	options.activateProject = [](const ProjectEntry&, bool) {
+		return EProjectsActivationStatus::Failed;
+	};
+	options.activateWorktree = [](std::wstring_view, bool) {
+		return EProjectsActivationStatus::Failed;
+	};
+	options.removeProject = [](const ProjectEntry&) { return EProjectsRemovalStatus::Failed; };
+	options.gitDiscoveryFactory = DiscoveryFactory(runner);
+	// The first discovery finds both sessions; later ones find only Claude's.
+	options.agentSessions = [probe, release, available](std::wstring folder, HANDLE stop)
+		-> std::optional<std::vector<AgentSessionRecord>> {
+		std::size_t call = 0;
+		{
+			std::lock_guard lock(probe->mutex);
+			probe->folders.push_back(std::move(folder));
+			probe->threads.push_back(::GetCurrentThreadId());
+			call = probe->folders.size();
+		}
+		const HANDLE handles[] = { release, stop };
+		if (::WaitForMultipleObjects(2, handles, FALSE, 10'000) != WAIT_OBJECT_0) {
+			++probe->stopped;
+			return std::nullopt;
+		}
+		if (call == 1U) return available;
+		return std::vector<AgentSessionRecord>{ available[1] };
+	};
+	options.resumeAgentSession = [&resumed](const AgentSessionRecord& session, std::wstring_view folder) {
+		resumed.emplace_back(session, std::wstring(folder));
+		return EProjectsActivationStatus::FocusedCurrentWindow;
+	};
+	options.nowUnixSeconds = [] { return std::int64_t{ 1'000'000 }; };
+
+	const HWND hostWindow = ::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+		0, 0, 420, 400, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, hostWindow);
+	auto page = CreateProjectsPage(hostWindow, std::move(options));
+	ASSERT_NE(nullptr, page);
+	const auto nativeHost = reinterpret_cast<workbench::viewcontainer::ViewContainerNativeHandle>(hostWindow);
+	ASSERT_EQ(workbench::viewcontainer::EViewContainerPageReparentStatus::Reparented,
+		page->Reparent(nativeHost));
+	const workbench::viewcontainer::ViewContainerPageHost host{
+		"workbench.parts.sidebar", workbench::layout::EViewContainerLocation::Sidebar, nativeHost };
+	ASSERT_EQ(workbench::viewcontainer::EViewContainerPageAttachStatus::Attached,
+		page->Attach(host));
+	auto* nativePage = dynamic_cast<workbench::viewcontainer::IViewContainerPageProjection*>(page.get());
+	ASSERT_NE(nullptr, nativePage);
+	const RECT bounds{ 0, 0, 420, 400 };
+	nativePage->LayoutProjection(bounds, bounds, 96);
+	nativePage->SetProjectionVisible(true);
+	nativePage->ActivateProjection();
+
+	const HWND pageWindow = ::FindWindowExW(hostWindow, nullptr, L"SakuraProjectsPage", nullptr);
+	ASSERT_NE(nullptr, pageWindow);
+	const HWND list = ::FindWindowExW(pageWindow, nullptr, L"LISTBOX", nullptr);
+	ASSERT_NE(nullptr, list);
+	const auto contains = [](const std::vector<std::wstring>& rows, const std::wstring_view text) {
+		return std::ranges::find(rows, text) != rows.end();
+	};
+
+	// Activation starts discovery off the UI thread and shows it is loading.
+	EXPECT_TRUE(contains(ListBoxRows(list), L"Sessions, Loading..."));
+	const auto isCurrentWorktreeRow = [](const std::wstring& row) { return row.starts_with(L"main, "); };
+	std::vector<std::wstring> rows;
+	for (int attempt = 0; attempt < 400; ++attempt) {
+		(void)::SendMessageW(pageWindow, WM_TIMER, 0x7072, 0);
+		rows = ListBoxRows(list);
+		if (runner->Active() == 0 && std::ranges::any_of(rows, isCurrentWorktreeRow)) break;
+		std::this_thread::sleep_for(5ms);
+	}
+	ASSERT_TRUE(std::ranges::any_of(rows, isCurrentWorktreeRow));
+	// Git discovery finishing does not finish session discovery.
+	EXPECT_TRUE(contains(rows, L"Sessions, Loading..."));
+
+	const std::wstring codexRow = L"Add a sessions node, Codex, 2m";
+	const std::wstring claudeRow = L"Fix login bug, Claude Code, 2h";
+	ASSERT_NE(FALSE, ::SetEvent(release));
+	for (int attempt = 0; attempt < 400; ++attempt) {
+		(void)::SendMessageW(pageWindow, WM_TIMER, 0x7073, 0);
+		rows = ListBoxRows(list);
+		if (contains(rows, claudeRow)) break;
+		std::this_thread::sleep_for(5ms);
+	}
+	{
+		std::lock_guard lock(probe->mutex);
+		ASSERT_EQ(1U, probe->folders.size());
+		EXPECT_TRUE(IsSameAgentSessionFolder(roots.current.wstring(), probe->folders.front()));
+		EXPECT_NE(::GetCurrentThreadId(), probe->threads.front());
+	}
+	// Order: current worktree, the group, its sessions newest first, then the
+	// next Project.
+	const auto worktreeRow = std::ranges::find_if(rows, isCurrentWorktreeRow);
+	ASSERT_NE(rows.end(), worktreeRow);
+	ASSERT_LT(static_cast<std::size_t>(worktreeRow - rows.begin()) + 4U, rows.size());
+	EXPECT_EQ(L"Sessions, 2 sessions", *(worktreeRow + 1));
+	EXPECT_EQ(codexRow, *(worktreeRow + 2));
+	EXPECT_EQ(claudeRow, *(worktreeRow + 3));
+	EXPECT_TRUE((worktreeRow + 4)->starts_with(L"Other, "));
+	const auto toggleIndex = static_cast<int>(worktreeRow - rows.begin()) + 1;
+	const auto claudeIndex = toggleIndex + 2;
+
+	// Hover names the provider, the id, and how to resume.
+	const HWND tooltip = FindListTooltip(list);
+	ASSERT_NE(nullptr, tooltip);
+	RECT item{};
+	ASSERT_NE(LB_ERR, ::SendMessageW(list, LB_GETITEMRECT, static_cast<WPARAM>(claudeIndex),
+		reinterpret_cast<LPARAM>(&item)));
+	(void)::SendMessageW(list, WM_MOUSEMOVE, 0,
+		MAKELPARAM((item.left + item.right) / 2, (item.top + item.bottom) / 2));
+	EXPECT_EQ(L"Fix login bug\nClaude Code - " + claudeId + L"\nDouble-click to resume in a new terminal",
+		ListTooltipText(tooltip, list));
+
+	// Double-click resumes the session in its own folder.
+	ASSERT_NE(LB_ERR, ::SendMessageW(list, LB_SETCURSEL, claudeIndex, 0));
+	(void)::SendMessageW(pageWindow, WM_COMMAND, MAKEWPARAM(::GetDlgCtrlID(list), LBN_DBLCLK),
+		reinterpret_cast<LPARAM>(list));
+	ASSERT_EQ(1U, resumed.size());
+	EXPECT_EQ(available[1], resumed[0].first);
+	EXPECT_TRUE(IsSameAgentSessionFolder(roots.current.wstring(), resumed[0].second));
+
+	// Enter on the group collapses it and keeps it selected; Enter again expands.
+	MSG enter{};
+	enter.hwnd = list;
+	enter.message = WM_KEYDOWN;
+	enter.wParam = VK_RETURN;
+	ASSERT_NE(LB_ERR, ::SendMessageW(list, LB_SETCURSEL, toggleIndex, 0));
+	EXPECT_TRUE(nativePage->PreTranslateProjection(enter));
+	rows = ListBoxRows(list);
+	EXPECT_FALSE(contains(rows, codexRow));
+	EXPECT_TRUE(contains(rows, L"Sessions, 2 sessions"));
+	EXPECT_EQ(toggleIndex, ::SendMessageW(list, LB_GETCURSEL, 0, 0));
+	EXPECT_TRUE(nativePage->PreTranslateProjection(enter));
+	EXPECT_TRUE(contains(ListBoxRows(list), codexRow));
+	EXPECT_EQ(1U, resumed.size());
+
+	// F5 rediscovers; the accepted sessions stay on screen while it runs, and
+	// its result replaces them.
+	MSG refresh = enter;
+	refresh.wParam = VK_F5;
+	EXPECT_TRUE(nativePage->PreTranslateProjection(refresh));
+	EXPECT_TRUE(contains(ListBoxRows(list), codexRow));
+	for (int attempt = 0; attempt < 400; ++attempt) {
+		(void)::SendMessageW(pageWindow, WM_TIMER, 0x7072, 0);
+		(void)::SendMessageW(pageWindow, WM_TIMER, 0x7073, 0);
+		rows = ListBoxRows(list);
+		if (!contains(rows, codexRow) && runner->Active() == 0) break;
+		std::this_thread::sleep_for(5ms);
+	}
+	EXPECT_FALSE(contains(rows, codexRow));
+	EXPECT_TRUE(contains(rows, claudeRow));
+	{
+		std::lock_guard lock(probe->mutex);
+		EXPECT_EQ(2U, probe->folders.size());
+	}
+
+	// Close cancels an in-flight discovery and waits for it.
+	ASSERT_NE(FALSE, ::ResetEvent(release));
+	EXPECT_TRUE(nativePage->PreTranslateProjection(refresh));
+	for (int attempt = 0; attempt < 400; ++attempt) {
+		{
+			std::lock_guard lock(probe->mutex);
+			if (probe->folders.size() == 3U) break;
+		}
+		std::this_thread::sleep_for(5ms);
+	}
+	nativePage->DeactivateProjection();
+	EXPECT_EQ(workbench::viewcontainer::EViewContainerPageCloseStatus::Closed, page->Close());
+	EXPECT_EQ(1, probe->stopped.load());
+	{
+		std::lock_guard lock(probe->mutex);
+		EXPECT_EQ(3U, probe->folders.size());
+	}
+	EXPECT_EQ(1U, resumed.size());
+	EXPECT_EQ(0, runner->Active());
+	page.reset();
+	::DestroyWindow(hostWindow);
+	::CloseHandle(release);
 }
 
 TEST(ControlPlatformProjectCatalogStore, UsesDedicatedProfileUserAddress)

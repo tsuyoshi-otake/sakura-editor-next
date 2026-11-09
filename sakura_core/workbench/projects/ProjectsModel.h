@@ -9,6 +9,7 @@
 
 #include "config/WorkspaceContextTypes.h"
 #include "workbench/agent/AgentWorkspacesModel.h"
+#include "workbench/projects/AgentSessionHistory.h"
 #include "workbench/projects/ProjectCatalogService.h"
 
 #include <cstddef>
@@ -43,6 +44,12 @@ struct ProjectsTexts final {
 	std::wstring branchesFormat{ L"{0} branches" };
 	std::wstring hideLinkedWorktrees{ L"Hide linked worktrees" };
 	std::wstring showLinkedWorktrees{ L"Show linked worktrees" };
+	std::wstring sessions{ L"Sessions" };
+	std::wstring loadingSessions{ L"Loading..." };
+	std::wstring sessionsCountFormat{ L"{0} sessions" };
+	std::wstring untitledSession{ L"Untitled session" };
+	std::wstring resumeSessionHint{ L"Double-click to resume in a new terminal" };
+	AgentSessionAgeTexts sessionAge;
 };
 
 enum class EProjectsRowKind : std::uint8_t {
@@ -51,6 +58,8 @@ enum class EProjectsRowKind : std::uint8_t {
 	WorktreesToggle,
 	Worktree,
 	Agent,
+	SessionsToggle,
+	Session,
 };
 
 enum class EProjectBranchSummaryStatus : std::uint8_t {
@@ -115,17 +124,35 @@ struct ProjectsRow final {
 	std::size_t projectIndex{};
 	std::optional<std::size_t> worktreeIndex;
 	std::optional<std::size_t> agentIndex;
+	std::optional<std::size_t> sessionIndex;
 	std::wstring label;
 	std::wstring description;
 	std::wstring trailing;
 	std::wstring tooltip;	//! hover text; empty means the row shows no tooltip
 	std::size_t hiddenWorktreeCount{};
+	std::size_t sessionCount{};	//! SessionsToggle only: sessions in the group
 	bool currentProject = false;
 	bool primaryWorktree = false;
 	bool expanded = false;
 	bool enabled = true;
 
 	[[nodiscard]] bool operator==(const ProjectsRow&) const noexcept = default;
+};
+
+//! #406 session history for the current Project. Loading shows the group row
+//! with a loading marker; Ready with no sessions, and Unavailable, show none.
+enum class EProjectSessionsState : std::uint8_t {
+	Unavailable,
+	Loading,
+	Ready,
+};
+
+struct ProjectSessionsInput final {
+	EProjectSessionsState state{ EProjectSessionsState::Unavailable };
+	std::span<const AgentSessionRecord> sessions;
+	bool expanded = true;
+	std::int64_t nowUnixSeconds{};	//! for the relative age column
+	std::wstring_view preferredIdentity;	//! AgentSessionIdentity of the row to select
 };
 
 struct ProjectsProjection final {
@@ -146,7 +173,8 @@ struct ProjectsProjection final {
 	std::wstring_view preferredWorktreeIdentity = {},
 	const ProjectsTexts& texts = {},
 	std::span<const ProjectAgentEntry> agents = {},
-	std::wstring_view preferredAgentIdentity = {});
+	std::wstring_view preferredAgentIdentity = {},
+	const ProjectSessionsInput& sessions = {});
 
 //! Aggregates completed repository observations without inventing a branch for
 //! failed or truncated inputs.  A mixed result counts distinct branch labels.

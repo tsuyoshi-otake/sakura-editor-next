@@ -189,6 +189,66 @@ and lifecycle rules as the rest of the native workbench.
   text follows the hovered row's painted rectangle. The accessible label stays
   the visible text. The session-title rules live in
   [`../terminal/CLAUDE.md`](../terminal/CLAUDE.md).
+- **Agent session history (#406, fork extension).** Under the current Project,
+  after its Agent rows, a collapsible `Sessions` group lists the folder's
+  resumable agent CLI sessions, newest first. Double-click or Enter on a row
+  resumes it. VS Code has no counterpart, so the group is a Sakura row
+  projection inside `sakura.view.projects`, not a View or a Part.
+  - Ownership: `AgentSessionHistory` is the pure contract (records, parsers,
+    resume commands, merge, age text). `AgentSessionDiscovery` is the bounded,
+    read-only disk and process boundary. `ProjectsModel` projects the rows.
+    `CProjectsPage` schedules discovery. `CEditWnd` composes the provider and
+    the resume action. Discovery only reads agent files and never writes them.
+  - Storage formats, verified 2026-11-09 against the installed CLIs:
+
+    | Agent | Location | Session id and title | Resume |
+    |---|---|---|---|
+    | Claude Code | `%CLAUDE_CONFIG_DIR%` or `~\.claude`, then `projects\<slug>\<id>.jsonl`. The slug replaces every non-alphanumeric character with `-`. | id: the file stem. Title, first match wins: latest `custom-title`, latest `ai-title`, latest `summary`, first real user prompt. An all-`isSidechain` transcript is a sub-agent and is skipped. | `claude --resume <id>` |
+    | Codex | `%CODEX_HOME%` or `~\.codex`, then `sessions\YYYY\MM\DD\rollout-*-<id>.jsonl`. `session_index.jsonl` maps id to `thread_name`. | The first line must be `session_meta` for the folder. A `thread_source` other than `user`, or a `source.subagent`, is a sub-agent and is rejected. | `codex resume <id>` |
+    | Pi | `%PI_CODING_AGENT_DIR%`, `%TAU_CODING_AGENT_DIR%`, or `~\.pi\agent`, then `sessions\--<cwd, with \ / : as ->--\*.jsonl`. | The `session` header gives the id and cwd. Title: the latest `session_info.name`; an empty name clears it and the first user prompt is used. | `pi --session <id>` |
+    | Devin | `devin list --format json`, run in the folder. | `id`, `title`, `working_directory`, and `last_activity_at`, which is a string of unix seconds. | `devin -r <id>` |
+
+  - Overrides: an override variable that is set but holds a relative path
+    disables its provider. It is never resolved against the editor's CWD.
+  - Not supported, on purpose:
+    - Gemini CLI resumes only by list index or file, not by a stable id.
+    - The OpenCode schema has not been verified.
+    - Copilot is only VS Code's shim.
+    - Command Code is not installed here.
+
+    Add one of these only after its format and resume command have been
+    verified.
+  - Bounds: 20 sessions per provider and 20 in total. Large Claude Code and Pi
+    files are read through a 256 KiB head and a 256 KiB tail; Codex reads a
+    64 KiB head. At most 256 file reads per provider and 20000 directory
+    entries are visited. The Codex index is capped at 4 MiB and keeps its tail.
+    Codex rollouts named in the index are read first, because sub-agent
+    rollouts outnumber them. Reparse points are skipped.
+  - Devin trust: `devin.exe` is resolved through PATH, never through the CWD,
+    and its signature is not checked, unlike `gh.exe`. It runs through
+    `RunBoundedProcess` with a 5 s timeout, a 1 MiB stdout cap, a 64 KiB
+    stderr cap, and the page's stop event.
+  - Ids: every id must match `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`, so a resume
+    command never needs shell quoting.
+  - Discovery runs single-flight on a worker thread. The page polls it every
+    50 ms with timer `0x7073`.
+    - It reruns on Refresh (activation or F5) and when the set of agent
+      identities changes. A title change alone does not rerun it.
+    - While a rerun for the same folder is loading, the last accepted list
+      stays visible. A folder change cancels the running job and clears the
+      list.
+    - Close signals the stop event and waits for the worker.
+  - Resume works like VS Code's `createTerminal({cwd}) + sendText(command,
+    true)`:
+    1. `CTerminalTool::AddTerminalWithInput` creates the terminal in the
+       session's folder and queues the command followed by CR.
+    2. The Terminal view is revealed. Creating the terminal first means the
+       reveal does not start a second, default terminal.
+    3. The new terminal is selected.
+  - Tests: `AgentSessionHistoryTest.cpp` covers the parsers, the resume
+    commands, and discovery against temporary agent homes. `ProjectsTest.cpp`
+    covers the rows, the page's worker scheduling and cancellation, and
+    resume from a row.
 - Folder Projects expose their branch or detached state before activation.
   Multi-root workspace Projects inspect the workspace document without mutating
   `WorkspaceContext`, then show a common branch, bounded mixed-branch summary,

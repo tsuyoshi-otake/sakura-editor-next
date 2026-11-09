@@ -632,6 +632,8 @@
 	<ClInclude Include="..\sakura_core\workbench\projects\ProjectCatalogService.h" />
 	<ClInclude Include="..\sakura_core\workbench\projects\ProjectsModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\projects\CProjectsPage.h" />
+	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionHistory.h" />
+	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionDiscovery.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkspaceContext.h" />
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchRuntime.h" />
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchTool.h" />
@@ -1390,6 +1392,8 @@
 	<ClCompile Include="..\sakura_core\workbench\projects\ProjectCatalogService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\projects\ProjectsModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\projects\CProjectsPage.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionHistory.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionDiscovery.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkspaceContext.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchContextKeyService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchCommandRegistry.cpp" />

@@ -127,6 +127,10 @@ std::wstring ProjectsAccessibleLabel(const ProjectsRow& row, const ProjectsTexts
 	if (row.kind == EProjectsRowKind::WorktreesToggle) {
 		result += L", " + FormatCount(texts.linkedWorktreesFormat, row.hiddenWorktreeCount);
 	}
+	if (row.kind == EProjectsRowKind::SessionsToggle && row.sessionCount > 0) {
+		// The trailing count is a bare number; say what it counts.
+		result = row.label + L", " + FormatCount(texts.sessionsCountFormat, row.sessionCount);
+	}
 	if (row.primaryWorktree) result += L", " + std::wstring(texts.primary);
 	if (row.kind == EProjectsRowKind::CurrentWorktree) result += L", " + std::wstring(texts.thisWindow);
 	if (!row.enabled) result += L", " + std::wstring(texts.unavailable);
@@ -256,7 +260,8 @@ ProjectsProjection ProjectProjects(
 	const std::wstring_view preferredWorktreeIdentity,
 	const ProjectsTexts& texts,
 	const std::span<const ProjectAgentEntry> agents,
-	const std::wstring_view preferredAgentIdentity)
+	const std::wstring_view preferredAgentIdentity,
+	const ProjectSessionsInput& sessions)
 {
 	ProjectsProjection result;
 	for (std::size_t index = 0; index < projects.size(); ++index) {
@@ -266,7 +271,7 @@ ProjectsProjection ProjectProjects(
 		}
 	}
 	result.rows.reserve(projects.size() + (worktrees ? worktrees->rows.size() + 1U : 0U)
-		+ (result.currentProjectIndex ? agents.size() : 0U));
+		+ (result.currentProjectIndex ? agents.size() + sessions.sessions.size() + 1U : 0U));
 	for (std::size_t projectIndex = 0; projectIndex < projects.size(); ++projectIndex) {
 		const bool current = result.currentProjectIndex
 			&& *result.currentProjectIndex == projectIndex;
@@ -316,6 +321,41 @@ ProjectsProjection ProjectProjects(
 			});
 		}
 
+		// #406: the folder's agent session history, newest first.
+		if (sessions.state == EProjectSessionsState::Loading
+			|| (sessions.state == EProjectSessionsState::Ready && !sessions.sessions.empty())) {
+			const bool loading = sessions.state == EProjectSessionsState::Loading;
+			result.rows.push_back({
+				.kind = EProjectsRowKind::SessionsToggle,
+				.projectIndex = projectIndex,
+				.label = texts.sessions,
+				.trailing = loading && sessions.sessions.empty()
+					? texts.loadingSessions : std::to_wstring(sessions.sessions.size()),
+				.sessionCount = sessions.sessions.size(),
+				.currentProject = true,
+				.expanded = sessions.expanded,
+			});
+			if (sessions.expanded) {
+				for (std::size_t sessionIndex = 0; sessionIndex < sessions.sessions.size(); ++sessionIndex) {
+					const auto& session = sessions.sessions[sessionIndex];
+					const auto provider = std::wstring(AgentSessionProviderDisplayName(session.provider));
+					const auto title = session.title.empty() ? texts.untitledSession : session.title;
+					result.rows.push_back({
+						.kind = EProjectsRowKind::Session,
+						.projectIndex = projectIndex,
+						.sessionIndex = sessionIndex,
+						.label = title,
+						.description = provider,
+						.trailing = FormatAgentSessionAge(session.lastActivityUnixSeconds,
+							sessions.nowUnixSeconds, texts.sessionAge),
+						.tooltip = title + L"\n" + provider + L" - " + session.id
+							+ L"\n" + texts.resumeSessionHint,
+						.currentProject = true,
+					});
+				}
+			}
+		}
+
 		if (!currentWorktreeEmitted) continue;
 		const auto hiddenCount = worktrees->rows.size() - 1U;
 		if (hiddenCount == 0) continue;
@@ -360,6 +400,13 @@ ProjectsProjection ProjectProjects(
 				&& *row.agentIndex < agents.size()
 				&& !preferredAgentIdentity.empty()
 				&& agents[*row.agentIndex].identity != preferredAgentIdentity) {
+				continue;
+			}
+			if (row.kind == EProjectsRowKind::Session && row.sessionIndex
+				&& *row.sessionIndex < sessions.sessions.size()
+				&& !sessions.preferredIdentity.empty()
+				&& AgentSessionIdentity(sessions.sessions[*row.sessionIndex])
+					!= sessions.preferredIdentity) {
 				continue;
 			}
 			result.selectedRowIndex = rowIndex;

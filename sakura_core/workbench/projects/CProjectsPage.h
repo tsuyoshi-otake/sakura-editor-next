@@ -63,6 +63,15 @@ using ProjectAgentActivationCallback =
 //! function in Cleanup.
 using ProjectAgentsChangedRegistrar =
 	std::function<void(std::function<void()> listener)>;
+//! #406: called on a page-owned worker thread with the current folder. It
+//! must return promptly once `stop` (a manual-reset event) is signalled and
+//! must not touch window state. nullopt means cancelled or unavailable; the
+//! page then keeps the sessions it last accepted for the same folder.
+using ProjectAgentSessionsProvider =
+	std::function<std::optional<std::vector<AgentSessionRecord>>(std::wstring folder, HANDLE stop)>;
+using ProjectAgentSessionResumeCallback =
+	std::function<EProjectsActivationStatus(const AgentSessionRecord& session, std::wstring_view folder)>;
+using ProjectsClock = std::function<std::int64_t()>;
 
 struct ProjectsPageOptions final {
 	ProjectsSnapshotProvider projects;
@@ -81,6 +90,11 @@ struct ProjectsPageOptions final {
 	ProjectAgentsProvider agents;
 	ProjectAgentActivationCallback activateAgent;
 	ProjectAgentsChangedRegistrar agentsChanged;
+	//! Optional #406 seams. Absent agentSessions = no Sessions group.
+	ProjectAgentSessionsProvider agentSessions;
+	ProjectAgentSessionResumeCallback resumeAgentSession;
+	//! Unix seconds for the age column; absent = the system clock.
+	ProjectsClock nowUnixSeconds;
 };
 
 [[nodiscard]] std::unique_ptr<viewcontainer::IViewContainerPage>

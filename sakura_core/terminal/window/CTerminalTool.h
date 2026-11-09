@@ -156,6 +156,13 @@ public:
 	//! moving keyboard focus. Used when a persisted-visible panel is restored.
 	[[nodiscard]] bool EnsureSessionStarted();
 	[[nodiscard]] std::optional<std::uint64_t> AddTerminal();
+	//! VS Code's createTerminal({ cwd }) + sendText: opens a new terminal group
+	//! started in `workingDirectory` (the default directory when empty) and
+	//! queues `input` to its shell. nullopt when no terminal was created or its
+	//! session did not accept the input; like AddTerminal, a tab whose session
+	//! failed to start stays visible so the failure can be seen and restarted.
+	[[nodiscard]] std::optional<std::uint64_t> AddTerminalWithInput(
+		std::wstring_view workingDirectory, std::string_view input );
 	void RedetectPowerShell();
 	//! Selects the multiplexer keybinding preset without persisting it. Used when
 	//! the window applies the effective setting.

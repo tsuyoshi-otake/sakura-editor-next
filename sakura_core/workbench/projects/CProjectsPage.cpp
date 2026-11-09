@@ -34,6 +34,10 @@ constexpr wchar_t kWindowClass[] = L"SakuraProjectsPage";
 constexpr UINT_PTR kRefreshTimer = 0x7072;
 constexpr UINT kRefreshPollMilliseconds = 50;
 constexpr UINT kAgentsChangedMessage = WM_APP + 0x72;
+//! Polls the one in-flight session-history discovery (#406); runs only while
+//! a discovery is in flight, like kRefreshTimer for Git.
+constexpr UINT_PTR kSessionsTimer = 0x7073;
+constexpr UINT kSessionsPollMilliseconds = 50;
 constexpr int kRowHeightDip = 24;
 constexpr int kRowInsetDip = 10;
 constexpr int kChildIndentDip = 18;
@@ -71,6 +75,15 @@ ProjectsTexts LoadProjectsTexts()
 	load(texts.branchesFormat, STR_WORKBENCH_PROJECTS_BRANCHES_COUNT);
 	load(texts.hideLinkedWorktrees, STR_WORKBENCH_PROJECTS_HIDE_LINKED);
 	load(texts.showLinkedWorktrees, STR_WORKBENCH_PROJECTS_SHOW_LINKED);
+	load(texts.sessions, STR_WORKBENCH_PROJECTS_SESSIONS);
+	load(texts.loadingSessions, STR_WORKBENCH_PROJECTS_SESSIONS_LOADING);
+	load(texts.sessionsCountFormat, STR_WORKBENCH_PROJECTS_SESSIONS_COUNT);
+	load(texts.untitledSession, STR_WORKBENCH_PROJECTS_SESSION_UNTITLED);
+	load(texts.resumeSessionHint, STR_WORKBENCH_PROJECTS_SESSION_RESUME_HINT);
+	load(texts.sessionAge.now, STR_WORKBENCH_PROJECTS_SESSION_AGE_NOW);
+	load(texts.sessionAge.minutesFormat, STR_WORKBENCH_PROJECTS_SESSION_AGE_MINUTES);
+	load(texts.sessionAge.hoursFormat, STR_WORKBENCH_PROJECTS_SESSION_AGE_HOURS);
+	load(texts.sessionAge.daysFormat, STR_WORKBENCH_PROJECTS_SESSION_AGE_DAYS);
 	return texts;
 }
 
@@ -442,6 +455,7 @@ public:
 		}
 		case WM_TIMER:
 			if (wParam == kRefreshTimer) { self->PollRefresh(); return 0; }
+			if (wParam == kSessionsTimer) { self->PollSessionDiscovery(); return 0; }
 			break;
 		case kAgentsChangedMessage:
 			self->OnAgentsChangedMessage();
@@ -608,10 +622,128 @@ private:
 			RebuildProjection();
 			m_restartPending = true;
 			(void)m_discovery->CancelCurrent();
+			BeginSessionDiscovery();
 			return;
 		}
 		ReloadAgents(true);
 		BeginBranchRefresh();
+		BeginSessionDiscovery();
+	}
+
+	[[nodiscard]] std::int64_t NowUnixSeconds() const noexcept
+	{
+		if (m_options.nowUnixSeconds) {
+			try { return m_options.nowUnixSeconds(); }
+			catch (...) {}
+		}
+		return std::chrono::duration_cast<std::chrono::seconds>(
+			std::chrono::system_clock::now().time_since_epoch()).count();
+	}
+
+	//! Single-flight: while one discovery runs, a request only marks one rerun
+	//! (and cancels the running one when the folder changed). The sessions
+	//! last accepted for the same folder stay on screen while it reloads.
+	void BeginSessionDiscovery() noexcept
+	{
+		if (!m_created || !m_options.agentSessions) return;
+		std::wstring folder;
+		try { folder = m_options.workspaceRoot(); }
+		catch (...) { folder.clear(); }
+		if (m_sessionDiscovery.valid()) {
+			m_sessionRerunPending = true;
+			if (!IsSameAgentSessionFolder(folder, m_sessionDiscoveryFolder) && m_sessionStop != nullptr) {
+				(void)::SetEvent(m_sessionStop);
+			}
+			return;
+		}
+		if (folder.empty()) {
+			m_sessions.clear();
+			m_sessionsFolder.clear();
+			m_sessionsState = EProjectSessionsState::Unavailable;
+			RebuildProjection();
+			return;
+		}
+		try {
+			if (!IsSameAgentSessionFolder(folder, m_sessionsFolder)) {
+				m_sessions.clear();
+				m_sessionsFolder = folder;
+			}
+			m_sessionStop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+			if (m_sessionStop == nullptr) throw std::bad_alloc();
+			m_sessionDiscoveryFolder = folder;
+			m_sessionDiscovery = std::async(std::launch::async,
+				[provider = m_options.agentSessions, folder, stop = m_sessionStop]() {
+					return provider(folder, stop);
+				});
+		} catch (...) {
+			ReleaseSessionDiscovery();
+			m_sessionsState = EProjectSessionsState::Unavailable;
+			RebuildProjection();
+			return;
+		}
+		if (m_window == nullptr
+			|| ::SetTimer(m_window, kSessionsTimer, kSessionsPollMilliseconds, nullptr) == 0) {
+			// Nothing could observe the completion: cancel and fail closed.
+			CancelSessionDiscovery();
+			m_sessionsState = EProjectSessionsState::Unavailable;
+			RebuildProjection();
+			return;
+		}
+		m_sessionsState = EProjectSessionsState::Loading;
+		RebuildProjection();
+	}
+
+	void PollSessionDiscovery() noexcept
+	{
+		if (!m_sessionDiscovery.valid()) {
+			if (m_window != nullptr) (void)::KillTimer(m_window, kSessionsTimer);
+			return;
+		}
+		if (m_sessionDiscovery.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) return;
+		std::optional<std::vector<AgentSessionRecord>> result;
+		try { result = m_sessionDiscovery.get(); }
+		catch (...) { result.reset(); }
+		const auto folder = m_sessionDiscoveryFolder;
+		ReleaseSessionDiscovery();
+		CaptureSelection();
+		if (IsSameAgentSessionFolder(folder, m_sessionsFolder)) {
+			if (result) {
+				m_sessions = std::move(*result);
+				m_sessionsState = EProjectSessionsState::Ready;
+			} else {
+				// Cancelled or failed: keep the last accepted list, if any.
+				m_sessionsState = m_sessions.empty()
+					? EProjectSessionsState::Unavailable : EProjectSessionsState::Ready;
+			}
+		}
+		RebuildProjection();
+		if (m_sessionRerunPending) {
+			m_sessionRerunPending = false;
+			BeginSessionDiscovery();
+		}
+	}
+
+	//! Closes the finished job's handles; the future must be ready or empty.
+	void ReleaseSessionDiscovery() noexcept
+	{
+		if (m_window != nullptr) (void)::KillTimer(m_window, kSessionsTimer);
+		m_sessionDiscovery = {};
+		if (m_sessionStop != nullptr) ::CloseHandle(m_sessionStop);
+		m_sessionStop = nullptr;
+		m_sessionDiscoveryFolder.clear();
+	}
+
+	//! Signals the in-flight job and waits for it. The provider contract bounds
+	//! that wait: it returns once `stop` is set.
+	void CancelSessionDiscovery() noexcept
+	{
+		m_sessionRerunPending = false;
+		if (m_sessionDiscovery.valid()) {
+			if (m_sessionStop != nullptr) (void)::SetEvent(m_sessionStop);
+			try { m_sessionDiscovery.wait(); }
+			catch (...) {}
+		}
+		ReleaseSessionDiscovery();
 	}
 
 	//! Replaces m_agents. Callers that keep the current selection capture it
@@ -847,10 +979,27 @@ private:
 		m_agentsChangedPending = false;
 		if (!m_created) return;
 		CaptureSelection();
+		const auto before = AgentIdentities();
 		ReloadAgents(false);
 		// Agent presence changed: reproject rows only; Git discovery state,
 		// the catalog, and the workspace snapshot all stay untouched.
 		RebuildProjection();
+		// An agent that started or exited is the moment its session history
+		// changes; a session-title change alone is not (#406).
+		if (m_active && AgentIdentities() != before) BeginSessionDiscovery();
+	}
+
+	[[nodiscard]] std::vector<std::wstring> AgentIdentities() const
+	{
+		std::vector<std::wstring> identities;
+		try {
+			identities.reserve(m_agents.size());
+			for (const auto& agent : m_agents) identities.push_back(agent.identity);
+			std::ranges::sort(identities);
+		} catch (...) {
+			identities.clear();
+		}
+		return identities;
 	}
 
 	void RebuildProjection() noexcept
@@ -863,10 +1012,17 @@ private:
 				summaries.push_back(found == m_branchCache.end()
 					? SummarizeProjectBranches({}, false, false, m_texts) : found->second.summary);
 			}
+			const ProjectSessionsInput sessions{
+				.state = m_sessionsState,
+				.sessions = m_sessions,
+				.expanded = m_sessionsExpanded,
+				.nowUnixSeconds = NowUnixSeconds(),
+				.preferredIdentity = m_selectedSessionIdentity,
+			};
 			const auto projection = ProjectProjects(m_projects, m_workspace,
 				m_worktrees ? &*m_worktrees : nullptr, m_worktreesExpanded,
 				summaries, m_selectedKind, m_selectedWorktreeIdentity, m_texts,
-				m_agents, m_selectedAgentIdentity);
+				m_agents, m_selectedAgentIdentity, sessions);
 			m_rows = projection.rows;
 			m_selectedIndex = projection.selectedRowIndex;
 		} catch (...) {
@@ -917,16 +1073,25 @@ private:
 		} else {
 			m_selectedAgentIdentity.clear();
 		}
+		if (row.kind == EProjectsRowKind::Session && row.sessionIndex
+			&& *row.sessionIndex < m_sessions.size()) {
+			try { m_selectedSessionIdentity = AgentSessionIdentity(m_sessions[*row.sessionIndex]); }
+			catch (...) { m_selectedSessionIdentity.clear(); }
+		} else {
+			m_selectedSessionIdentity.clear();
+		}
 	}
 
 	void SetSelectedToggle(const bool expanded) noexcept
 	{
 		CaptureSelection();
-		if (!m_selectedIndex || *m_selectedIndex >= m_rows.size()
-			|| m_rows[*m_selectedIndex].kind != EProjectsRowKind::WorktreesToggle
-			|| m_worktreesExpanded == expanded) return;
-		m_worktreesExpanded = expanded;
-		m_selectedKind = EProjectsRowKind::WorktreesToggle;
+		if (!m_selectedIndex || *m_selectedIndex >= m_rows.size()) return;
+		const auto kind = m_rows[*m_selectedIndex].kind;
+		bool* state = kind == EProjectsRowKind::WorktreesToggle ? &m_worktreesExpanded
+			: kind == EProjectsRowKind::SessionsToggle ? &m_sessionsExpanded : nullptr;
+		if (state == nullptr || *state == expanded) return;
+		*state = expanded;
+		m_selectedKind = kind;
 		RebuildProjection();
 	}
 
@@ -941,6 +1106,12 @@ private:
 			RebuildProjection();
 			return;
 		}
+		if (row.kind == EProjectsRowKind::SessionsToggle) {
+			m_sessionsExpanded = !m_sessionsExpanded;
+			m_selectedKind = EProjectsRowKind::SessionsToggle;
+			RebuildProjection();
+			return;
+		}
 		if (!row.enabled) { (void)::MessageBeep(MB_ICONWARNING); return; }
 		EProjectsActivationStatus status = EProjectsActivationStatus::Failed;
 		try {
@@ -949,6 +1120,9 @@ private:
 			} else if (row.kind == EProjectsRowKind::Agent && row.agentIndex
 				&& *row.agentIndex < m_agents.size() && m_options.activateAgent) {
 				status = m_options.activateAgent(m_agents[*row.agentIndex].terminalId);
+			} else if (row.kind == EProjectsRowKind::Session && row.sessionIndex
+				&& *row.sessionIndex < m_sessions.size() && m_options.resumeAgentSession) {
+				status = m_options.resumeAgentSession(m_sessions[*row.sessionIndex], m_sessionsFolder);
 			} else if (row.worktreeIndex && m_worktrees
 				&& *row.worktreeIndex < m_worktrees->rows.size()) {
 				const auto& worktree = m_worktrees->rows[*row.worktreeIndex];
@@ -1109,27 +1283,37 @@ private:
 		labelRect.left += inset;
 		labelRect.right -= inset;
 		std::wstring trailing;
+		// Agent rows and the Sessions group nest under the CurrentWorktree row
+		// when that row exists for the same Project, otherwise under the
+		// Project row; session rows nest one level below their group.
+		const bool underWorktree = std::ranges::any_of(m_rows, [&row](const auto& candidate) {
+			return candidate.kind == EProjectsRowKind::CurrentWorktree
+				&& candidate.projectIndex == row.projectIndex;
+		});
+		const int folderChildIndent = childIndent * (underWorktree ? 2 : 1);
 		if (row.kind == EProjectsRowKind::Project) {
 			trailing = row.trailing;
-		} else if (row.kind == EProjectsRowKind::WorktreesToggle) {
-			trailing = std::to_wstring(row.hiddenWorktreeCount);
+		} else if (row.kind == EProjectsRowKind::WorktreesToggle
+			|| row.kind == EProjectsRowKind::SessionsToggle) {
+			const bool sessions = row.kind == EProjectsRowKind::SessionsToggle;
+			trailing = sessions ? row.trailing : std::to_wstring(row.hiddenWorktreeCount);
+			// The chevron takes the column just before the group label.
+			const int labelIndent = sessions ? folderChildIndent : childIndent;
 			(void)::SetTextColor(item.hDC, secondary);
 			RECT chevron = labelRect;
+			chevron.left += labelIndent - childIndent;
 			chevron.right = chevron.left + childIndent;
 			::DrawTextW(item.hDC, row.expanded ? L"v" : L">", -1, &chevron,
 				DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-			labelRect.left += childIndent;
+			labelRect.left += labelIndent;
+		} else if (row.kind == EProjectsRowKind::Session) {
+			// The agent name and age stay visible in the trailing column; a
+			// long title is the part that gets the ellipsis.
+			trailing = row.description;
+			if (!row.trailing.empty()) trailing += L"  " + row.trailing;
+			labelRect.left += folderChildIndent + childIndent;
 		} else {
-			// An Agent row nests under the CurrentWorktree row when that row
-			// exists for the same Project, otherwise under the Project row.
-			int rowIndent = childIndent;
-			if (row.kind == EProjectsRowKind::Agent
-				&& std::ranges::any_of(m_rows, [&row](const auto& candidate) {
-					return candidate.kind == EProjectsRowKind::CurrentWorktree
-						&& candidate.projectIndex == row.projectIndex;
-				})) {
-				rowIndent += childIndent;
-			}
+			const int rowIndent = row.kind == EProjectsRowKind::Agent ? folderChildIndent : childIndent;
 			labelRect.left += rowIndent;
 			if (row.primaryWorktree) trailing = m_texts.primary;
 			if (row.kind == EProjectsRowKind::CurrentWorktree) {
@@ -1171,7 +1355,9 @@ private:
 		}
 		std::wstring label = row.label;
 		if (row.kind != EProjectsRowKind::Project
-			&& row.kind != EProjectsRowKind::WorktreesToggle && !row.description.empty()) {
+			&& row.kind != EProjectsRowKind::WorktreesToggle
+			&& row.kind != EProjectsRowKind::SessionsToggle
+			&& row.kind != EProjectsRowKind::Session && !row.description.empty()) {
 			label += L"  " + row.description;
 		}
 		(void)::SetTextColor(item.hDC, primary);
@@ -1195,6 +1381,10 @@ private:
 			try { m_options.agentsChanged({}); } catch (...) {}
 		}
 		if (m_window != nullptr) (void)::KillTimer(m_window, kRefreshTimer);
+		CancelSessionDiscovery();
+		m_sessions.clear();
+		m_sessionsFolder.clear();
+		m_sessionsState = EProjectSessionsState::Unavailable;
 		m_attachedHost.reset();
 		m_nativeParent = 0;
 		if (m_discovery) (void)m_discovery->Stop();
@@ -1240,6 +1430,15 @@ private:
 	std::wstring m_selectedWorktreeIdentity;
 	std::wstring m_selectedAgentIdentity;
 	std::atomic_bool m_agentsChangedPending{ false };
+	std::vector<AgentSessionRecord> m_sessions;
+	std::wstring m_sessionsFolder;	//! the folder m_sessions belongs to
+	EProjectSessionsState m_sessionsState{ EProjectSessionsState::Unavailable };
+	std::wstring m_selectedSessionIdentity;
+	std::future<std::optional<std::vector<AgentSessionRecord>>> m_sessionDiscovery;
+	std::wstring m_sessionDiscoveryFolder;
+	HANDLE m_sessionStop = nullptr;	//! manual-reset event owned with m_sessionDiscovery
+	bool m_sessionRerunPending = false;
+	bool m_sessionsExpanded = true;
 	std::wstring m_currentWorkspaceRoot;
 	std::optional<viewcontainer::ViewContainerPageHost> m_attachedHost;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);

@@ -2157,14 +2157,15 @@ struct CTerminalTool::Impl {
 		return ::DefWindowProcW(window, message, wParam, lParam);
 	}
 
-	std::optional<std::uint64_t> AddTerminal()
+	std::optional<std::uint64_t> AddTerminal( std::wstring_view directory = {} )
 	{
 		// New Terminal creates a separate terminal group.  A group is the unit
 		// shown in the workbench panel; only Split Terminal adds another pane to
 		// the currently active group.  Keeping this distinction also means that
 		// the right-hand terminal list can flatten all groups without making a
 		// newly-created terminal unexpectedly resize the active pane.
-		const auto id = manager->AddTab(CurrentSize(), workingDirectory);
+		const auto id = manager->AddTab(CurrentSize(),
+			directory.empty() ? std::wstring_view(workingDirectory) : directory);
 		if( !id ) return std::nullopt;
 		TerminalPaneGroup groupState;
 		groupState.tabIds.push_back(*id);
@@ -2890,6 +2891,19 @@ bool CTerminalTool::EnsureSessionStarted()
 std::optional<std::uint64_t> CTerminalTool::AddTerminal()
 {
 	return m_impl->closed ? std::nullopt : m_impl->AddTerminal();
+}
+
+std::optional<std::uint64_t> CTerminalTool::AddTerminalWithInput(
+	std::wstring_view workingDirectory, std::string_view input )
+{
+	if( m_impl->closed ) return std::nullopt;
+	const auto id = m_impl->AddTerminal(workingDirectory);
+	if( !id ) return std::nullopt;
+	// The session is Running once AddTab returns a started tab, and ConPTY
+	// keeps typed-ahead input until the shell reads it.
+	const auto bytes = std::span(reinterpret_cast<const std::uint8_t*>(input.data()), input.size());
+	if( m_impl->manager->QueueInput(*id, bytes) != TerminalQueueInputResult::Accepted ) return std::nullopt;
+	return id;
 }
 
 void CTerminalTool::SetShortcutPreset( TerminalShortcutPreset preset )
