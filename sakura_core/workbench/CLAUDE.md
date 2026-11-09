@@ -152,6 +152,26 @@ and lifecycle rules as the rest of the native workbench.
 - A Project is a profile-scoped navigation entry pointing to an existing Folder
   or `.code-workspace` URI. `WorkspaceContext` is still the only active workspace
   authority, and SCM remains the only repository-state authority.
+- **Documented divergence (owner decision, 2026-11-09, #405): a switch started
+  from the Projects view keeps the active Side Bar container.** Activating a
+  Folder, `.code-workspace`, or worktree row in the current window commits the
+  workspace and leaves the Projects view showing. It does not call
+  `RevealExplorerAfterWorkspaceCommit`.
+  - Upstream: VS Code reloads the window to open a folder, and a built
+    product's fresh (non-reload) startup falls back to the default Side Bar
+    container, Explorer (`src/vs/workbench/browser/layout.ts`, "Sidebar View
+    Container To Restore", checked 2026-11-09).
+  - Every other folder-open route keeps that upstream result and reveals
+    Explorer: File > Open Folder, Open Recent, Git clone/init, and the command
+    line (`ApplyFolderWorkspace(root, /*revealExplorer=*/true)`).
+  - Why the Projects view differs: it has no VS Code counterpart, and its
+    switch is in place, with no window reload. Someone moving between Projects
+    is still using this view, and forcing Explorer made them reopen it after
+    every switch.
+  - Verified 2026-11-09 with a real-window probe (throwaway profile, two Folder
+    Projects, double-click on the other row): before, the Projects page was
+    hidden and Explorer shown; after, the workspace switched and the Projects
+    page stayed visible.
 - Git worktree discovery is a bounded, read-only child provider. The current
   Project is scheduled first, then every catalog Project receives one fair
   discovery slot before additional multi-root folders. One single-flight queue

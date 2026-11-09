@@ -214,7 +214,6 @@
         "sakura_core/terminal/session/TerminalSession.cpp": "sha256:73a39ab7e1cb0cf794a1ed071bd9f0f2c55ee03fb6af90ed1ca60aebbaccea38",
         "sakura_core/terminal/session/TerminalSession.h": "sha256:a45b5e51dc4e6714580692bb179924448ca04bcb5997e6c4f189cfa588b2915c",
         "sakura_core/terminal/window/TerminalTabPresentation.cpp": "sha256:e05262b1b26543d071561e2e2de7996d3d63aec3791a925ebf8fb978ce787fe5",
-        "sakura_core/window/CEditWnd.h": "sha256:852acbeb1b4f579563dda046b8cf76fd658614fa2d0f627bb90ab43220fa0599",
         "sakura_core/workbench/projects/CProjectsPage.h": "sha256:0a69592784aad8c0fd454b350b958d9acdac8769966f5c9630dbafb8d9d63f6b",
         "src/test/cpp/tests1/terminal/window/TerminalHeaderLayoutTest.cpp": "sha256:3239d03baed00844c5b4f7ee5fa11bfc4e4b933de3d4a9d31219e3864285243f"
       },
@@ -393,10 +392,6 @@
           "baseline_finding_count": 2
         },
         {
-          "path": "sakura_core/window/CEditWnd.h",
-          "baseline_finding_count": 61
-        },
-        {
           "path": "sakura_core/workbench/projects/CProjectsPage.h",
           "baseline_finding_count": 10
         },
@@ -417,7 +412,6 @@
         "sakura_core/terminal/window/CTerminalTool.h": "sha256:fc40b982a43be1f9806434fddd35003aafaa54386a24a6e6b5d028e93a801ab9",
         "sakura_core/terminal/window/TerminalAgentPresence.cpp": "sha256:7a2ad78c0a77e95bdc0ac028385a0e1904efb70b08028cf9b807733d8be86bae",
         "sakura_core/terminal/window/TerminalAgentPresence.h": "sha256:d44f39ab8ede2907682a78c1b7050c4f526c93388f348c2d348f53d7f5351d49",
-        "sakura_core/window/CEditWnd.cpp": "sha256:0eded2a2d9c9e3bce88d18bb04e3dd7f128581b35840fbf99018e9fed2c7ff84",
         "sakura_core/workbench/projects/CProjectsPage.cpp": "sha256:09fbac4f38fa2a48f6f24cc8e61b0ea6d48fcc2880f68e3baab0bcc462437ef3",
         "sakura_core/workbench/projects/ProjectsModel.h": "sha256:2cc634893ae5c2f058fa8f06cb7bc0c1cc1a5d40adbda391756ef94f5866c3c4",
         "src/test/cpp/tests1/terminal/window/TerminalAgentPresenceTest.cpp": "sha256:bb072a3d9d225a51b9aa639e3dc1549b0bf7af89053b924babf11ecf3fc2a2a6",
@@ -723,10 +717,6 @@
         {
           "path": "sakura_core/terminal/window/CTerminalTool.h",
           "baseline_finding_count": 16
-        },
-        {
-          "path": "sakura_core/window/CEditWnd.cpp",
-          "baseline_finding_count": 277
         },
         {
           "path": "sakura_core/workbench/projects/CProjectsPage.cpp",
@@ -1063,6 +1053,29 @@
         {
           "path": "sakura_core/window/CCustomTitleBar.cpp",
           "baseline_finding_count": 1
+        }
+      ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#405 keeps the active Side Bar container when a Folder, .code-workspace or worktree row is activated from the Projects view: the in-place switch lambdas in CEditWnd pass ApplyFolderWorkspace(root, false) and no longer call RevealExplorerAfterWorkspaceCommit, and the CEditWnd.h comment says so. No new finding is added; CEditWnd.cpp and CEditWnd.h keep their pre-existing ratchet debt, and reducing unrelated debt in the editor window would widen a one-argument behavior fix. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "tracking_issue": 389,
+      "created": "2026-11-09",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/window/CEditWnd.cpp": "sha256:522de87b82034bb50fbd9fe62fe03df972efd1fe297d12504d3c9da20710a809",
+        "sakura_core/window/CEditWnd.h": "sha256:d8714cf874c3b7ff5dcf623c2872095d189956372c1c2d59bf1ddfd000fdda09"
+      },
+      "new_findings": [],
+      "missing_touched_reductions": [
+        {
+          "path": "sakura_core/window/CEditWnd.cpp",
+          "baseline_finding_count": 277
+        },
+        {
+          "path": "sakura_core/window/CEditWnd.h",
+          "baseline_finding_count": 61
         }
       ]
     }

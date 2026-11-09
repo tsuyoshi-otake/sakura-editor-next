@@ -862,7 +862,8 @@ private:
 	void ConfigureCustomFrameActions();
 	[[nodiscard]] bool ExecuteWorkbenchEditorCommand(std::string_view commandId);
 	//! Reveals the Explorer and expands its Files ViewPane after an already
-	//! committed Project/workspace transition. Failure remains advisory.
+	//! committed folder/workspace transition. Failure remains advisory.
+	//! Switches started from the Projects view do not call it (#405).
 	void RevealExplorerAfterWorkspaceCommit();
 	[[nodiscard]] EOpenWorkspaceFolderResult ApplyFolderWorkspace(
 		const std::wstring& absoluteRoot, bool revealExplorer);

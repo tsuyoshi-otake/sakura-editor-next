@@ -3021,8 +3021,11 @@ bool CEditWnd::InitializeWorkbench()
 					// Folder Projects are switched in the existing window.  This keeps
 					// the process-owned workbench (layout, panel state, and extensions)
 					// alive; only the workspace-dependent projections are refreshed.
+					// A switch started from the Projects view keeps the active Side Bar
+					// container instead of revealing Explorer (#405, documented in
+					// workbench/CLAUDE.md "Sakura Projects contribution").
 					if (project.kind == workbench::projects::EProjectKind::Folder) {
-						return ApplyFolderWorkspace(*path.value, true) == EOpenWorkspaceFolderResult::Succeeded
+						return ApplyFolderWorkspace(*path.value, false) == EOpenWorkspaceFolderResult::Succeeded
 							? workbench::projects::EProjectsActivationStatus::FocusedCurrentWindow
 							: workbench::projects::EProjectsActivationStatus::Failed;
 					}
@@ -3073,7 +3076,7 @@ bool CEditWnd::InitializeWorkbench()
 							return workbench::projects::EProjectsActivationStatus::Failed;
 						}
 						ApplySemanticWorkspaceContext();
-						RevealExplorerAfterWorkspaceCommit();
+						// Like the Folder branch, keep the active Side Bar container (#405).
 						if (m_terminalTool != nullptr && terminalPrepared) {
 							if (terminalOutcome == terminal::TerminalWorkspaceSwitchOutcome::Detached) {
 								m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
@@ -3123,7 +3126,8 @@ bool CEditWnd::InitializeWorkbench()
 					if (HasActiveEditorInput() && GetDocument()->m_cDocEditor.IsModified()) {
 						return workbench::projects::EProjectsActivationStatus::Failed;
 					}
-					const auto result = ApplyFolderWorkspace(std::wstring(path), true);
+					// A worktree row is a Projects-view switch too: keep the Side Bar (#405).
+					const auto result = ApplyFolderWorkspace(std::wstring(path), false);
 					return result == EOpenWorkspaceFolderResult::Succeeded
 						? workbench::projects::EProjectsActivationStatus::FocusedCurrentWindow
 						: workbench::projects::EProjectsActivationStatus::Failed;
