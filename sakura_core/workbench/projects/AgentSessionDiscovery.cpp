@@ -167,6 +167,27 @@ std::wstring FileStem(const std::wstring_view name)
 	return std::wstring(dot == std::wstring_view::npos ? name : name.substr(0, dot));
 }
 
+bool IsRequired(const AgentSessionDiscoveryLimits& limits, const EAgentSessionProvider provider,
+	const std::wstring_view id)
+{
+	if (limits.requiredIdentities.empty() || id.empty()) return false;
+	const auto identity = AgentSessionIdentity({ .provider = provider, .id = std::wstring(id) });
+	return std::ranges::find(limits.requiredIdentities, identity) != limits.requiredIdentities.end();
+}
+
+//! Moves the files of required sessions to the front, keeping the order
+//! inside both halves, and returns how many there are.
+template <typename IdOf>
+std::size_t PromoteRequired(std::vector<DirectoryFile>& files, const AgentSessionDiscoveryLimits& limits,
+	const EAgentSessionProvider provider, const IdOf& idOf)
+{
+	if (limits.requiredIdentities.empty()) return 0;
+	const auto firstOther = std::ranges::stable_partition(files, [&](const DirectoryFile& file) {
+		return IsRequired(limits, provider, idOf(file));
+	}).begin();
+	return static_cast<std::size_t>(firstOther - files.begin());
+}
+
 void DiscoverClaudeCode(const std::wstring_view folder, const AgentSessionDiscoveryRoots& roots,
 	const AgentSessionDiscoveryLimits& limits, const HANDLE stop, std::vector<AgentSessionRecord>& output)
 {
@@ -176,11 +197,15 @@ void DiscoverClaudeCode(const std::wstring_view folder, const AgentSessionDiscov
 	auto files = ListDirectory(directory, false, budget);
 	std::erase_if(files, [](const auto& file) { return !EndsWithInsensitive(file.name, L".jsonl"); });
 	SortNewestFirst(files);
+	const auto required = PromoteRequired(files, limits, EAgentSessionProvider::ClaudeCode,
+		[](const DirectoryFile& file) { return FileStem(file.name); });
 	std::size_t accepted = 0;
 	std::size_t reads = 0;
-	for (const auto& file : files) {
-		if (accepted == limits.maximumSessionsPerProvider || reads == limits.maximumFileReadsPerProvider
-			|| IsStopped(stop)) break;
+	for (std::size_t index = 0; index < files.size(); ++index) {
+		const auto& file = files[index];
+		const bool counted = index >= required;
+		if ((counted && accepted == limits.maximumSessionsPerProvider)
+			|| reads == limits.maximumFileReadsPerProvider || IsStopped(stop)) break;
 		const auto stem = FileStem(file.name);
 		if (!IsValidAgentSessionId(stem)) continue;
 		++reads;
@@ -189,7 +214,7 @@ void DiscoverClaudeCode(const std::wstring_view folder, const AgentSessionDiscov
 		if (auto session = ParseClaudeCodeTranscript(slices->head, slices->tail, stem, folder,
 			file.lastWriteUnixSeconds)) {
 			output.push_back(std::move(*session));
-			++accepted;
+			if (counted) ++accepted;
 		}
 	}
 }
@@ -235,17 +260,20 @@ void DiscoverCodex(const std::wstring_view folder, const AgentSessionDiscoveryRo
 		if (leftNamed != rightNamed) return leftNamed;
 		return left.lastWriteUnixSeconds > right.lastWriteUnixSeconds;
 	});
+	const auto required = PromoteRequired(files, limits, EAgentSessionProvider::Codex, idOf);
 	std::size_t accepted = 0;
 	std::size_t reads = 0;
-	for (const auto& file : files) {
-		if (accepted == limits.maximumSessionsPerProvider || reads == limits.maximumFileReadsPerProvider
-			|| IsStopped(stop)) break;
+	for (std::size_t index = 0; index < files.size(); ++index) {
+		const auto& file = files[index];
+		const bool counted = index >= required;
+		if ((counted && accepted == limits.maximumSessionsPerProvider)
+			|| reads == limits.maximumFileReadsPerProvider || IsStopped(stop)) break;
 		++reads;
 		const auto slices = ReadSlices(file.path, limits.codexHeadBytes, 0);
 		if (!slices) continue;
 		if (auto session = ParseCodexRollout(slices->head, folder, file.lastWriteUnixSeconds, names)) {
 			output.push_back(std::move(*session));
-			++accepted;
+			if (counted) ++accepted;
 		}
 	}
 }
@@ -259,17 +287,26 @@ void DiscoverPi(const std::wstring_view folder, const AgentSessionDiscoveryRoots
 	auto files = ListDirectory(directory, false, budget);
 	std::erase_if(files, [](const auto& file) { return !EndsWithInsensitive(file.name, L".jsonl"); });
 	SortNewestFirst(files);
+	// <timestamp>_<id>.jsonl
+	const auto required = PromoteRequired(files, limits, EAgentSessionProvider::Pi,
+		[](const DirectoryFile& file) {
+			const auto stem = FileStem(file.name);
+			const auto separator = stem.rfind(L'_');
+			return separator == std::wstring::npos ? std::wstring{} : stem.substr(separator + 1);
+		});
 	std::size_t accepted = 0;
 	std::size_t reads = 0;
-	for (const auto& file : files) {
-		if (accepted == limits.maximumSessionsPerProvider || reads == limits.maximumFileReadsPerProvider
-			|| IsStopped(stop)) break;
+	for (std::size_t index = 0; index < files.size(); ++index) {
+		const auto& file = files[index];
+		const bool counted = index >= required;
+		if ((counted && accepted == limits.maximumSessionsPerProvider)
+			|| reads == limits.maximumFileReadsPerProvider || IsStopped(stop)) break;
 		++reads;
 		const auto slices = ReadSlices(file.path, limits.headBytes, limits.tailBytes);
 		if (!slices) continue;
 		if (auto session = ParsePiSession(slices->head, slices->tail, folder, file.lastWriteUnixSeconds)) {
 			output.push_back(std::move(*session));
-			++accepted;
+			if (counted) ++accepted;
 		}
 	}
 }
@@ -290,8 +327,17 @@ void DiscoverDevin(const std::wstring_view folder, const AgentSessionDiscoveryRo
 	const auto& bytes = result.StandardOutput();
 	auto sessions = ParseDevinSessionList(
 		std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), folder);
-	sessions = MergeAgentSessions(std::move(sessions), limits.maximumSessionsPerProvider);
-	for (auto& session : sessions) output.push_back(std::move(session));
+	// Newest first; the required ones are kept beyond the per-provider limit.
+	const auto total = sessions.size();
+	sessions = MergeAgentSessions(std::move(sessions), total);
+	std::size_t accepted = 0;
+	for (auto& session : sessions) {
+		if (!IsRequired(limits, EAgentSessionProvider::Devin, session.id)) {
+			if (accepted == limits.maximumSessionsPerProvider) continue;
+			++accepted;
+		}
+		output.push_back(std::move(session));
+	}
 }
 
 } // namespace
@@ -312,6 +358,17 @@ AgentSessionDiscoveryRoots ResolveAgentSessionDiscoveryRoots()
 	roots.piAgentDirectory = choose(std::move(piOverride), L".pi\\agent");
 	if (auto devin = platform::ResolveWindowsExecutable(L"devin.exe")) roots.devinExecutable = std::move(*devin);
 	return roots;
+}
+
+AgentSessionDiscoveryLimits AgentSessionDiscoveryLimitsFor(
+	const std::size_t displayCount, std::vector<std::wstring> requiredIdentities)
+{
+	AgentSessionDiscoveryLimits limits;
+	limits.maximumSessionsPerProvider = displayCount;
+	// Four providers, each able to fill the view, plus every marked session.
+	limits.maximumSessions = displayCount * 4 + requiredIdentities.size();
+	limits.requiredIdentities = std::move(requiredIdentities);
+	return limits;
 }
 
 std::optional<std::vector<AgentSessionRecord>> DiscoverAgentSessions(

@@ -103,6 +103,9 @@
 #include "workbench/activity/CActivityBar.h"
 #include "workbench/projects/CProjectsPage.h"
 #include "workbench/projects/AgentSessionDiscovery.h"
+#include "workbench/projects/AgentSessionRestore.h"
+#include "workbench/projects/AgentSessionRestoreService.h"
+#include "workbench/projects/AgentSessionStoreOperations.h"
 #include "workbench/panel/CBottomPanelTool.h"
 #include "workbench/explorer/CExplorerTool.h"
 #include "workbench/explorer/ExplorerDeleteConfirmation.h"
@@ -2963,7 +2966,10 @@ bool CEditWnd::InitializeWorkbench()
 	const std::array hostViewProviders{
 		workbench::viewcontainer::HostViewProviderDescriptor{
 			.id = "sakura.projects",
-			.factory = [this]() {
+			// #411: the Projects ViewContainer holds the Projects and Sessions
+			// Views, and one page renders both as a pane stack.
+			.factoryForContainer = [this](std::string_view)
+				-> workbench::viewcontainer::ViewContainerPageFactory { return [this]() {
 				workbench::projects::ProjectsPageOptions options;
 				options.projects = [this]()
 					-> std::optional<std::vector<workbench::projects::ProjectEntry>> {
@@ -3046,12 +3052,18 @@ bool CEditWnd::InitializeWorkbench()
 							&& IsBuiltinWorkbenchViewActive(workbench::layout::ids::view::Terminal);
 						const auto oldTerminalDirectory = m_workspaceContext != nullptr
 							? m_workspaceContext->GetNewTerminalWorkingDirectory() : std::wstring{};
+						const auto previousRoot = GetSemanticWorkspaceRoot();
 						const auto targetTerminalDirectory = std::filesystem::path(*path.value).parent_path().wstring();
 						const bool targetProjectionExisted = m_terminalTool != nullptr
 							&& m_terminalTool->HasWorkspaceProjection(*targetIdentity);
 						bool terminalPrepared = false;
 						terminal::TerminalWorkspaceSwitchOutcome terminalOutcome =
 							terminal::TerminalWorkspaceSwitchOutcome::Unchanged;
+						if (before.workspaceIdentityKey != *targetIdentity) {
+							// Same last-chance record as the folder switch below
+							// (#406): the outgoing projection is still attached.
+							PersistLiveAgentSessions(previousRoot);
+						}
 						if (m_terminalTool != nullptr && before.workspaceIdentityKey != *targetIdentity) {
 							const auto prepared = m_terminalTool->SwitchWorkspace({
 								before.workspaceIdentityKey, *targetIdentity, targetTerminalDirectory, false });
@@ -3092,6 +3104,10 @@ bool CEditWnd::InitializeWorkbench()
 							// failed transition whose old workspace is supposedly still active.
 							::OutputDebugStringW(L"Sakura Editor NEXT: Project workspace context refresh failed.\n");
 						}
+						// #406 Phase 2: this workspace switch commits without a
+						// RecordRecentlyOpenedWorkspaceAfterReady, so its one
+						// restore attempt starts here.
+						BeginAgentSessionRestore();
 						return workbench::projects::EProjectsActivationStatus::FocusedCurrentWindow;
 					}
 					const std::wstring option = project.kind == workbench::projects::EProjectKind::Folder
@@ -3180,37 +3196,19 @@ bool CEditWnd::InitializeWorkbench()
 				// #406: agent CLI session history for the current folder. The
 				// provider runs on the page's worker thread, so it captures nothing
 				// of this window; the roots are re-read there on every discovery.
-				options.agentSessions = [](std::wstring folder, HANDLE stop) {
-					return workbench::projects::DiscoverAgentSessions(folder,
-						workbench::projects::ResolveAgentSessionDiscoveryRoots(), {}, stop);
+				options.agentSessions = [](workbench::projects::ProjectAgentSessionsQuery query, HANDLE stop) {
+					return workbench::projects::DiscoverAgentSessions(query.folder,
+						workbench::projects::ResolveAgentSessionDiscoveryRoots(),
+						workbench::projects::AgentSessionDiscoveryLimitsFor(
+							query.displayCount, std::move(query.markedIdentities)), stop);
 				};
+				ComposeProjectsSessionManagement(options.sessionManagement);
 				options.resumeAgentSession = [this](
 					const workbench::projects::AgentSessionRecord& session, const std::wstring_view folder) {
-					using workbench::projects::EProjectsActivationStatus;
-					if (m_terminalTool == nullptr || GetHwnd() == nullptr || folder.empty()) {
-						return EProjectsActivationStatus::Failed;
-					}
-					const auto command = workbench::projects::BuildAgentSessionResumeCommand(
-						session.provider, session.id);
-					if (!command) return EProjectsActivationStatus::Failed;
-					// The command is ASCII by construction (validated id); like VS
-					// Code's sendText(text, true), the line ends with CR.
-					std::string input;
-					input.reserve(command->size() + 1U);
-					for (const wchar_t character : *command) input.push_back(static_cast<char>(character));
-					input.push_back('\r');
-					// Create the terminal before revealing the view, so revealing an
-					// empty Terminal does not start a second, default terminal.
-					const auto terminalId = m_terminalTool->AddTerminalWithInput(folder, input);
-					if (!terminalId
-						|| !ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Terminal, true)
-						|| !m_terminalTool->SelectTerminal(*terminalId)) {
-						return EProjectsActivationStatus::Failed;
-					}
-					return EProjectsActivationStatus::FocusedCurrentWindow;
+					return ResumeAgentSessionInTerminal(session, folder);
 				};
 				return workbench::projects::CreateProjectsPage(GetHwnd(), std::move(options));
-			},
+			}; },
 		},
 	};
 	auto projectedHostViews = workbench::viewcontainer::ProjectHostViewPages(
@@ -5000,6 +4998,82 @@ void ShowExplorerOperationError(HWND owner, std::wstring instruction, const std:
 
 } // namespace
 
+//! #408: the Sessions view's context-menu seams. The two store operations run
+//! on the page's worker thread, so they capture nothing of this window and
+//! re-read the agent homes and CLIs there. Recorded divergences live in
+//! `workbench/CLAUDE.md`.
+void CEditWnd::ComposeProjectsSessionManagement(
+	workbench::projects::ProjectAgentSessionManagement& management)
+{
+	using namespace workbench::projects;
+	management.viewState = [this]() -> IAgentSessionViewStateService* {
+		return m_workbenchRuntime != nullptr ? m_workbenchRuntime->AgentSessionViewState() : nullptr;
+	};
+	management.promptTitle = [this](const AgentSessionRecord& session) -> std::optional<std::wstring> {
+		SQuickInputRequest request;
+		request.kind = EQuickInputKind::InputBox;
+		// The dialog paints one caption line, so the prompt takes it.
+		request.title = LocalizedWorkbenchString(STR_WORKBENCH_PROJECTS_SESSION_RENAME_PROMPT);
+		request.placeholder = LocalizedWorkbenchString(STR_WORKBENCH_PROJECTS_SESSION_RENAME_TITLE);
+		request.value = session.title;
+		CQuickInputDialog dialog(request);
+		const auto completion = dialog.DoModal(GetHwnd());
+		if (completion.state != EQuickInputState::Accepted) return std::nullopt;
+		auto title = completion.value.value_or(std::wstring{});
+		if (!PrepareAgentSessionRenameTitle(title)) {
+			ShowExplorerOperationError(GetHwnd(),
+				LocalizedWorkbenchString(STR_WORKBENCH_PROJECTS_SESSION_RENAME_FAILED),
+				LocalizedWorkbenchString(STR_WORKBENCH_PROJECTS_SESSION_NAME_INVALID));
+			return std::nullopt;
+		}
+		return title;
+	};
+	management.confirmDelete = [this](const AgentSessionRecord& session, const bool permanent) {
+		const auto replace = [](std::wstring text, const std::wstring_view marker, const std::wstring_view value) {
+			if (const auto at = text.find(marker); at != std::wstring::npos) text.replace(at, marker.size(), value);
+			return text;
+		};
+		auto title = session.title.empty()
+			? LocalizedWorkbenchString(STR_WORKBENCH_PROJECTS_SESSION_UNTITLED) : session.title;
+		workbench::explorer::ExplorerDeleteConfirmation confirmation;
+		confirmation.instruction = replace(replace(LocalizedWorkbenchString(permanent
+			? STR_WORKBENCH_PROJECTS_SESSION_DELETE_CONFIRM_PERMANENT
+			: STR_WORKBENCH_PROJECTS_SESSION_DELETE_CONFIRM_TRASH), L"{0}", title),
+			L"{1}", AgentSessionProviderDisplayName(session.provider));
+		confirmation.primaryButton = LocalizedWorkbenchString(permanent
+			? STR_EXPLORER_DELETE_CONFIRM_DELETE_BUTTON : STR_EXPLORER_DELETE_CONFIRM_TRASH_BUTTON);
+		confirmation.isWarning = permanent;
+		return ShowExplorerDeleteConfirmationDialog(GetHwnd(), confirmation);
+	};
+	management.copyText = [this](const std::wstring_view text) {
+		CClipboard clipboard(GetHwnd());
+		if (!clipboard) return false;
+		clipboard.Empty();
+		return clipboard.SetText(text.data(), text.size(), false, false);
+	};
+	const auto context = [] {
+		AgentSessionStoreContext context;
+		context.roots = ResolveAgentSessionDiscoveryRoots();
+		context.tools = ResolveAgentSessionCommandTools();
+		return context;
+	};
+	management.rename = [context](AgentSessionRecord session, std::wstring folder, std::wstring title,
+		const HANDLE stop) { return RenameAgentSession(session, folder, title, context(), stop); };
+	management.remove = [context](AgentSessionRecord session, std::wstring folder, const HANDLE stop) {
+		return DeleteAgentSession(session, folder, context(), stop);
+	};
+	management.reportFailure = [this](const EAgentSessionCommand command,
+		const EAgentSessionOperationStatus status) {
+		UINT detail = 0;
+		if (status == EAgentSessionOperationStatus::SessionRunning) detail = STR_WORKBENCH_PROJECTS_SESSION_RUNNING;
+		else if (status == EAgentSessionOperationStatus::Unsupported) detail = STR_WORKBENCH_PROJECTS_SESSION_CLI_MISSING;
+		else if (status == EAgentSessionOperationStatus::NotFound) detail = STR_WORKBENCH_PROJECTS_SESSION_NOT_FOUND;
+		ShowExplorerOperationError(GetHwnd(), LocalizedWorkbenchString(command == EAgentSessionCommand::Delete
+			? STR_WORKBENCH_PROJECTS_SESSION_DELETE_FAILED : STR_WORKBENCH_PROJECTS_SESSION_RENAME_FAILED),
+			detail != 0 ? LocalizedWorkbenchString(detail) : std::wstring{});
+	};
+}
+
 platform::filesystem::IFileService* CEditWnd::EnsureExplorerFileService()
 {
 	if (!m_explorerFileService) {
@@ -6648,6 +6722,11 @@ void CEditWnd::ApplySenpWindowStyle(const theme::ThemePalette& palette)
 
 void CEditWnd::CloseWorkbench() noexcept
 {
+	// #406 Phase 2: record which agent sessions were live while the terminal
+	// projection and the workspace root still exist, and retire any in-flight
+	// restore so it cannot dispatch into torn-down tools.
+	PersistLiveAgentSessions(GetSemanticWorkspaceRoot());
+	CancelAgentSessionRestore();
 	StopSenpWindowExtensions();
 	if (m_gitBranchCommandSession) {
 		m_gitBranchCommandSession->store(false);
@@ -11272,6 +11351,9 @@ void CEditWnd::RecordRecentlyOpenedWorkspaceAfterReady(
 			workbench::layout::ids::viewContainer::Projects);
 	}
 	(void)RefreshWorkbenchCommandContext();
+	// #406 Phase 2: the same post-ready boundary every folder open and startup
+	// passes through also runs that open's single restore attempt.
+	BeginAgentSessionRestore();
 }
 
 bool CEditWnd::ReorderViewContainerInActivityBar(
@@ -11420,6 +11502,11 @@ EOpenWorkspaceFolderResult CEditWnd::ApplyFolderWorkspace(
 		oldTerminalDirectory = m_workspaceContext->GetNewTerminalWorkingDirectory();
 		targetProjectionExisted = m_terminalTool != nullptr
 			&& m_terminalTool->HasWorkspaceProjection(*targetIdentity);
+		if (before.workspaceIdentityKey != *targetIdentity) {
+			// The outgoing projection is still attached here: this is the last
+			// point at which its live agents can be seen and recorded (#406).
+			PersistLiveAgentSessions(previousRoot);
+		}
 		if (m_terminalTool != nullptr && before.workspaceIdentityKey != *targetIdentity) {
 			const auto prepared = m_terminalTool->SwitchWorkspace({
 				before.workspaceIdentityKey, *targetIdentity, absoluteRoot, false });
@@ -15402,6 +15489,9 @@ LRESULT CEditWnd::OnTimer( WPARAM wParam, [[maybe_unused]] LPARAM lParam )
 		// SetTimer can leave an already-queued WM_TIMER behind when Ctrl+K is
 		// repeated. Only expire the state once its own deadline is actually due.
 		ExpireWorkbenchKeybindingChord();
+		break;
+	case IDT_AGENT_SESSION_RESTORE:
+		PollAgentSessionRestore();
 		break;
 	default:
 		return 1L;

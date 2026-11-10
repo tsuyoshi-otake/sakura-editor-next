@@ -376,7 +376,17 @@ try {
 	result.m_sensitiveStandardOutput = request.SensitiveStandardOutput();
 	result.m_standardOutput.reserve(request.MaximumStandardOutputBytes());
 	result.m_standardError.reserve(request.MaximumStandardErrorBytes());
-	std::jthread writer([ownedHandle = std::move(inputWrite), payload = request.StandardInput()]() {
+	// Signalled before the writer is joined, so a writer that holds stdin open
+	// for StandardInputCloseEvent never outlives the run.
+	ScopedHandle writerRelease(request.StandardInputCloseEvent() != nullptr
+		? ::CreateEventW(nullptr, TRUE, FALSE, nullptr) : nullptr);
+	if (request.StandardInputCloseEvent() != nullptr && writerRelease.Get() == nullptr) {
+		(void)::TerminateJobObject(job.Get(), ERROR_CANCELLED);
+		(void)::WaitForSingleObject(processHandle.Get(), 1000);
+		return Terminal(EBoundedProcessStatus::LaunchFailed);
+	}
+	std::jthread writer([ownedHandle = std::move(inputWrite), payload = request.StandardInput(),
+		closeEvent = request.StandardInputCloseEvent(), release = writerRelease.Get()]() {
 		const HANDLE handle = ownedHandle.Get();
 		std::size_t written{};
 		while (written < payload.size()) {
@@ -384,6 +394,10 @@ try {
 			const DWORD wanted = static_cast<DWORD>(std::min<std::size_t>(payload.size() - written, 16384));
 			if (!::WriteFile(handle, payload.data() + written, wanted, &chunk, nullptr) || chunk == 0) break;
 			written += chunk;
+		}
+		if (closeEvent != nullptr) {
+			const HANDLE waits[] = { closeEvent, release };
+			(void)::WaitForMultipleObjects(2, waits, FALSE, INFINITE);
 		}
 	});
 
@@ -423,6 +437,7 @@ try {
 		// inherited handle. End the owned tree before joining the writer.
 		(void)::TerminateJobObject(job.Get(), ERROR_CANCELLED);
 	}
+	if (writerRelease.Get() != nullptr) (void)::SetEvent(writerRelease.Get());
 	if (writer.joinable()) writer.join();
 
 	if (status != EBoundedProcessStatus::Succeeded) {

@@ -103,6 +103,13 @@ public:
 	//! TerminalAgentSessionTitle of the tab's last applied title; empty for an
 	//! unknown tab.
 	[[nodiscard]] std::wstring SessionTitle( std::uint64_t tabId ) const;
+	//! The earliest instant the agent is provably running, as unix seconds
+	//! (#406 Phase 2): the creation time of the earliest observed agent
+	//! process, or the moment a title-only agent's presence first resolved.
+	//! Session activity at or after it could be this agent's; earlier activity
+	//! is unattributable, so inference anchors here and under-claims rather
+	//! than guesses. Empty for an unknown tab or no presence.
+	[[nodiscard]] std::optional<std::int64_t> StartedUnixSeconds( std::uint64_t tabId ) const noexcept;
 	//! The agent processes whose exit could change this tab's presence.
 	[[nodiscard]] std::vector<std::uint32_t> AgentProcessIds( std::uint64_t tabId ) const;
 
@@ -112,6 +119,8 @@ private:
 		std::wstring sessionTitle;
 		std::vector<TerminalBackendJobProcess> agentProcesses;
 		std::optional<TerminalAgentKind> resolved;
+		//! Wall-clock instant the current resolved presence first appeared.
+		std::optional<std::int64_t> firstResolvedUnixSeconds;
 	};
 
 	bool Resolve( TabState& state ) noexcept;

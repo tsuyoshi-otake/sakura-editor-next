@@ -8,6 +8,8 @@
 #pragma once
 
 #include "config/WorkspaceContextTypes.h"
+#include "workbench/projects/AgentSessionManagement.h"
+#include "workbench/projects/AgentSessionViewStateService.h"
 #include "workbench/projects/ProjectCatalogService.h"
 #include "workbench/projects/ProjectsModel.h"
 #include "workbench/viewcontainer/CViewContainerPages.h"
@@ -63,15 +65,50 @@ using ProjectAgentActivationCallback =
 //! function in Cleanup.
 using ProjectAgentsChangedRegistrar =
 	std::function<void(std::function<void()> listener)>;
-//! #406: called on a page-owned worker thread with the current folder. It
+//! #408: what one discovery must find: enough unmarked sessions to fill the
+//! view, plus every pinned or archived session however old it is.
+struct ProjectAgentSessionsQuery final {
+	std::wstring folder;
+	std::size_t displayCount = kDefaultAgentSessionDisplayCount;
+	std::vector<std::wstring> markedIdentities;	//! pinned and archived
+};
+//! #406: called on a page-owned worker thread for the current folder. It
 //! must return promptly once `stop` (a manual-reset event) is signalled and
 //! must not touch window state. nullopt means cancelled or unavailable; the
 //! page then keeps the sessions it last accepted for the same folder.
 using ProjectAgentSessionsProvider =
-	std::function<std::optional<std::vector<AgentSessionRecord>>(std::wstring folder, HANDLE stop)>;
+	std::function<std::optional<std::vector<AgentSessionRecord>>(ProjectAgentSessionsQuery query, HANDLE stop)>;
 using ProjectAgentSessionResumeCallback =
 	std::function<EProjectsActivationStatus(const AgentSessionRecord& session, std::wstring_view folder)>;
 using ProjectsClock = std::function<std::int64_t()>;
+
+//! #408 seams of the Sessions view's context menu. Every member is optional:
+//! an entry whose seam is absent is not offered. Resume uses
+//! resumeAgentSession.
+struct ProjectAgentSessionManagement final {
+	//! UI thread. The profile's pins, archive marks, and display count; null
+	//! while the runtime has none.
+	std::function<IAgentSessionViewStateService*()> viewState;
+	//! UI thread, modal. The title the user entered, nullopt when cancelled.
+	std::function<std::optional<std::wstring>(const AgentSessionRecord& session)> promptTitle;
+	//! UI thread, modal. `permanent`: the agent's CLI deletes the session for
+	//! good; otherwise its files go to the Recycle Bin.
+	std::function<bool(const AgentSessionRecord& session, bool permanent)> confirmDelete;
+	//! UI thread. Puts text on the clipboard.
+	std::function<bool(std::wstring_view text)> copyText;
+	//! Worker thread, like agentSessions: return promptly once `stop` is
+	//! signalled and never touch window state.
+	std::function<EAgentSessionOperationStatus(AgentSessionRecord session, std::wstring folder,
+		std::wstring title, HANDLE stop)> rename;
+	std::function<EAgentSessionOperationStatus(AgentSessionRecord session, std::wstring folder,
+		HANDLE stop)> remove;
+	//! UI thread. A rename or delete that ended without success or cancel.
+	std::function<void(EAgentSessionCommand command, EAgentSessionOperationStatus status)> reportFailure;
+	//! Test seam; absent = the native popup menu. Receives the entries the
+	//! menu shows, in order, and returns the index of the chosen one, nullopt
+	//! when the menu is dismissed.
+	std::function<std::optional<std::size_t>(const std::vector<AgentSessionMenuItem>& offered)> chooseMenuItem;
+};
 
 struct ProjectsPageOptions final {
 	ProjectsSnapshotProvider projects;
@@ -93,6 +130,7 @@ struct ProjectsPageOptions final {
 	//! Optional #406 seams. Absent agentSessions = no Sessions group.
 	ProjectAgentSessionsProvider agentSessions;
 	ProjectAgentSessionResumeCallback resumeAgentSession;
+	ProjectAgentSessionManagement sessionManagement;
 	//! Unix seconds for the age column; absent = the system clock.
 	ProjectsClock nowUnixSeconds;
 };

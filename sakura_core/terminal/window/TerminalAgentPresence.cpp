@@ -8,6 +8,7 @@
 #include "terminal/window/TerminalAgentPresence.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cwctype>
 
 namespace terminal {
@@ -156,6 +157,21 @@ std::optional<TerminalAgentKind> PresenceKindFromTitle( const std::wstring_view 
 	return TerminalAgentKindFromTitle(sequenceTitle);
 }
 
+std::int64_t NowUnixSeconds() noexcept
+{
+	return std::chrono::duration_cast<std::chrono::seconds>(
+		std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+//! creationTime arrives as a FILETIME count of 100 ns intervals since
+//! 1601-01-01; unix seconds start 11 644 473 600 s later. A count too small
+//! to reach the unix epoch yields a non-positive anchor, which callers treat
+//! as "unknown" rather than as a start time.
+constexpr std::int64_t FileTimeToUnixSeconds( const std::uint64_t fileTime ) noexcept
+{
+	return static_cast<std::int64_t>(fileTime / 10'000'000ULL) - 11'644'473'600LL;
+}
+
 } // namespace
 
 std::wstring_view TerminalAgentDisplayName( const TerminalAgentKind kind ) noexcept
@@ -225,6 +241,12 @@ bool TerminalAgentPresenceTracker::Resolve( TabState& state ) noexcept
 {
 	const auto next = ResolveKind(state.titleKind, state.agentProcesses);
 	const bool changed = next != state.resolved;
+	if( changed ) {
+		// A resolved presence anchors at its first observation; a kind switch
+		// re-anchors because the new kind is a different agent process.
+		state.firstResolvedUnixSeconds = next.has_value()
+			? std::optional<std::int64_t>(NowUnixSeconds()) : std::nullopt;
+	}
 	state.resolved = next;
 	return changed;
 }
@@ -281,6 +303,21 @@ std::wstring TerminalAgentPresenceTracker::SessionTitle( const std::uint64_t tab
 {
 	const auto found = m_tabs.find(tabId);
 	return found == m_tabs.end() ? std::wstring{} : found->second.sessionTitle;
+}
+
+std::optional<std::int64_t> TerminalAgentPresenceTracker::StartedUnixSeconds(
+	const std::uint64_t tabId ) const noexcept
+{
+	const auto found = m_tabs.find(tabId);
+	if( found == m_tabs.end() || !found->second.resolved ) return std::nullopt;
+	std::uint64_t earliest = 0;
+	for( const auto& process : found->second.agentProcesses ) {
+		if( process.creationTime != 0 && (earliest == 0 || process.creationTime < earliest) ) {
+			earliest = process.creationTime;
+		}
+	}
+	if( earliest != 0 ) return FileTimeToUnixSeconds(earliest);
+	return found->second.firstResolvedUnixSeconds;
 }
 
 std::vector<std::uint32_t> TerminalAgentPresenceTracker::AgentProcessIds(

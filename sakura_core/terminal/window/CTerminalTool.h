@@ -101,6 +101,10 @@ struct TerminalAgentPresenceRecord final {
 	//! TerminalAgentSessionTitle of the tab's OSC title, for the row's hover
 	//! text; empty when the agent announced none.
 	std::wstring sessionTitle;
+	//! TerminalAgentPresenceTracker::StartedUnixSeconds of the tab: when the
+	//! agent process started (or when its title-only presence first resolved).
+	//! Zero when no start anchor exists.
+	std::int64_t startedUnixSeconds{};
 };
 
 //! Bottom-panel terminal tool with recursive split groups and a right-side

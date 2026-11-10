@@ -36,6 +36,11 @@ struct AgentSessionDiscoveryRoots final {
 struct AgentSessionDiscoveryLimits final {
 	std::size_t maximumSessionsPerProvider = 20;
 	std::size_t maximumSessions = 20;
+	//! #408: AgentSessionIdentity values (pinned and archived sessions) that
+	//! are read before anything else and never count towards
+	//! maximumSessionsPerProvider, so a marked session stays listed however
+	//! many newer ones exist. maximumSessions still bounds the merged result.
+	std::vector<std::wstring> requiredIdentities;
 	std::size_t headBytes = 256u * 1024u;
 	std::size_t tailBytes = 256u * 1024u;
 	//! Codex rollouts begin with a ~20 KB `session_meta` line and can grow to
@@ -47,6 +52,11 @@ struct AgentSessionDiscoveryLimits final {
 	std::uint32_t devinTimeoutMilliseconds = 5000;
 	std::size_t devinMaximumOutputBytes = 1024u * 1024u;
 };
+
+//! #408: the limits for a Sessions view that shows `displayCount` unmarked
+//! rows next to every marked session. Any provider alone can fill the view.
+[[nodiscard]] AgentSessionDiscoveryLimits AgentSessionDiscoveryLimitsFor(
+	std::size_t displayCount, std::vector<std::wstring> requiredIdentities);
 
 //! Synchronous and read-only; run it off the UI thread. Every provider is
 //! independent: one that is missing or fails contributes no sessions and

@@ -184,21 +184,70 @@ and lifecycle rules as the rest of the native workbench.
   titles itself. Phase A shows presence only (no state text), rows exist only
   under the current Project, and a change notification rebuilds the projection
   without restarting Git discovery. An agent row's text is the product name
-  alone; `ProjectsRow::tooltip` carries the agent's session title, and
-  `CProjectsPage` shows it through one TTF_IDISHWND tool on the list whose
-  text follows the hovered row's painted rectangle. The accessible label stays
-  the visible text. The session-title rules live in
+  alone; `ProjectsRow::tooltip` carries the agent's session title. The page
+  owns one tooltip window; each list adds one TTF_IDISHWND tool to it, and
+  the tool's text follows the hovered row's painted rectangle. The accessible
+  label stays the visible text. The session-title rules live in
   [`../terminal/CLAUDE.md`](../terminal/CLAUDE.md).
-- **Agent session history (#406, fork extension).** Under the current Project,
-  after its Agent rows, a collapsible `Sessions` group lists the folder's
-  resumable agent CLI sessions, newest first. Double-click or Enter on a row
-  resumes it. VS Code has no counterpart, so the group is a Sakura row
-  projection inside `sakura.view.projects`, not a View or a Part.
+- Single click (#412) follows VS Code's `singleClick` defaults of
+  `workbench.list.openMode` and `workbench.tree.expandMode`.
+  - An agent row opens on a single click: the Terminal view is revealed and
+    that terminal is focused, the row's Enter action.
+  - The worktrees group row toggles on a single click. `LBN_DBLCLK` does
+    not toggle it back, because upstream's double-click expansion is enabled
+    only in `doubleClick` mode.
+  - The press and the release must land on the same row's painted
+    rectangle. The list's own selection runs first. The second press of a
+    double click belongs to `LBN_DBLCLK`, so its release does not open the
+    row again. A rebuild between press and release drops the press.
+  - Documented divergence: Project, worktree, and session rows keep
+    Enter/double-click. A Project or worktree row switches the window's
+    workspace in place, and a session row starts a new CLI process, so a
+    stray click would do something hard to undo. Upstream's single-click
+    open only opens an editor.
+- Projects rows nest 12 DIP per level, the Explorer TreeView's own
+  `TreeView_SetIndent` (#409). A row's dot or chevron sits in the level column
+  just before its label.
+- **Two Views in one container (#411).** `sakura.view.projects` holds two
+  declarative Views, `sakura.projects` (Projects) and `sakura.agentSessions`
+  (Sessions), the way Explorer holds Explorer and Outline. Both name the
+  provider `sakura.projects`, which supplies `factoryForContainer`, so
+  `ProjectHostViewPages` creates one page for the pair.
+  - The page renders VS Code's paneview: a 22 DIP header per View
+    (`PaintViewPaneHeader`; every header below the first draws the section
+    line), bodies split by `BuildViewPaneStackLayout` with a 120 DIP minimum,
+    and a 4 DIP sash between two expanded bodies. A header click collapses or
+    expands its View, and the press and the release must land on the same
+    header. A collapsed body hands its keyboard focus to the other list.
+  - Without session history (`ProjectsPageOptions::agentSessions` unset),
+    the page has only the Projects View. Its header merges into the container
+    title, as `mergeViewWithContainerWhenSingleView` does, and the list fills
+    the content.
+  - `CProjectsListPane` owns one View's list mechanics: the owner-drawn
+    LISTBOX, the overlay scrollbar (#407), its tooltip tool, the single-click
+    gesture (#412), and the empty message painted in the list's own body.
+    `CProjectsPage` owns the rows, the pane stack, and what each row does.
+  - Session discovery rebuilds only the Sessions list, so it never resets
+    the Projects list's selection or scroll position.
+  - Documented divergences:
+    - VS Code's Agent Sessions is a Chat sub-viewer with no View ID. The
+      Sessions View and its ID `sakura.agentSessions` are Sakura's own.
+    - Collapse state and the sash position live with the page only. VS Code
+      keeps them in its view-state memento, which this container lacks.
+    - Pane headers take no keyboard focus, so Space/Enter on a header and
+      the header's Up/Down navigation are not available.
+- **Agent session history (#406, fork extension).** The Sessions View lists
+  the current folder's resumable agent CLI sessions, newest first, as
+  top-level rows. Double-click or Enter on a row resumes it. While discovery
+  is loading with nothing accepted, the View's body says so; Ready with none
+  says "No sessions", and Unavailable says "Unavailable".
   - Ownership: `AgentSessionHistory` is the pure contract (records, parsers,
     resume commands, merge, age text). `AgentSessionDiscovery` is the bounded,
-    read-only disk and process boundary. `ProjectsModel` projects the rows.
-    `CProjectsPage` schedules discovery. `CEditWnd` composes the provider and
-    the resume action. Discovery only reads agent files and never writes them.
+    read-only disk and process boundary. `ProjectAgentSessions` in
+    `ProjectsModel` projects the rows and the empty message. `CProjectsPage`
+    schedules discovery. `CEditWnd` composes the provider and the resume
+    action. Discovery only reads agent files and never writes them; the
+    only writers are the rename and delete operations of #408 below.
   - Storage formats, verified 2026-11-09 against the installed CLIs:
 
     | Agent | Location | Session id and title | Resume |
@@ -206,7 +255,7 @@ and lifecycle rules as the rest of the native workbench.
     | Claude Code | `%CLAUDE_CONFIG_DIR%` or `~\.claude`, then `projects\<slug>\<id>.jsonl`. The slug replaces every non-alphanumeric character with `-`. | id: the file stem. Title, first match wins: latest `custom-title`, latest `ai-title`, latest `summary`, first real user prompt. An all-`isSidechain` transcript is a sub-agent and is skipped. | `claude --resume <id>` |
     | Codex | `%CODEX_HOME%` or `~\.codex`, then `sessions\YYYY\MM\DD\rollout-*-<id>.jsonl`. `session_index.jsonl` maps id to `thread_name`. | The first line must be `session_meta` for the folder. A `thread_source` other than `user`, or a `source.subagent`, is a sub-agent and is rejected. | `codex resume <id>` |
     | Pi | `%PI_CODING_AGENT_DIR%`, `%TAU_CODING_AGENT_DIR%`, or `~\.pi\agent`, then `sessions\--<cwd, with \ / : as ->--\*.jsonl`. | The `session` header gives the id and cwd. Title: the latest `session_info.name`; an empty name clears it and the first user prompt is used. | `pi --session <id>` |
-    | Devin | `devin list --format json`, run in the folder. | `id`, `title`, `working_directory`, and `last_activity_at`, which is a string of unix seconds. | `devin -r <id>` |
+    | Devin | `devin list --format json`, run in the folder. The whole pretty-printed array ends with a newline. | `id`, `title`, `working_directory`, and `last_activity_at` in unix seconds: a JSON number in 3000.12.17, a string in earlier builds. Both are accepted. | `devin -r <id>` |
 
   - Overrides: an override variable that is set but holds a relative path
     disables its provider. It is never resolved against the editor's CWD.
@@ -218,7 +267,8 @@ and lifecycle rules as the rest of the native workbench.
 
     Add one of these only after its format and resume command have been
     verified.
-  - Bounds: 20 sessions per provider and 20 in total. Large Claude Code and Pi
+  - Bounds: the display count (20 by default, #408) per provider, and four
+    times that plus the marked sessions in total. Large Claude Code and Pi
     files are read through a 256 KiB head and a 256 KiB tail; Codex reads a
     64 KiB head. At most 256 file reads per provider and 20000 directory
     entries are visited. The Codex index is capped at 4 MiB and keeps its tail.
@@ -234,6 +284,24 @@ and lifecycle rules as the rest of the native workbench.
     50 ms with timer `0x7073`.
     - It reruns on Refresh (activation or F5) and when the set of agent
       identities changes. A title change alone does not rerun it.
+    - Catch-up (#410): an agent CLI writes its session file only after the
+      first message, so its row appears before its session exists. The page
+      records when it first saw each agent row. While a present agent still
+      has no session of its own, the page reruns discovery on timer
+      `0x7074`. A session is the agent's own when its provider's display name
+      matches the agent's product name and its activity is at or after that
+      first sighting. Each session covers one agent.
+      - Schedule: 5 s, doubling to a 60 s cap.
+      - Bound: at most 12 attempts, about 9 minutes, per activation or
+        agent-set change.
+      - It stops as soon as every agent is covered, and on deactivation.
+        `CountAgentsAwaitingSessionHistory` is the pure rule.
+      - Codex and Devin set no OSC title, so a title-change trigger could
+        never have caught them.
+    - Whole-document JSON, Devin's list, ends with a newline. `ParseJson`
+      treats all four RFC 8259 whitespace characters as insignificant at the
+      end. Before #410 a trailing `\n` rejected every Devin list, so no Devin
+      session was ever shown.
     - While a rerun for the same folder is loading, the last accepted list
       stays visible. A folder change cancels the running job and clears the
       list.
@@ -247,8 +315,157 @@ and lifecycle rules as the rest of the native workbench.
     3. The new terminal is selected.
   - Tests: `AgentSessionHistoryTest.cpp` covers the parsers, the resume
     commands, and discovery against temporary agent homes. `ProjectsTest.cpp`
-    covers the rows, the page's worker scheduling and cancellation, and
-    resume from a row.
+    covers the rows, the page's worker scheduling and cancellation, resume
+    from a row, and the two-View pane stack (geometry, header collapse, sash
+    drag and its minimum).
+- **Agent session restore (#406 Phase 2, fork extension).** When a window
+  leaves a Project — close, or a Folder/Workspace switch — it records which
+  agent sessions were live there, and the next open of that Project resumes
+  them in terminals through the same path a Sessions row's double-click uses.
+  - Ownership: `AgentSessionRestore` is the pure model — recording
+    (`RecordLiveAgentSessions`), the persisted record
+    (`AgentSessionRestoreState`), its codec, and the per-open plan
+    (`PlanAgentSessionRestore` / `DispatchAgentSessionRestore`, which takes
+    the resume operation as a seam). `AgentSessionRestoreService` is the
+    profile-scoped owner behind `IWorkbenchRuntime::AgentSessionRestore()`,
+    with the same `IProjectCatalogStore` contract as the catalog and the
+    view state: coherent load-before-save, a conflict reloads and applies
+    once, and an undecodable record is kept, never overwritten. It lives
+    under owner `workbench.projects`, key `agentSessionRestore` — its own
+    record beside `state` and `agentSessions`. `CEditWnd` adapts it to the
+    terminal and the workspace lifecycle.
+  - Recording: `PersistLiveAgentSessions` runs inside `CloseWorkbench` and
+    before a workspace switch commits the outgoing identity — the last
+    points where the outgoing terminal projection is still attached. The
+    presence record's `startedUnixSeconds` anchors each agent: the earliest
+    agent-process creation time, or the first instant a title-only presence
+    resolved (`TerminalAgentPresenceTracker::StartedUnixSeconds`). A session
+    Sakura resumed is remembered per tab (`m_resumedAgentSessions`) as a
+    known identity, pruned to live tabs; a hand-started agent is inferred
+    only when the newest unclaimed session of its provider has activity at
+    or after its anchor — the same arbitration the catch-up rule uses —
+    otherwise nothing is recorded for it. The model never guesses.
+  - Inference needs the folder's session list, so a bounded worker
+    discovery runs inside the record path: a 1 s Devin cap and a 1.5 s
+    deadline, abandoned rather than allowed to stall a close or switch.
+  - Restoring: `BeginAgentSessionRestore` runs once per workspace identity
+    — startup and folder opens through `RecordCurrentWorkspaceAfterReady`,
+    a `.code-workspace` switch at its commit point. It loads the record for
+    the single semantic root (empty and multi-root contexts restore
+    nothing), starts `requiredIdentities`-marked discovery on a worker, and
+    `IDT_AGENT_SESSION_RESTORE` (id 461, 50 ms) polls the future without
+    blocking. A repeated open is a no-op; a real switch moves the marker,
+    so A -> B -> A attempts A again; a stale result after a second switch
+    is discarded. Teardown signals the stop event and joins the worker.
+  - No session is resumed twice. A workspace switch keeps the outgoing
+    terminals alive in the terminal registry, so an open whose reattached
+    projection already hosts an agent restores nothing. The open that
+    dispatches a record also removes it, so a second window on the same
+    folder finds nothing; the first window records again when it leaves
+    the Project or closes. An editor that dies without closing therefore
+    loses that record, which is the chosen cost of never double-resuming.
+  - The plan distinguishes `Disabled`, `NothingRecorded`, `DiscoveryFailed`
+    and `Ready`. Recorded sessions that no longer exist are skipped and
+    debug-reported, never retried; the result caps at
+    `kMaximumAgentSessionRestoreSessions` (8) per Project and
+    `kMaximumAgentSessionRestoreProjects` (64) folders per record.
+  - Setting: `sakura.projects.restoreAgentSessions` (default true) turns
+    the whole feature off. It is Application/Profile scoped like `http.*`
+    and `update.*`, so a repository cannot re-enable process spawning on
+    open that the user disabled; an unreadable value takes the default.
+    While it is off nothing is recorded either, so re-enabling cannot fire
+    a stale record.
+  - Tests: `AgentSessionRestoreTest.cpp` covers the record model (known,
+    inferred, uninferable), the entry model and cap, the codec, the plan's
+    every branch, dispatch through the resume seam, the service's
+    load/save/conflict/fail-closed paths, and the presence anchor.
+- **Session management menu (#408, fork extension).** A right click on a
+  Sessions row selects it and opens its menu; Shift+F10 opens the focused
+  row's. Each entry acts on the session the menu was opened for, even when
+  the list is rebuilt while the menu is up.
+  - Entries and command IDs. VS Code's Agent Sessions ID is used where VS
+    Code has the same action (`agentSessionsActions.ts`), a `sakura.` ID
+    otherwise:
+
+    | Entry | Command ID |
+    |---|---|
+    | Resume | `sakura.agentSession.resume` |
+    | Rename... | `agentSession.rename` |
+    | Pin / Unpin | `agentSession.pin` / `agentSession.unpin` |
+    | Archive / Unarchive | `agentSession.archive` / `agentSession.unarchive` |
+    | Copy Session ID | `sakura.agentSession.copyId` |
+    | Copy Resume Command | `sakura.agentSession.copyResumeCommand` |
+    | Delete | `agentSession.delete` |
+    | Show 10 / 20 / 30 / 50 | `sakura.agentSessions.setDisplayCount` |
+
+    The IDs name the entries in `AgentSessionCommandId`. They are not
+    registered in the command registry yet, so they have no Command Palette
+    entry or keybinding.
+  - Ownership: `AgentSessionManagement` is the pure model (menu, view state,
+    codec). `AgentSessionStoreOperations` writes the agents' stores.
+    `AgentSessionViewStateService` owns the profile's view state.
+    `CProjectsPage` opens the menu and runs one rename or delete at a time on
+    a worker (timer `0x7075`). `CEditWnd` composes the prompt, the
+    confirmation, the clipboard, and the error dialog.
+  - Rename writes the agent's own store, so the agent's CLI shows the name
+    too. Formats verified 2026-11-10 against the installed CLIs:
+
+    | Agent | Rename |
+    |---|---|
+    | Claude Code 2.1.321 | Appends `{"type":"custom-title","customTitle":..,"sessionId":..}` to the transcript and rewrites `projects\<slug>\<id>\custom-title.json` (`{"customTitle":..}`). The CLI's session list reads the sidecar first. |
+    | Codex 0.167.0 | `codex app-server` over stdio: `initialize` (id 1), `initialized`, `thread/name/set` (id 2). The name lives in Codex's state database, so no file is written here. Standard input stays open until the id-2 reply arrives. |
+    | Pi 1.3.0 | Appends a `session_info` entry with a new 8-hex `id` whose `parentId` is the file's last entry. |
+    | Devin | No rename command exists, so the menu has no Rename entry. |
+
+  - Delete:
+
+    | Agent | Delete |
+    |---|---|
+    | Claude Code | The transcript, `projects\<slug>\<id>\`, `file-history\<id>\`, and `session-env\<id>\` go to the Recycle Bin in one operation. |
+    | Pi | The session file goes to the Recycle Bin. |
+    | Codex | `codex delete --force <id>`. Permanent. |
+    | Devin | `devin rm <id> --force`. Permanent. |
+
+    Codex and Devin keep sessions in their own databases, so only their CLIs
+    can delete one, and that delete cannot be undone. The confirmation says
+    so with a warning; the other two say the files go to the Recycle Bin. A
+    Recycle Bin move that fails is a failure. Nothing falls back to a
+    permanent delete.
+  - A Claude Code session whose CLI is running is refused for rename and
+    delete. `sessions\<pid>.json` names the session and its process, and the
+    process must still exist.
+  - `codex.cmd` (the npm shim) runs through the absolute `%ComSpec% /d /c`.
+    A shim path that contains any of `"&|<>^%!()@` or a control character is
+    refused, because cmd.exe parses its command line again. Session ids need
+    no escaping (see Ids above).
+  - Pin, archive, and the display count belong to Sakura, not to an agent.
+    They are stored per profile under the storage owner `workbench.projects`,
+    key `agentSessions`, through the same adapter and the same
+    coherent-load-before-save rule as the Project catalog (key `state`). A
+    stored record that cannot be decoded is never overwritten. When another
+    window saved first, its state is loaded and the change is applied to it.
+  - Rows: pinned sessions first, then up to the display count of unmarked
+    sessions, then an `Archived (n)` group row that a single click opens.
+    Pinned rows are extra to the display count and carry the `pinned`
+    codicon. Each list holds at most 256 marks; one more is refused.
+  - Discovery reads pinned and archived sessions first and does not count
+    them against the per-provider limit (`requiredIdentities`), so a marked
+    session stays listed however many newer sessions exist.
+  - Renaming or deleting reruns discovery. Deleting also drops the session's
+    pin or archive mark.
+  - Documented divergences:
+    - VS Code's `agentSession.delete` belongs to its own chat sessions. Here
+      Delete changes another program's store.
+    - Whether the Archived group is open lives with the page only.
+    - There is no keyboard shortcut for an entry (VS Code binds F2 to
+      rename), only the menu.
+  - Tests: `AgentSessionManagementTest.cpp` covers the menu model, the view
+    state, its codec, and the view state service.
+    `AgentSessionStoreOperationsTest.cpp` covers every rename and delete
+    against temporary agent homes with fake process, Recycle Bin, and
+    process-table services. `AgentSessionHistoryTest.cpp` covers the record
+    builders and required identities. `ProjectsTest.cpp` covers the row
+    order and the menu on a real page through the `chooseMenuItem` seam.
 - Folder Projects expose their branch or detached state before activation.
   Multi-root workspace Projects inspect the workspace document without mutating
   `WorkspaceContext`, then show a common branch, bounded mixed-branch summary,
@@ -324,12 +541,28 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
   route through it. A view that recomputes its own inset instead will drift,
   which is exactly how #263 reached two views at once.
 - The overlay scrollbar is one shared control, `workbench/controls/COverlayScrollbar`.
-  Every workbench list that scrolls uses it -- the Explorer TreeView and the
-  Source Control list today -- so no view can drift back to the platform
+  Every workbench list that scrolls uses it -- the Explorer TreeView, the
+  Source Control lists, and the Projects list (#407) today -- so no view can drift back to the platform
   scrollbar while its neighbours draw the VS Code one. The control reads the
   target's own `SB_VERT` `SCROLLINFO` and asks it to scroll through one
   callback, which is the only view-specific part (a TreeView walks visible
   items; a LISTBOX takes `LB_SETTOPINDEX`).
+- An owner-drawn LISTBOX binds to the overlay through
+  `workbench/controls/ListBoxOverlayScrolling` (#407).
+  - It uses `ExplicitModel` with `SetHideNativeBar(true)`.
+  - Its model is in rows: `LB_GETCOUNT`, whole visible rows, and
+    `LB_GETTOPINDEX`. It is read from the row contract, not `SCROLLINFO`,
+    which can lag a resize by one paint.
+  - A list box whose bar is hidden drops `WM_MOUSEWHEEL`, so the owner calls
+    `ScrollListBoxByWheel` and then refreshes the overlay.
+  - The list needs `WS_CLIPSIBLINGS`.
+  - The owner refreshes the overlay after every top-index change: the
+    rebuild, layout, DPI, palette, visibility, `WM_VSCROLL`, `WM_KEYDOWN`, and
+    `WM_SIZE`.
+  - The `setTopRow` callback runs before the overlay repaints itself, so it
+    must set the new model first.
+
+  Source Control and Projects are the two users.
 - The same control now also serves the Markdown preview pane and the editor
   text body, and it has a horizontal orientation
   (`OverlayScrollbarOrientation::Horizontal`) for the editor's horizontal bar.

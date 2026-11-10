@@ -31,6 +31,8 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <future>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -68,6 +70,7 @@
 #include "workbench/commands/WorkbenchContextKeyService.h"
 #include "config/WorkspaceContextTypes.h"
 #include "workbench/recent/RecentlyOpenedWorkspaceMenuProjection.h"
+#include "workbench/projects/AgentSessionHistory.h"
 #include "workbench/output/IOutputService.h"
 #include "workbench/problems/MarkerNavigationModel.h"
 #include "workbench/problems/MarkerService.h"
@@ -114,6 +117,10 @@ class ISenpLanguageService;
 class ISenpRuntimeService;
 }
 namespace workbench {
+namespace projects {
+struct ProjectAgentSessionManagement;
+enum class EProjectsActivationStatus : std::uint8_t;
+}
 class CActivityBar;
 class CSenpWindowExtensions;
 class IWorkbenchRuntime;
@@ -196,6 +203,7 @@ struct EditorWorkingCopyCompletionToken;
 #define IDT_FIRST_IDLE	458
 #define IDT_EXTENSION_DOCUMENT_SYNC 459
 #define IDT_WORKBENCH_KEYBINDING_CHORD 460
+#define IDT_AGENT_SESSION_RESTORE 461
 #define IDT_SYSMENU		1357
 #define ID_TOOLBAR		100
 
@@ -1476,6 +1484,42 @@ private:
 	//! The Projects page's agent-change listener (#402); set and cleared by the
 	//! page through ProjectsPageOptions::agentsChanged.
 	std::function<void()> m_projectsAgentsListener;
+	//! #408: fills the Sessions view's context-menu seams.
+	void ComposeProjectsSessionManagement(workbench::projects::ProjectAgentSessionManagement& management);
+	//! #406 Phase 2: the shared resume path — the terminal plus resume command
+	//! a Sessions row's Enter/double-click runs. A session it launches is
+	//! remembered as that terminal's known identity for the next record.
+	[[nodiscard]] workbench::projects::EProjectsActivationStatus ResumeAgentSessionInTerminal(
+		const workbench::projects::AgentSessionRecord& session, std::wstring_view folder);
+	//! `sakura.projects.restoreAgentSessions`, effective for this window. An
+	//! unreadable setting takes the registered default (on); no runtime fails
+	//! closed.
+	[[nodiscard]] bool AgentSessionRestoreEnabled() const;
+	//! Records which agent sessions are live under `folder` into the profile
+	//! record; with none live the folder's record is cleared. Runs while the
+	//! outgoing terminal projection still exists — at close and before a
+	//! workspace switch commits.
+	void PersistLiveAgentSessions(std::wstring_view folder) noexcept;
+	//! The one bounded restore attempt of a Project open: a worker discovery
+	//! for the current folder, polled by IDT_AGENT_SESSION_RESTORE, dispatching
+	//! through the same resume path a Sessions row uses. A repeated open
+	//! notification for the same workspace identity is a no-op.
+	void BeginAgentSessionRestore() noexcept;
+	void PollAgentSessionRestore() noexcept;
+	//! Signals and joins the in-flight restore discovery. The attempt ends
+	//! without resuming anything and is never retried.
+	void CancelAgentSessionRestore() noexcept;
+	//! Sessions this window itself resumed, keyed by terminal tabId; recorded
+	//! as known identities and pruned to live tabs on every record.
+	std::map<std::uint64_t, std::wstring> m_resumedAgentSessions;
+	//! The workspace identity this window already began a restore attempt for.
+	//! A real switch moves it, so A -> B -> A restores A again; a repeated
+	//! notification for the same open cannot spawn a second batch.
+	std::wstring m_agentSessionRestoreIdentity;
+	std::future<std::optional<std::vector<workbench::projects::AgentSessionRecord>>> m_agentSessionRestore;
+	HANDLE m_agentSessionRestoreStop = nullptr;
+	std::wstring m_agentSessionRestoreFolder;
+	std::vector<std::wstring> m_agentSessionRestoreRecorded;
 	workbench::panel::CBottomPanelTool* m_bottomPanelTool = nullptr;
 	std::unique_ptr<markdown::CMarkdownPreviewWnd> m_markdownPreview;
 	markdown::MarkdownPreviewCommandState m_markdownPreviewCommandState;

@@ -9,14 +9,20 @@
 
 #include "CSelectLang.h"
 #include "sakura_rc.h"
+#include "workbench/icons/CodiconGlyphPainter.h"
 #include "workbench/layout/WorkbenchIds.h"
+#include "workbench/projects/AgentSessionManagement.h"
+#include "workbench/projects/ProjectsListPane.h"
 #include "workbench/projects/ProjectsModel.h"
+#include "workbench/viewcontainer/ViewPaneChrome.h"
 #include "workbench/worktree/GitWorktreeDiscoverySource.h"
 
 #include <CommCtrl.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <deque>
 #include <future>
@@ -38,13 +44,31 @@ constexpr UINT kAgentsChangedMessage = WM_APP + 0x72;
 //! a discovery is in flight, like kRefreshTimer for Git.
 constexpr UINT_PTR kSessionsTimer = 0x7073;
 constexpr UINT kSessionsPollMilliseconds = 50;
+//! #410: an agent CLI writes its session file only after the first message,
+//! so its row appears first. While a present agent still has no session of its
+//! own, discovery reruns after 5 s, doubling to 60 s, at most 12 times per
+//! activation or agent-set change (about 9 minutes). F5 still refreshes.
+constexpr UINT_PTR kSessionsCatchUpTimer = 0x7074;
+constexpr UINT kSessionsCatchUpFirstDelayMilliseconds = 5000;
+constexpr UINT kSessionsCatchUpMaximumDelayMilliseconds = 60000;
+constexpr std::size_t kSessionsCatchUpMaximumAttempts = 12;
+//! #408: polls the one rename or delete running in an agent's store.
+constexpr UINT_PTR kSessionOperationTimer = 0x7075;
+constexpr UINT kSessionOperationPollMilliseconds = 50;
+//! Sessions context menu: command id = this + the index in the built menu.
+constexpr UINT kSessionMenuFirstId = 0x5200;
+constexpr int kSessionPinIconDip = 16;
 constexpr int kRowHeightDip = 24;
 constexpr int kRowInsetDip = 10;
-constexpr int kChildIndentDip = 18;
+//! One nesting level: the Explorer TreeView's own indent (#409).
+constexpr int kChildIndentDip = 12;
 constexpr int kColumnGapDip = 8;
 constexpr int kTooltipMaxWidthDip = 480;
-constexpr int kListControlId = 1;
-constexpr UINT_PTR kListSubclassId = 0x7072;
+//! #411: the Projects View's list and the Sessions View's list.
+constexpr int kProjectsListControlId = 1;
+constexpr int kSessionsListControlId = 2;
+//! The Sessions View's share of the two expanded bodies until a sash drag.
+constexpr double kDefaultSessionsShare = 0.5;
 constexpr UINT kRemoveProjectMenuId = 1;
 constexpr std::size_t kMaximumBranchRepositoriesPerProject = 8;
 constexpr std::size_t kMaximumBranchRequestsPerRefresh = 64;
@@ -75,11 +99,14 @@ ProjectsTexts LoadProjectsTexts()
 	load(texts.branchesFormat, STR_WORKBENCH_PROJECTS_BRANCHES_COUNT);
 	load(texts.hideLinkedWorktrees, STR_WORKBENCH_PROJECTS_HIDE_LINKED);
 	load(texts.showLinkedWorktrees, STR_WORKBENCH_PROJECTS_SHOW_LINKED);
+	load(texts.projects, STR_WORKBENCH_PROJECTS_TITLE);
 	load(texts.sessions, STR_WORKBENCH_PROJECTS_SESSIONS);
 	load(texts.loadingSessions, STR_WORKBENCH_PROJECTS_SESSIONS_LOADING);
-	load(texts.sessionsCountFormat, STR_WORKBENCH_PROJECTS_SESSIONS_COUNT);
+	load(texts.noSessions, STR_WORKBENCH_PROJECTS_SESSIONS_EMPTY);
 	load(texts.untitledSession, STR_WORKBENCH_PROJECTS_SESSION_UNTITLED);
 	load(texts.resumeSessionHint, STR_WORKBENCH_PROJECTS_SESSION_RESUME_HINT);
+	load(texts.pinnedSession, STR_WORKBENCH_PROJECTS_SESSION_PINNED);
+	load(texts.archivedSessionsFormat, STR_WORKBENCH_PROJECTS_SESSIONS_ARCHIVED);
 	load(texts.sessionAge.now, STR_WORKBENCH_PROJECTS_SESSION_AGE_NOW);
 	load(texts.sessionAge.minutesFormat, STR_WORKBENCH_PROJECTS_SESSION_AGE_MINUTES);
 	load(texts.sessionAge.hoursFormat, STR_WORKBENCH_PROJECTS_SESSION_AGE_HOURS);
@@ -96,6 +123,13 @@ enum class EPageState : std::uint8_t {
 	Empty,
 	Loaded,
 	Unavailable,
+};
+
+//! #411: the two Views of the Projects ViewContainer, as pane headers name them.
+enum class EPane : std::uint8_t {
+	None,
+	Projects,
+	Sessions,
 };
 
 struct ProjectBranchCacheEntry final {
@@ -145,22 +179,15 @@ public:
 			WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
 			0, 0, 0, 0, parkingParent, nullptr, instance, this);
 		if (m_window == nullptr) return false;
-		m_list = ::CreateWindowExW(0, L"LISTBOX", L"",
-			WS_CHILD | WS_VSCROLL | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED
-				| LBS_HASSTRINGS | LBS_NOTIFY,
-			0, 0, 0, 0, m_window,
-			reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kListControlId)), instance, nullptr);
-		if (m_list == nullptr) {
-			Cleanup();
-			return false;
-		}
 		// Hover text is optional: without the tooltip the rows still work.
-		// The tool's TTF_SUBCLASS hook is installed before the list subclass
-		// below; the later subclass runs first, so a move retargets the text
-		// before the tooltip relays it.
 		CreateRowTooltip(instance);
-		if (::SetWindowSubclass(m_list, &CProjectsPage::ListSubclassProc,
-			kListSubclassId, reinterpret_cast<DWORD_PTR>(this)) == FALSE) {
+		if (!m_projectsList.Create(m_window, kProjectsListControlId, instance, m_tooltip,
+				ProjectsListCallbacks())
+			// #411: the Sessions View exists only when session history does.
+			// Without it the container has one View, whose header VS Code
+			// merges into the container title.
+			|| (m_options.agentSessions && !m_sessionsList.Create(m_window,
+				kSessionsListControlId, instance, m_tooltip, SessionsListCallbacks()))) {
 			Cleanup();
 			return false;
 		}
@@ -265,23 +292,37 @@ public:
 	void ActivateProjection() noexcept override
 	{
 		if (m_active) {
-			if (m_list != nullptr && m_state == EPageState::Loaded) (void)::SetFocus(m_list);
+			(void)FocusFirstList();
 			return;
 		}
 		m_active = true;
+		m_sessionCatchUpAttempts = 0;
 		Refresh();
-		if (m_list != nullptr && m_state == EPageState::Loaded) (void)::SetFocus(m_list);
+		(void)FocusFirstList();
 	}
 
 	void DeactivateProjection() noexcept override
 	{
 		m_active = false;
+		StopSessionCatchUp();
 	}
 
 	[[nodiscard]] bool PreTranslateProjection(MSG& message) noexcept override
 	{
-		if (!m_active || m_list == nullptr || message.hwnd != m_list
-			|| message.message != WM_KEYDOWN) return false;
+		if (!m_active || message.hwnd == nullptr || message.message != WM_KEYDOWN) return false;
+		if (HasSessionsView() && message.hwnd == m_sessionsList.Handle()) {
+			switch (message.wParam) {
+			case VK_RETURN:
+				ActivateSelectedSessionRow();
+				return true;
+			case VK_F5:
+				Refresh();
+				return true;
+			default:
+				return false;
+			}
+		}
+		if (message.hwnd != m_projectsList.Handle()) return false;
 		switch (message.wParam) {
 		case VK_RETURN:
 			ActivateSelection();
@@ -321,23 +362,17 @@ public:
 		const LONG top = std::clamp(contentBounds.top - hostBounds.top, 0L, height);
 		const LONG right = std::clamp(contentBounds.right - hostBounds.left, left, width);
 		const LONG bottom = std::clamp(contentBounds.bottom - hostBounds.top, top, height);
-		if (m_list != nullptr) {
-			(void)::SetWindowPos(m_list, nullptr, left, top, right - left,
-				bottom - top,
-				SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW);
-		}
 		m_contentBounds = { left, top, right, bottom };
+		LayoutPanes();
 		m_layoutValid = true;
 		ApplyVisibility();
 		// Contributed pages participate in the enclosing Workbench frame transaction.
 		// Queue the final page and control pixels, but leave synchronous presentation
 		// to CEditWnd's one RDW_ALLCHILDREN commit after every Part has moved. Painting
-		// this LISTBOX early can publish its resized parent background as a separate
+		// a LISTBOX early can publish its resized parent background as a separate
 		// compositor frame before the parent's committed redraw reaches the child.
-		if (m_list != nullptr) {
-			::RedrawWindow(m_list, nullptr, nullptr,
-				RDW_INVALIDATE | RDW_NOERASE);
-		}
+		m_projectsList.Invalidate();
+		m_sessionsList.Invalidate();
 		::RedrawWindow(m_window, nullptr, nullptr,
 			RDW_INVALIDATE | RDW_NOERASE);
 	}
@@ -351,6 +386,8 @@ public:
 	void SetProjectionPalette(const theme::ThemePalette& palette) noexcept override
 	{
 		m_palette = palette;
+		m_projectsList.SetPalette(palette);
+		m_sessionsList.SetPalette(palette);
 		if (m_window != nullptr) {
 			::RedrawWindow(m_window, nullptr, nullptr,
 				RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
@@ -379,14 +416,22 @@ public:
 						entry.completed == entry.observations.size(), entry.truncated, m_texts);
 				}
 			}
-			const auto selected = m_list ? ::SendMessageW(m_list, LB_GETCURSEL, 0, 0) : LB_ERR;
-			const auto top = m_list ? ::SendMessageW(m_list, LB_GETTOPINDEX, 0, 0) : LB_ERR;
+			const auto selected = m_projectsList.Selection();
+			const auto top = TopIndex(m_projectsList);
+			const auto sessionsTop = TopIndex(m_sessionsList);
+			CaptureSessionSelection();
 			RebuildProjection();
-			if (selected != LB_ERR && static_cast<std::size_t>(selected) < m_rows.size()) {
-				m_selectedIndex = static_cast<std::size_t>(selected);
-				(void)::SendMessageW(m_list, LB_SETCURSEL, selected, 0);
+			if (selected && *selected < m_rows.size()) {
+				m_selectedIndex = *selected;
+				m_projectsList.Select(*selected);
 			}
-			if (top != LB_ERR) (void)::SendMessageW(m_list, LB_SETTOPINDEX, top, 0);
+			if (top != LB_ERR) (void)::SendMessageW(m_projectsList.Handle(), LB_SETTOPINDEX, top, 0);
+			RebuildSessions();
+			if (sessionsTop != LB_ERR) {
+				(void)::SendMessageW(m_sessionsList.Handle(), LB_SETTOPINDEX, sessionsTop, 0);
+			}
+			m_projectsList.UpdateScrollbar();
+			m_sessionsList.UpdateScrollbar();
 			InvalidateContent();
 		} catch (...) {
 			// Keep the accepted rows if allocating the new presentation failed.
@@ -396,36 +441,6 @@ public:
 	void RefreshProjectionContent() noexcept override
 	{
 		if (m_active) Refresh();
-	}
-
-	static LRESULT CALLBACK ListSubclassProc(HWND window, UINT message, WPARAM wParam,
-		LPARAM lParam, UINT_PTR id, DWORD_PTR data)
-	{
-		auto* self = reinterpret_cast<CProjectsPage*>(data);
-		if (message == WM_NCDESTROY) {
-			(void)::RemoveWindowSubclass(window, &CProjectsPage::ListSubclassProc, id);
-			if (self != nullptr && self->m_list == window) self->m_list = nullptr;
-			return ::DefSubclassProc(window, message, wParam, lParam);
-		}
-		if (self != nullptr) {
-			if (message == WM_CONTEXTMENU) {
-				self->ShowProjectContextMenu(lParam);
-				return 0;
-			}
-			if (message == WM_KEYDOWN && wParam == VK_DELETE && self->CanRemoveSelection()) {
-				self->RemoveSelectedProject();
-				return 0;
-			}
-			if (message == WM_MOUSEMOVE) {
-				self->HoverRowAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
-			} else if (message == WM_MOUSEWHEEL || message == WM_VSCROLL) {
-				// Scrolling moves another row under a pointer that did not move.
-				const LRESULT result = ::DefSubclassProc(window, message, wParam, lParam);
-				self->HoverRowUnderCursor();
-				return result;
-			}
-		}
-		return ::DefSubclassProc(window, message, wParam, lParam);
 	}
 
 	static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -443,9 +458,12 @@ public:
 		case WM_PAINT:
 			self->Paint();
 			return 0;
-		case WM_DRAWITEM:
-			if (self->DrawItem(*reinterpret_cast<const DRAWITEMSTRUCT*>(lParam))) return TRUE;
+		case WM_DRAWITEM: {
+			const auto& item = *reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+			if (item.CtlID == kProjectsListControlId ? self->DrawItem(item)
+				: item.CtlID == kSessionsListControlId && self->DrawSessionItem(item)) return TRUE;
 			break;
+		}
 		case WM_CTLCOLORLISTBOX: {
 			const HDC dc = reinterpret_cast<HDC>(wParam);
 			::SetTextColor(dc, self->m_palette.primaryText.ToColorRef());
@@ -456,26 +474,78 @@ public:
 		case WM_TIMER:
 			if (wParam == kRefreshTimer) { self->PollRefresh(); return 0; }
 			if (wParam == kSessionsTimer) { self->PollSessionDiscovery(); return 0; }
+			if (wParam == kSessionsCatchUpTimer) { self->OnSessionCatchUpTimer(); return 0; }
+			if (wParam == kSessionOperationTimer) { self->PollSessionOperation(); return 0; }
 			break;
 		case kAgentsChangedMessage:
 			self->OnAgentsChangedMessage();
 			return 0;
 		case WM_COMMAND:
-			if (LOWORD(wParam) == kListControlId && HIWORD(wParam) == LBN_SELCHANGE) {
+			if (LOWORD(wParam) == kProjectsListControlId && HIWORD(wParam) == LBN_SELCHANGE) {
 				self->CaptureSelection();
 				return 0;
 			}
-			if (LOWORD(wParam) == kListControlId && HIWORD(wParam) == LBN_DBLCLK) {
-				self->ActivateSelection();
+			if (LOWORD(wParam) == kProjectsListControlId && HIWORD(wParam) == LBN_DBLCLK) {
+				// The first click already toggled a group row; VS Code's
+				// singleClick expand mode does not toggle it again (#412).
+				if (!self->SelectedRowIsGroup()) self->ActivateSelection();
+				return 0;
+			}
+			if (LOWORD(wParam) == kSessionsListControlId && HIWORD(wParam) == LBN_SELCHANGE) {
+				self->CaptureSessionSelection();
+				return 0;
+			}
+			if (LOWORD(wParam) == kSessionsListControlId && HIWORD(wParam) == LBN_DBLCLK) {
+				// The first click already toggled the Archived group (#412).
+				if (!self->SelectedSessionRowIsGroup()) self->ResumeSelectedSession();
 				return 0;
 			}
 			break;
 		case WM_SETFOCUS:
-			if (self->m_list != nullptr && self->m_state == EPageState::Loaded) {
-				(void)::SetFocus(self->m_list);
+			if (self->FocusFirstList()) return 0;
+			break;
+		case WM_LBUTTONDOWN: {
+			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			if (self->BeginSashDrag(point)) return 0;
+			self->m_pressedHeader = self->HeaderAt(point);
+			return 0;
+		}
+		case WM_LBUTTONUP: {
+			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			if (self->m_draggingSash) {
+				self->EndSashDrag();
+				return 0;
+			}
+			// A pane header toggles when the press and the release both land on it.
+			const auto pressed = std::exchange(self->m_pressedHeader, EPane::None);
+			if (pressed != EPane::None && pressed == self->HeaderAt(point)) self->TogglePane(pressed);
+			return 0;
+		}
+		case WM_MOUSEMOVE:
+			if (self->m_draggingSash) {
+				self->UpdateSashDrag({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
 				return 0;
 			}
 			break;
+		case WM_CAPTURECHANGED:
+			// Capture can be taken away; a drag that believed it was still
+			// running would move the boundary on the next unrelated move.
+			self->m_draggingSash = false;
+			return 0;
+		case WM_SETCURSOR: {
+			if (reinterpret_cast<HWND>(wParam) != window) break;
+			POINT point{};
+			if (::GetCursorPos(&point) == FALSE || ::ScreenToClient(window, &point) == FALSE) break;
+			if (self->m_draggingSash || self->PointInSash(point)) {
+				::SetCursor(::LoadCursorW(nullptr, IDC_SIZENS));
+				return TRUE;
+			}
+			if (self->HeaderAt(point) != EPane::None) {
+				::SetCursor(::LoadCursorW(nullptr, IDC_HAND));
+				return TRUE;
+			}
+			break;
+		}
 		}
 		return ::DefWindowProcW(window, message, wParam, lParam);
 	}
@@ -508,96 +578,259 @@ private:
 		if (m_dpi == dpi && m_font.Get() != nullptr) return;
 		m_dpi = dpi;
 		(void)m_font.Recreate(theme::ThemeFontKind::Chrome, m_dpi);
-		if (m_list != nullptr) {
-			::SendMessageW(m_list, WM_SETFONT, reinterpret_cast<WPARAM>(m_font.Get()), FALSE);
-			::SendMessageW(m_list, LB_SETITEMHEIGHT, 0, ScaleDip(kRowHeightDip, m_dpi));
-		}
+		const int rowHeight = ScaleDip(kRowHeightDip, m_dpi);
+		m_projectsList.ApplyDpi(m_dpi, m_font.Get(), rowHeight);
+		m_sessionsList.ApplyDpi(m_dpi, m_font.Get(), rowHeight);
 		if (m_tooltip != nullptr) {
 			(void)::SendMessageW(m_tooltip, TTM_SETMAXTIPWIDTH, 0, ScaleDip(kTooltipMaxWidthDip, m_dpi));
 		}
 	}
 
-	//! One tool covering the whole list; its text follows the hovered row.
+	//! One tooltip for the page; each list adds one tool whose text follows
+	//! its hovered row.
 	void CreateRowTooltip(HINSTANCE instance) noexcept
 	{
 		m_tooltip = ::CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
 			WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
 			CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
 			m_window, nullptr, instance, nullptr);
-		if (m_tooltip == nullptr) return;
-		TOOLINFOW tool = RowTool();
-		tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-		tool.lpszText = const_cast<wchar_t*>(L"");
-		if (::SendMessageW(m_tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool)) == FALSE) {
-			::DestroyWindow(m_tooltip);
-			m_tooltip = nullptr;
-		}
 	}
 
-	[[nodiscard]] TOOLINFOW RowTool() const noexcept
+	[[nodiscard]] ProjectsListPaneCallbacks ProjectsListCallbacks()
 	{
-		TOOLINFOW tool{};
-		tool.cbSize = sizeof(tool);
-		tool.hwnd = m_window;
-		tool.uId = reinterpret_cast<UINT_PTR>(m_list);
-		return tool;
+		ProjectsListPaneCallbacks callbacks;
+		callbacks.tooltip = [this](const std::size_t row) {
+			return row < m_rows.size() ? m_rows[row].tooltip : std::wstring{};
+		};
+		callbacks.opensOnSingleClick = [this](const std::size_t row) {
+			return row < m_rows.size() && OpensOnSingleClick(m_rows[row].kind);
+		};
+		callbacks.clicked = [this](std::size_t) { ActivateSelection(); };
+		callbacks.contextMenu = [this](const LPARAM position) { ShowProjectContextMenu(position); };
+		callbacks.keyDown = [this](const WPARAM key) {
+			if (key != VK_DELETE || !CanRemoveSelection()) return false;
+			RemoveSelectedProject();
+			return true;
+		};
+		return callbacks;
 	}
 
-	//! The row whose painted rectangle contains `point`. LB_ITEMFROMPOINT
-	//! alone answers the nearest row for the empty space below the last one.
-	[[nodiscard]] std::optional<std::size_t> RowAt(const POINT point) const noexcept
+	[[nodiscard]] ProjectsListPaneCallbacks SessionsListCallbacks()
 	{
-		if (m_list == nullptr || point.x < 0 || point.y < 0) return std::nullopt;
-		const LRESULT hit = ::SendMessageW(m_list, LB_ITEMFROMPOINT, 0, MAKELPARAM(point.x, point.y));
-		if (hit == LB_ERR || HIWORD(hit) != 0 || LOWORD(hit) >= m_rows.size()) return std::nullopt;
-		RECT item{};
-		if (::SendMessageW(m_list, LB_GETITEMRECT, LOWORD(hit), reinterpret_cast<LPARAM>(&item)) == LB_ERR
-			|| ::PtInRect(&item, point) == FALSE) return std::nullopt;
-		return static_cast<std::size_t>(LOWORD(hit));
+		ProjectsListPaneCallbacks callbacks;
+		callbacks.tooltip = [this](const std::size_t row) {
+			return row < m_sessionRows.size() ? m_sessionRows[row].tooltip : std::wstring{};
+		};
+		// A session row starts a process, so it keeps Enter/double-click. The
+		// Archived group row toggles on a single click, like the worktrees one.
+		callbacks.opensOnSingleClick = [this](const std::size_t row) {
+			return row < m_sessionRows.size()
+				&& m_sessionRows[row].kind == EAgentSessionsRowKind::ArchivedToggle;
+		};
+		callbacks.clicked = [this](std::size_t) { ActivateSelectedSessionRow(); };
+		callbacks.contextMenu = [this](const LPARAM position) { ShowSessionContextMenu(position); };
+		return callbacks;
 	}
 
-	void HoverRowAt(const POINT point) noexcept
+	[[nodiscard]] bool SelectedSessionRowIsGroup() const noexcept
 	{
-		const auto hovered = RowAt(point);
-		if (hovered == m_hoveredRow) return;
-		m_hoveredRow = hovered;
-		SetRowTooltipText(hovered ? m_rows[*hovered].tooltip : std::wstring{});
+		const auto selected = m_sessionsList.Selection();
+		return selected && *selected < m_sessionRows.size()
+			&& m_sessionRows[*selected].kind == EAgentSessionsRowKind::ArchivedToggle;
 	}
 
-	//! Re-resolves the hovered row after the rows or the scroll position
-	//! changed. A pointer that is not over the list hovers nothing.
-	void HoverRowUnderCursor() noexcept
+	//! Rows a single click opens: an agent focuses its terminal and a group
+	//! row toggles. A Project or worktree click would switch the workspace, so
+	//! those keep Enter/double-click.
+	[[nodiscard]] static constexpr bool OpensOnSingleClick(const EProjectsRowKind kind) noexcept
 	{
-		m_hoveredRow.reset();
-		SetRowTooltipText({});
-		POINT cursor{};
-		if (m_list == nullptr || ::GetCursorPos(&cursor) == FALSE
-			|| ::WindowFromPoint(cursor) != m_list
-			|| ::ScreenToClient(m_list, &cursor) == FALSE) return;
-		HoverRowAt(cursor);
+		return kind == EProjectsRowKind::Agent || IsGroupRow(kind);
 	}
 
-	void SetRowTooltipText(const std::wstring& text) noexcept
+	[[nodiscard]] static constexpr bool IsGroupRow(const EProjectsRowKind kind) noexcept
 	{
-		if (m_tooltip == nullptr || m_list == nullptr) return;
-		// Hide the previous row's tip; the next pointer move over the new
-		// row starts the tooltip's own initial delay again.
-		(void)::SendMessageW(m_tooltip, TTM_POP, 0, 0);
-		TOOLINFOW tool = RowTool();
-		tool.lpszText = const_cast<wchar_t*>(text.c_str());
-		(void)::SendMessageW(m_tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+		return kind == EProjectsRowKind::WorktreesToggle;
+	}
+
+	[[nodiscard]] bool SelectedRowIsGroup() const noexcept
+	{
+		const auto selected = m_projectsList.Selection();
+		return selected && *selected < m_rows.size() && IsGroupRow(m_rows[*selected].kind);
+	}
+
+	[[nodiscard]] static LRESULT TopIndex(const CProjectsListPane& pane) noexcept
+	{
+		return pane.Handle() != nullptr ? ::SendMessageW(pane.Handle(), LB_GETTOPINDEX, 0, 0) : LB_ERR;
+	}
+
+	[[nodiscard]] bool HasSessionsView() const noexcept
+	{
+		return m_sessionsList.Handle() != nullptr;
+	}
+
+	//! The Projects list shows rows only once the catalog loaded; otherwise its
+	//! body paints the empty or unavailable message.
+	[[nodiscard]] bool ProjectsListUsable() const noexcept
+	{
+		return m_state == EPageState::Loaded && !(HasSessionsView() && m_projectsCollapsed);
+	}
+
+	[[nodiscard]] bool SessionsListUsable() const noexcept
+	{
+		return HasSessionsView() && !m_sessionsCollapsed;
+	}
+
+	//! Focuses the first list that can take input, Projects before Sessions.
+	bool FocusFirstList() noexcept
+	{
+		const HWND target = ProjectsListUsable() ? m_projectsList.Handle()
+			: SessionsListUsable() ? m_sessionsList.Handle() : nullptr;
+		if (target == nullptr) return false;
+		(void)::SetFocus(target);
+		return true;
 	}
 
 	void Show(const bool visible) noexcept
 	{
-		if (m_list != nullptr) ::ShowWindow(m_list,
-			visible && m_state == EPageState::Loaded ? SW_SHOW : SW_HIDE);
+		m_projectsList.SetVisible(visible && ProjectsListUsable());
+		if (HasSessionsView()) m_sessionsList.SetVisible(visible && SessionsListUsable());
 		if (m_window != nullptr) ::ShowWindow(m_window, visible ? SW_SHOW : SW_HIDE);
 	}
 
 	void ApplyVisibility() noexcept
 	{
 		Show(m_visible && m_layoutValid && m_attachedHost.has_value());
+	}
+
+	//! The two expanded bodies' combined height, and the smallest body either
+	//! may be squeezed to: VS Code's 120-DIP pane minimum, or half the space
+	//! when two minimums do not fit.
+	[[nodiscard]] std::pair<int, int> PaneBodySpace() const noexcept
+	{
+		const int header = ScaleDip(viewcontainer::kViewPaneHeaderDip, m_dpi);
+		const int height = std::max(0, static_cast<int>(m_contentBounds.bottom - m_contentBounds.top));
+		const int body = std::max(0, height - 2 * header);
+		return { body, std::min(ScaleDip(viewcontainer::kViewPaneMinimumBodyDip, m_dpi), body / 2) };
+	}
+
+	//! #411: the Projects ViewContainer's View stack. With the Sessions View it
+	//! is VS Code's paneview: two 22-DIP headers, collapsible bodies, and one
+	//! sash between two expanded bodies. Without it the single View's header
+	//! merges into the container title, as mergeViewWithContainerWhenSingleView
+	//! does, and the Projects list fills the content area.
+	void LayoutPanes() noexcept
+	{
+		const RECT content = m_contentBounds;
+		m_projectsHeader = m_sessionsHeader = m_sash = m_sessionsBody = RECT{};
+		if (!HasSessionsView()) {
+			m_projectsBody = content;
+			m_projectsList.SetBounds(m_projectsBody);
+			return;
+		}
+		const int header = ScaleDip(viewcontainer::kViewPaneHeaderDip, m_dpi);
+		const int height = std::max(0, static_cast<int>(content.bottom - content.top));
+		const auto [body, minimum] = PaneBodySpace();
+		const int sessions = std::clamp(static_cast<int>(std::lround(body * m_sessionsShare)),
+			minimum, body - minimum);
+		const std::array<viewcontainer::ViewPaneSize, 2> sizes{ {
+			{ .collapsed = m_projectsCollapsed, .preferredBody = body - sessions, .minimumBody = minimum },
+			{ .collapsed = m_sessionsCollapsed, .preferredBody = sessions, .minimumBody = minimum },
+		} };
+		const auto stack = viewcontainer::BuildViewPaneStackLayout(sizes, height, header);
+		if (!stack.valid) {
+			m_projectsBody = RECT{};
+		} else {
+			// A viewport shorter than both headers clips the stack at its bottom.
+			const auto band = [&content](const int top, const int bottom) {
+				return RECT{ content.left, std::min(content.top + top, content.bottom),
+					content.right, std::min(content.top + bottom, content.bottom) };
+			};
+			m_projectsHeader = band(stack.panes[0].top, stack.panes[0].headerBottom);
+			m_projectsBody = band(stack.panes[0].headerBottom, stack.panes[0].bottom);
+			m_sessionsHeader = band(stack.panes[1].top, stack.panes[1].headerBottom);
+			m_sessionsBody = band(stack.panes[1].headerBottom, stack.panes[1].bottom);
+		}
+		RECT projectsList = m_projectsBody;
+		if (stack.valid && !m_projectsCollapsed && !m_sessionsCollapsed) {
+			// VS Code's 4-DIP sash straddles the boundary. The Projects list
+			// stops at its top half so the page, not the list, receives the drag.
+			const int sash = ScaleDip(viewcontainer::kViewPaneSashDip, m_dpi);
+			m_sash = { content.left, m_sessionsHeader.top - sash / 2,
+				content.right, m_sessionsHeader.top - sash / 2 + sash };
+			projectsList.bottom = std::max(projectsList.top, m_sash.top);
+		}
+		m_projectsList.SetBounds(projectsList);
+		m_sessionsList.SetBounds(m_sessionsBody);
+	}
+
+	//! A gesture inside the container owns its frame and publishes it.
+	void RelayoutPanes() noexcept
+	{
+		LayoutPanes();
+		ApplyVisibility();
+		if (m_window != nullptr) {
+			::RedrawWindow(m_window, nullptr, nullptr,
+				RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+		}
+	}
+
+	[[nodiscard]] EPane HeaderAt(const POINT point) const noexcept
+	{
+		if (!HasSessionsView() || PointInSash(point)) return EPane::None;
+		if (::PtInRect(&m_projectsHeader, point) != FALSE) return EPane::Projects;
+		if (::PtInRect(&m_sessionsHeader, point) != FALSE) return EPane::Sessions;
+		return EPane::None;
+	}
+
+	void TogglePane(const EPane pane) noexcept
+	{
+		const bool projects = pane == EPane::Projects;
+		bool& collapsed = projects ? m_projectsCollapsed : m_sessionsCollapsed;
+		const HWND list = projects ? m_projectsList.Handle() : m_sessionsList.Handle();
+		const bool hadFocus = list != nullptr && ::GetFocus() == list;
+		collapsed = !collapsed;
+		RelayoutPanes();
+		// A collapsed body cannot keep the keyboard focus it hides.
+		if (collapsed && hadFocus && !FocusFirstList() && m_window != nullptr) (void)::SetFocus(m_window);
+	}
+
+	[[nodiscard]] bool PointInSash(const POINT point) const noexcept
+	{
+		return m_sash.bottom > m_sash.top && ::PtInRect(&m_sash, point) != FALSE;
+	}
+
+	bool BeginSashDrag(const POINT point) noexcept
+	{
+		if (m_window == nullptr || !PointInSash(point)) return false;
+		m_draggingSash = true;
+		m_sashDragOriginY = point.y;
+		m_sashDragOriginBody = static_cast<int>(m_sessionsBody.bottom - m_sessionsBody.top);
+		::SetCapture(m_window);
+		return true;
+	}
+
+	void UpdateSashDrag(const POINT point) noexcept
+	{
+		if (!m_draggingSash) return;
+		// Dragging upwards grows the Sessions body, because the boundary is
+		// its top edge. The delta is measured against the drag's own origin,
+		// so repeated rounding cannot accumulate.
+		const auto [body, minimum] = PaneBodySpace();
+		if (body <= 0) return;
+		const int next = std::clamp(
+			m_sashDragOriginBody - (static_cast<int>(point.y) - m_sashDragOriginY),
+			minimum, body - minimum);
+		const double share = static_cast<double>(next) / body;
+		if (share == m_sessionsShare) return;
+		m_sessionsShare = share;
+		RelayoutPanes();
+	}
+
+	void EndSashDrag() noexcept
+	{
+		if (!m_draggingSash) return;
+		m_draggingSash = false;
+		::ReleaseCapture();
 	}
 
 	void SetState(const EPageState state) noexcept
@@ -622,12 +855,38 @@ private:
 			RebuildProjection();
 			m_restartPending = true;
 			(void)m_discovery->CancelCurrent();
+			ReloadSessionView(true);
 			BeginSessionDiscovery();
 			return;
 		}
 		ReloadAgents(true);
 		BeginBranchRefresh();
+		ReloadSessionView(true);
 		BeginSessionDiscovery();
+	}
+
+	//! #408: the profile's Sessions view state, or null without one.
+	[[nodiscard]] IAgentSessionViewStateService* SessionViewService() const noexcept
+	{
+		if (!m_options.sessionManagement.viewState) return nullptr;
+		try { return m_options.sessionManagement.viewState(); }
+		catch (...) { return nullptr; }
+	}
+
+	//! Copies the service's state into the page. `load` re-reads storage
+	//! first, because another window of the profile may have changed it.
+	void ReloadSessionView(const bool load) noexcept
+	{
+		try {
+			if (const auto service = SessionViewService(); service != nullptr) {
+				if (load) service->Load();
+				m_sessionView = service->Snapshot();
+			} else {
+				m_sessionView = {};
+			}
+		} catch (...) {
+			m_sessionView = {};
+		}
 	}
 
 	[[nodiscard]] std::int64_t NowUnixSeconds() const noexcept
@@ -660,7 +919,7 @@ private:
 			m_sessions.clear();
 			m_sessionsFolder.clear();
 			m_sessionsState = EProjectSessionsState::Unavailable;
-			RebuildProjection();
+			RebuildSessions();
 			return;
 		}
 		try {
@@ -671,14 +930,18 @@ private:
 			m_sessionStop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
 			if (m_sessionStop == nullptr) throw std::bad_alloc();
 			m_sessionDiscoveryFolder = folder;
+			ProjectAgentSessionsQuery query{ .folder = folder, .displayCount = m_sessionView.displayCount };
+			query.markedIdentities = m_sessionView.pinned;
+			query.markedIdentities.insert(query.markedIdentities.end(),
+				m_sessionView.archived.begin(), m_sessionView.archived.end());
 			m_sessionDiscovery = std::async(std::launch::async,
-				[provider = m_options.agentSessions, folder, stop = m_sessionStop]() {
-					return provider(folder, stop);
+				[provider = m_options.agentSessions, query = std::move(query), stop = m_sessionStop]() mutable {
+					return provider(std::move(query), stop);
 				});
 		} catch (...) {
 			ReleaseSessionDiscovery();
 			m_sessionsState = EProjectSessionsState::Unavailable;
-			RebuildProjection();
+			RebuildSessions();
 			return;
 		}
 		if (m_window == nullptr
@@ -686,11 +949,11 @@ private:
 			// Nothing could observe the completion: cancel and fail closed.
 			CancelSessionDiscovery();
 			m_sessionsState = EProjectSessionsState::Unavailable;
-			RebuildProjection();
+			RebuildSessions();
 			return;
 		}
 		m_sessionsState = EProjectSessionsState::Loading;
-		RebuildProjection();
+		RebuildSessions();
 	}
 
 	void PollSessionDiscovery() noexcept
@@ -705,7 +968,7 @@ private:
 		catch (...) { result.reset(); }
 		const auto folder = m_sessionDiscoveryFolder;
 		ReleaseSessionDiscovery();
-		CaptureSelection();
+		CaptureSessionSelection();
 		if (IsSameAgentSessionFolder(folder, m_sessionsFolder)) {
 			if (result) {
 				m_sessions = std::move(*result);
@@ -716,11 +979,55 @@ private:
 					? EProjectSessionsState::Unavailable : EProjectSessionsState::Ready;
 			}
 		}
-		RebuildProjection();
+		RebuildSessions();
 		if (m_sessionRerunPending) {
 			m_sessionRerunPending = false;
 			BeginSessionDiscovery();
+		} else {
+			UpdateSessionCatchUp();
 		}
+	}
+
+	//! #410: arms one catch-up rerun while a present agent still has no
+	//! session of its own. Single-flight: it waits for a running discovery,
+	//! whose completion calls this again.
+	void UpdateSessionCatchUp() noexcept
+	{
+		if (!m_active || m_window == nullptr || m_sessionDiscovery.valid()
+			|| m_sessionCatchUpArmed) return;
+		std::size_t waiting = 0;
+		try {
+			std::vector<ProjectAgentSighting> sightings;
+			sightings.reserve(m_agents.size());
+			for (const auto& agent : m_agents) {
+				const auto found = m_agentFirstSeen.find(agent.identity);
+				if (found != m_agentFirstSeen.end()) sightings.push_back({ agent.name, found->second });
+			}
+			waiting = CountAgentsAwaitingSessionHistory(sightings, m_sessions);
+		} catch (...) {
+			waiting = 0;
+		}
+		if (waiting == 0 || m_sessionCatchUpAttempts >= kSessionsCatchUpMaximumAttempts) return;
+		const auto doublings = static_cast<unsigned int>(std::min<std::size_t>(m_sessionCatchUpAttempts, 4));
+		const UINT delay = std::min(kSessionsCatchUpMaximumDelayMilliseconds,
+			kSessionsCatchUpFirstDelayMilliseconds << doublings);
+		m_sessionCatchUpArmed = ::SetTimer(m_window, kSessionsCatchUpTimer, delay, nullptr) != 0;
+	}
+
+	void OnSessionCatchUpTimer() noexcept
+	{
+		// A stray tick after StopSessionCatchUp is not an attempt.
+		if (!m_sessionCatchUpArmed) return;
+		StopSessionCatchUp();
+		if (!m_active) return;
+		++m_sessionCatchUpAttempts;
+		BeginSessionDiscovery();
+	}
+
+	void StopSessionCatchUp() noexcept
+	{
+		if (m_window != nullptr) (void)::KillTimer(m_window, kSessionsCatchUpTimer);
+		m_sessionCatchUpArmed = false;
 	}
 
 	//! Closes the finished job's handles; the future must be ready or empty.
@@ -755,6 +1062,19 @@ private:
 		if (m_options.agents) {
 			try { m_agents = m_options.agents(refresh); }
 			catch (...) { m_agents.clear(); }
+		}
+		// #410: remember when each agent row first appeared; a session counts
+		// as that agent's once its activity is at least that recent.
+		try {
+			std::erase_if(m_agentFirstSeen, [this](const auto& entry) {
+				return std::ranges::none_of(m_agents, [&entry](const auto& agent) {
+					return agent.identity == entry.first;
+				});
+			});
+			const auto now = NowUnixSeconds();
+			for (const auto& agent : m_agents) m_agentFirstSeen.try_emplace(agent.identity, now);
+		} catch (...) {
+			m_agentFirstSeen.clear();
 		}
 	}
 
@@ -985,8 +1305,12 @@ private:
 		// the catalog, and the workspace snapshot all stay untouched.
 		RebuildProjection();
 		// An agent that started or exited is the moment its session history
-		// changes; a session-title change alone is not (#406).
-		if (m_active && AgentIdentities() != before) BeginSessionDiscovery();
+		// changes; a session-title change alone is not (#406). A new agent set
+		// also gets a fresh catch-up schedule (#410).
+		if (m_active && AgentIdentities() != before) {
+			m_sessionCatchUpAttempts = 0;
+			BeginSessionDiscovery();
+		}
 	}
 
 	[[nodiscard]] std::vector<std::wstring> AgentIdentities() const
@@ -1002,6 +1326,8 @@ private:
 		return identities;
 	}
 
+	//! Rebuilds the Projects View's rows. The Sessions View rebuilds on its own
+	//! (RebuildSessions), so session discovery never resets this list.
 	void RebuildProjection() noexcept
 	{
 		try {
@@ -1012,17 +1338,10 @@ private:
 				summaries.push_back(found == m_branchCache.end()
 					? SummarizeProjectBranches({}, false, false, m_texts) : found->second.summary);
 			}
-			const ProjectSessionsInput sessions{
-				.state = m_sessionsState,
-				.sessions = m_sessions,
-				.expanded = m_sessionsExpanded,
-				.nowUnixSeconds = NowUnixSeconds(),
-				.preferredIdentity = m_selectedSessionIdentity,
-			};
 			const auto projection = ProjectProjects(m_projects, m_workspace,
 				m_worktrees ? &*m_worktrees : nullptr, m_worktreesExpanded,
 				summaries, m_selectedKind, m_selectedWorktreeIdentity, m_texts,
-				m_agents, m_selectedAgentIdentity, sessions);
+				m_agents, m_selectedAgentIdentity);
 			m_rows = projection.rows;
 			m_selectedIndex = projection.selectedRowIndex;
 		} catch (...) {
@@ -1034,31 +1353,450 @@ private:
 
 	void RebuildList() noexcept
 	{
-		if (m_list == nullptr) return;
-		::SendMessageW(m_list, WM_SETREDRAW, FALSE, 0);
-		(void)::SendMessageW(m_list, LB_RESETCONTENT, 0, 0);
-		for (const auto& row : m_rows) {
-			const auto accessible = ProjectsAccessibleLabel(row, m_texts);
-			(void)::SendMessageW(m_list, LB_ADDSTRING, 0,
-				reinterpret_cast<LPARAM>(accessible.c_str()));
-		}
-		if (m_selectedIndex && *m_selectedIndex < m_rows.size()) {
-			(void)::SendMessageW(m_list, LB_SETCURSEL, *m_selectedIndex, 0);
-		} else {
+		if (m_selectedIndex && *m_selectedIndex >= m_rows.size()) m_selectedIndex.reset();
+		std::vector<std::wstring> labels;
+		try {
+			labels.reserve(m_rows.size());
+			for (const auto& row : m_rows) labels.push_back(ProjectsAccessibleLabel(row, m_texts));
+		} catch (...) {
+			// Without the accessible labels the list cannot name its rows; show none.
+			m_rows.clear();
 			m_selectedIndex.reset();
+			labels.clear();
 		}
-		::SendMessageW(m_list, WM_SETREDRAW, TRUE, 0);
-		::RedrawWindow(m_list, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
-		// The hovered index may now name another row, or a new session name.
-		HoverRowUnderCursor();
+		m_projectsList.SetRows(labels, m_selectedIndex);
+	}
+
+	//! #411: rebuilds the Sessions View's rows from the accepted sessions.
+	void RebuildSessions() noexcept
+	{
+		if (!HasSessionsView()) return;
+		std::vector<std::wstring> labels;
+		std::optional<std::size_t> selected;
+		std::wstring emptyMessage;
+		try {
+			const ProjectSessionsInput input{
+				.state = m_sessionsState,
+				.sessions = m_sessions,
+				.nowUnixSeconds = NowUnixSeconds(),
+				.preferredIdentity = m_selectedSessionIdentity,
+				.view = &m_sessionView,
+				.archivedExpanded = m_archivedExpanded,
+			};
+			auto projection = ProjectAgentSessions(input, m_texts);
+			labels.reserve(projection.rows.size());
+			for (const auto& row : projection.rows) {
+				labels.push_back(AgentSessionsAccessibleLabel(row, m_texts));
+			}
+			m_sessionRows = std::move(projection.rows);
+			selected = projection.selectedRowIndex;
+			emptyMessage = std::move(projection.emptyMessage);
+		} catch (...) {
+			m_sessionRows.clear();
+			labels.clear();
+			selected.reset();
+			emptyMessage.clear();
+		}
+		m_sessionsList.SetEmptyMessage(std::move(emptyMessage));
+		m_sessionsList.SetRows(labels, selected);
+	}
+
+	void CaptureSessionSelection() noexcept
+	{
+		const auto selected = m_sessionsList.Selection();
+		if (!selected || *selected >= m_sessionRows.size()) return;
+		try {
+			if (m_sessionRows[*selected].kind == EAgentSessionsRowKind::ArchivedToggle) {
+				m_selectedSessionIdentity = kArchivedAgentSessionsRowIdentity;
+				return;
+			}
+			const auto index = m_sessionRows[*selected].sessionIndex;
+			if (index >= m_sessions.size()) return;
+			m_selectedSessionIdentity = AgentSessionIdentity(m_sessions[index]);
+		} catch (...) {
+			m_selectedSessionIdentity.clear();
+		}
+	}
+
+	//! The selected Sessions row as a session; nullopt for the group row.
+	[[nodiscard]] std::optional<std::size_t> SelectedSessionIndex() const noexcept
+	{
+		const auto selected = m_sessionsList.Selection();
+		if (!selected || *selected >= m_sessionRows.size()
+			|| m_sessionRows[*selected].kind != EAgentSessionsRowKind::Session) return std::nullopt;
+		const auto index = m_sessionRows[*selected].sessionIndex;
+		return index < m_sessions.size() ? std::optional<std::size_t>(index) : std::nullopt;
+	}
+
+	//! Enter or a single click: the Archived group toggles, a session resumes.
+	void ActivateSelectedSessionRow() noexcept
+	{
+		if (!SelectedSessionRowIsGroup()) {
+			ResumeSelectedSession();
+			return;
+		}
+		CaptureSessionSelection();
+		m_archivedExpanded = !m_archivedExpanded;
+		const auto top = TopIndex(m_sessionsList);
+		RebuildSessions();
+		if (top != LB_ERR) (void)::SendMessageW(m_sessionsList.Handle(), LB_SETTOPINDEX, top, 0);
+		m_sessionsList.UpdateScrollbar();
+	}
+
+	//! Whether the page can run `command`: its seam exists.
+	[[nodiscard]] bool SessionCommandAvailable(const EAgentSessionCommand command) const noexcept
+	{
+		const auto& seams = m_options.sessionManagement;
+		switch (command) {
+		case EAgentSessionCommand::Resume: return static_cast<bool>(m_options.resumeAgentSession);
+		case EAgentSessionCommand::Rename: return seams.promptTitle && seams.rename;
+		case EAgentSessionCommand::Delete: return seams.confirmDelete && seams.remove;
+		case EAgentSessionCommand::CopyId:
+		case EAgentSessionCommand::CopyResumeCommand: return static_cast<bool>(seams.copyText);
+		case EAgentSessionCommand::Pin:
+		case EAgentSessionCommand::Unpin:
+		case EAgentSessionCommand::Archive:
+		case EAgentSessionCommand::Unarchive:
+		case EAgentSessionCommand::ShowCount: return SessionViewService() != nullptr;
+		}
+		return false;
+	}
+
+	[[nodiscard]] static std::wstring SessionMenuLabel(const AgentSessionMenuItem& item)
+	{
+		const auto text = [](const UINT id) { return std::wstring(LS(id)); };
+		switch (item.command) {
+		case EAgentSessionCommand::Resume: return text(STR_WORKBENCH_PROJECTS_SESSION_RESUME);
+		case EAgentSessionCommand::Rename: return text(STR_WORKBENCH_PROJECTS_SESSION_RENAME);
+		case EAgentSessionCommand::Pin: return text(STR_WORKBENCH_PROJECTS_SESSION_PIN);
+		case EAgentSessionCommand::Unpin: return text(STR_WORKBENCH_PROJECTS_SESSION_UNPIN);
+		case EAgentSessionCommand::Archive: return text(STR_WORKBENCH_PROJECTS_SESSION_ARCHIVE);
+		case EAgentSessionCommand::Unarchive: return text(STR_WORKBENCH_PROJECTS_SESSION_UNARCHIVE);
+		case EAgentSessionCommand::CopyId: return text(STR_WORKBENCH_PROJECTS_SESSION_COPY_ID);
+		case EAgentSessionCommand::CopyResumeCommand:
+			return text(STR_WORKBENCH_PROJECTS_SESSION_COPY_RESUME_COMMAND);
+		case EAgentSessionCommand::Delete: return text(STR_WORKBENCH_PROJECTS_SESSION_DELETE);
+		case EAgentSessionCommand::ShowCount: {
+			auto label = text(STR_WORKBENCH_PROJECTS_SESSIONS_SHOW_COUNT);
+			const auto marker = label.find(L"{0}");
+			if (marker != std::wstring::npos) label.replace(marker, 3, std::to_wstring(item.displayCount));
+			return label;
+		}
+		}
+		return {};
+	}
+
+	//! #408: a right click selects the row under it and opens that row's
+	//! menu; Shift+F10 (position -1) opens the focused row's. Off a session
+	//! row, the menu holds the display counts only.
+	void ShowSessionContextMenu(const LPARAM position) noexcept
+	{
+		const HWND list = m_sessionsList.Handle();
+		if (list == nullptr) return;
+		POINT popup{};
+		if (position == static_cast<LPARAM>(-1)) {
+			RECT bounds{};
+			const auto selected = m_sessionsList.Selection();
+			if (selected && ::SendMessageW(list, LB_GETITEMRECT, *selected,
+				reinterpret_cast<LPARAM>(&bounds)) != LB_ERR) {
+				popup = { bounds.left + ScaleDip(kRowInsetDip, m_dpi), bounds.bottom };
+			}
+			if (::ClientToScreen(list, &popup) == FALSE) return;
+		} else {
+			popup = {
+				static_cast<int>(static_cast<short>(LOWORD(position))),
+				static_cast<int>(static_cast<short>(HIWORD(position))),
+			};
+			POINT client = popup;
+			if (::ScreenToClient(list, &client) == FALSE) return;
+			const DWORD hit = static_cast<DWORD>(::SendMessageW(list,
+				LB_ITEMFROMPOINT, 0, MAKELPARAM(client.x, client.y)));
+			if (HIWORD(hit) == 0 && LOWORD(hit) < m_sessionRows.size()) {
+				(void)::SendMessageW(list, LB_SETCURSEL, LOWORD(hit), 0);
+			} else {
+				(void)::SendMessageW(list, LB_SETCURSEL, static_cast<WPARAM>(-1), 0);
+			}
+		}
+		CaptureSessionSelection();
+
+		// The menu acts on the session it was opened for, even when the list
+		// is rebuilt while the menu is up.
+		std::optional<AgentSessionRecord> target;
+		std::vector<AgentSessionMenuItem> items;
+		std::vector<AgentSessionMenuItem> offered;	//! the entries the menu shows, in order
+		HMENU menu = nullptr;
+		try {
+			if (const auto index = SelectedSessionIndex()) {
+				target = m_sessions[*index];
+				const auto identity = AgentSessionIdentity(*target);
+				items = BuildAgentSessionMenu(target->provider, IsAgentSessionPinned(m_sessionView, identity),
+					IsAgentSessionArchived(m_sessionView, identity), m_sessionView.displayCount);
+			} else {
+				items = BuildAgentSessionsGroupMenu(m_sessionView.displayCount);
+			}
+			menu = ::CreatePopupMenu();
+			if (menu == nullptr) return;
+			bool separator = false;
+			bool any = false;
+			offered.reserve(items.size());
+			for (std::size_t index = 0; index < items.size(); ++index) {
+				separator = separator || items[index].separatorBefore;
+				if (!SessionCommandAvailable(items[index].command)) continue;
+				if (separator && any) (void)::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+				separator = false;
+				const auto label = SessionMenuLabel(items[index]);
+				UINT flags = MF_STRING;
+				if (items[index].checked) flags |= MF_CHECKED;
+				if (::AppendMenuW(menu, flags, kSessionMenuFirstId + static_cast<UINT>(index),
+					label.c_str()) == FALSE) {
+					::DestroyMenu(menu);
+					return;
+				}
+				offered.push_back(items[index]);
+				any = true;
+			}
+			if (!any) {
+				::DestroyMenu(menu);
+				return;
+			}
+		} catch (...) {
+			if (menu != nullptr) ::DestroyMenu(menu);
+			return;
+		}
+		if (const auto& choose = m_options.sessionManagement.chooseMenuItem) {
+			::DestroyMenu(menu);
+			std::optional<std::size_t> chosen;
+			try { chosen = choose(offered); }
+			catch (...) { chosen.reset(); }
+			if (chosen && *chosen < offered.size()) RunSessionCommand(offered[*chosen], target);
+			return;
+		}
+		const UINT command = ::TrackPopupMenuEx(menu,
+			TPM_RETURNCMD | TPM_RIGHTBUTTON, popup.x, popup.y, list, nullptr);
+		::DestroyMenu(menu);
+		if (command < kSessionMenuFirstId || command - kSessionMenuFirstId >= items.size()) return;
+		RunSessionCommand(items[command - kSessionMenuFirstId], target);
+	}
+
+	//! Applies one view-state change and reprojects. A changed display count
+	//! or mark set also changes what discovery must find.
+	void UpdateSessionView(const std::function<bool(AgentSessionViewState&)>& change) noexcept
+	{
+		bool changed = false;
+		try {
+			const auto service = SessionViewService();
+			changed = service != nullptr && service->Update(change);
+		} catch (...) {
+			changed = false;
+		}
+		if (!changed) {
+			(void)::MessageBeep(MB_ICONWARNING);
+			return;
+		}
+		ReloadSessionView(false);
+		const auto top = TopIndex(m_sessionsList);
+		RebuildSessions();
+		if (top != LB_ERR) (void)::SendMessageW(m_sessionsList.Handle(), LB_SETTOPINDEX, top, 0);
+		m_sessionsList.UpdateScrollbar();
+		BeginSessionDiscovery();
+	}
+
+	void RunSessionCommand(const AgentSessionMenuItem& item,
+		const std::optional<AgentSessionRecord>& target) noexcept
+	{
+		try {
+			if (item.command == EAgentSessionCommand::ShowCount) {
+				UpdateSessionView([count = item.displayCount](AgentSessionViewState& state) {
+					return SetAgentSessionDisplayCount(state, count);
+				});
+				return;
+			}
+			if (!target) return;
+			const auto identity = AgentSessionIdentity(*target);
+			const auto& seams = m_options.sessionManagement;
+			switch (item.command) {
+			case EAgentSessionCommand::Resume:
+				if (!m_options.resumeAgentSession || m_options.resumeAgentSession(*target, m_sessionsFolder)
+					== EProjectsActivationStatus::Failed) (void)::MessageBeep(MB_ICONWARNING);
+				return;
+			case EAgentSessionCommand::Pin:
+				UpdateSessionView([&](AgentSessionViewState& state) { return PinAgentSession(state, identity); });
+				return;
+			case EAgentSessionCommand::Unpin:
+				UpdateSessionView([&](AgentSessionViewState& state) { return UnpinAgentSession(state, identity); });
+				return;
+			case EAgentSessionCommand::Archive:
+				UpdateSessionView([&](AgentSessionViewState& state) { return ArchiveAgentSession(state, identity); });
+				return;
+			case EAgentSessionCommand::Unarchive:
+				UpdateSessionView([&](AgentSessionViewState& state) { return UnarchiveAgentSession(state, identity); });
+				return;
+			case EAgentSessionCommand::CopyId:
+				if (!seams.copyText(target->id)) (void)::MessageBeep(MB_ICONWARNING);
+				return;
+			case EAgentSessionCommand::CopyResumeCommand: {
+				const auto command = BuildAgentSessionResumeCommand(target->provider, target->id);
+				if (!command || !seams.copyText(*command)) (void)::MessageBeep(MB_ICONWARNING);
+				return;
+			}
+			case EAgentSessionCommand::Rename: {
+				if (m_sessionOperation.valid()) {
+					(void)::MessageBeep(MB_ICONWARNING);
+					return;
+				}
+				const auto entered = seams.promptTitle(*target);
+				if (!entered) return;
+				const auto title = PrepareAgentSessionRenameTitle(*entered);
+				if (!title) {
+					ReportSessionFailure(EAgentSessionCommand::Rename, EAgentSessionOperationStatus::Failed);
+					return;
+				}
+				BeginSessionOperation(EAgentSessionCommand::Rename, identity,
+					[rename = seams.rename, session = *target, folder = m_sessionsFolder, title = *title](
+						const HANDLE stop) { return rename(session, folder, title, stop); });
+				return;
+			}
+			case EAgentSessionCommand::Delete:
+				if (m_sessionOperation.valid()) {
+					(void)::MessageBeep(MB_ICONWARNING);
+					return;
+				}
+				if (!seams.confirmDelete(*target, DeletesAgentSessionPermanently(target->provider))) return;
+				BeginSessionOperation(EAgentSessionCommand::Delete, identity,
+					[remove = seams.remove, session = *target, folder = m_sessionsFolder](
+						const HANDLE stop) { return remove(session, folder, stop); });
+				return;
+			case EAgentSessionCommand::ShowCount:
+				return;
+			}
+		} catch (...) {
+			(void)::MessageBeep(MB_ICONWARNING);
+		}
+	}
+
+	void ReportSessionFailure(const EAgentSessionCommand command,
+		const EAgentSessionOperationStatus status) noexcept
+	{
+		try {
+			if (m_options.sessionManagement.reportFailure) {
+				m_options.sessionManagement.reportFailure(command, status);
+				return;
+			}
+		} catch (...) {}
+		(void)::MessageBeep(MB_ICONWARNING);
+	}
+
+	//! Single-flight: one rename or delete at a time, on a worker thread. The
+	//! timer observes its end; Cleanup signals `stop` and waits for it.
+	void BeginSessionOperation(const EAgentSessionCommand command, std::wstring identity,
+		std::function<EAgentSessionOperationStatus(HANDLE)> work) noexcept
+	{
+		if (m_sessionOperation.valid() || m_window == nullptr) return;
+		try {
+			m_sessionOperationStop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+			if (m_sessionOperationStop == nullptr) throw std::bad_alloc();
+			m_sessionOperationCommand = command;
+			m_sessionOperationIdentity = std::move(identity);
+			m_sessionOperation = std::async(std::launch::async,
+				[work = std::move(work), stop = m_sessionOperationStop]() {
+					try { return work(stop); }
+					catch (...) { return EAgentSessionOperationStatus::Failed; }
+				});
+		} catch (...) {
+			ReleaseSessionOperation();
+			ReportSessionFailure(command, EAgentSessionOperationStatus::Failed);
+			return;
+		}
+		if (::SetTimer(m_window, kSessionOperationTimer, kSessionOperationPollMilliseconds, nullptr) == 0) {
+			// Nothing could observe the end: wait for it here instead.
+			FinishSessionOperation();
+		}
+	}
+
+	void PollSessionOperation() noexcept
+	{
+		if (!m_sessionOperation.valid()) {
+			if (m_window != nullptr) (void)::KillTimer(m_window, kSessionOperationTimer);
+			return;
+		}
+		if (m_sessionOperation.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) return;
+		FinishSessionOperation();
+	}
+
+	void FinishSessionOperation() noexcept
+	{
+		auto status = EAgentSessionOperationStatus::Failed;
+		try { status = m_sessionOperation.get(); }
+		catch (...) { status = EAgentSessionOperationStatus::Failed; }
+		const auto command = m_sessionOperationCommand;
+		const auto identity = std::move(m_sessionOperationIdentity);
+		ReleaseSessionOperation();
+		// NotFound: the session is already gone, so its row is stale either way.
+		if (status == EAgentSessionOperationStatus::Succeeded
+			|| status == EAgentSessionOperationStatus::NotFound) {
+			if (command == EAgentSessionCommand::Delete) {
+				// A deleted session keeps no pin or archive mark.
+				try {
+					if (const auto service = SessionViewService(); service != nullptr) {
+						(void)service->Update([&identity](AgentSessionViewState& state) {
+							return ForgetAgentSession(state, identity);
+						});
+					}
+				} catch (...) {}
+				ReloadSessionView(false);
+			}
+			// The agent's store changed: read the list again.
+			BeginSessionDiscovery();
+		}
+		if (status != EAgentSessionOperationStatus::Succeeded
+			&& status != EAgentSessionOperationStatus::Cancelled) {
+			ReportSessionFailure(command, status);
+		}
+	}
+
+	//! Closes the finished operation's handles; the future is ready or empty.
+	void ReleaseSessionOperation() noexcept
+	{
+		if (m_window != nullptr) (void)::KillTimer(m_window, kSessionOperationTimer);
+		m_sessionOperation = {};
+		if (m_sessionOperationStop != nullptr) ::CloseHandle(m_sessionOperationStop);
+		m_sessionOperationStop = nullptr;
+		m_sessionOperationIdentity.clear();
+	}
+
+	void CancelSessionOperation() noexcept
+	{
+		if (m_sessionOperation.valid()) {
+			if (m_sessionOperationStop != nullptr) (void)::SetEvent(m_sessionOperationStop);
+			try { m_sessionOperation.wait(); }
+			catch (...) {}
+		}
+		ReleaseSessionOperation();
+	}
+
+	void ResumeSelectedSession() noexcept
+	{
+		CaptureSessionSelection();
+		const auto selected = m_sessionsList.Selection();
+		if (!selected || *selected >= m_sessionRows.size()
+			|| m_sessionRows[*selected].kind != EAgentSessionsRowKind::Session) return;
+		const auto index = m_sessionRows[*selected].sessionIndex;
+		EProjectsActivationStatus status = EProjectsActivationStatus::Failed;
+		try {
+			if (index < m_sessions.size() && m_options.resumeAgentSession) {
+				status = m_options.resumeAgentSession(m_sessions[index], m_sessionsFolder);
+			}
+		} catch (...) {
+			status = EProjectsActivationStatus::Failed;
+		}
+		if (status == EProjectsActivationStatus::Failed) (void)::MessageBeep(MB_ICONWARNING);
 	}
 
 	void CaptureSelection() noexcept
 	{
-		if (m_list == nullptr) return;
-		const LRESULT selected = ::SendMessageW(m_list, LB_GETCURSEL, 0, 0);
-		if (selected == LB_ERR || static_cast<std::size_t>(selected) >= m_rows.size()) return;
-		m_selectedIndex = static_cast<std::size_t>(selected);
+		const auto selected = m_projectsList.Selection();
+		if (!selected || *selected >= m_rows.size()) return;
+		m_selectedIndex = *selected;
 		const auto& row = m_rows[*m_selectedIndex];
 		m_selectedKind = row.kind;
 		if (row.worktreeIndex && m_worktrees
@@ -1073,13 +1811,6 @@ private:
 		} else {
 			m_selectedAgentIdentity.clear();
 		}
-		if (row.kind == EProjectsRowKind::Session && row.sessionIndex
-			&& *row.sessionIndex < m_sessions.size()) {
-			try { m_selectedSessionIdentity = AgentSessionIdentity(m_sessions[*row.sessionIndex]); }
-			catch (...) { m_selectedSessionIdentity.clear(); }
-		} else {
-			m_selectedSessionIdentity.clear();
-		}
 	}
 
 	void SetSelectedToggle(const bool expanded) noexcept
@@ -1087,10 +1818,8 @@ private:
 		CaptureSelection();
 		if (!m_selectedIndex || *m_selectedIndex >= m_rows.size()) return;
 		const auto kind = m_rows[*m_selectedIndex].kind;
-		bool* state = kind == EProjectsRowKind::WorktreesToggle ? &m_worktreesExpanded
-			: kind == EProjectsRowKind::SessionsToggle ? &m_sessionsExpanded : nullptr;
-		if (state == nullptr || *state == expanded) return;
-		*state = expanded;
+		if (kind != EProjectsRowKind::WorktreesToggle || m_worktreesExpanded == expanded) return;
+		m_worktreesExpanded = expanded;
 		m_selectedKind = kind;
 		RebuildProjection();
 	}
@@ -1106,12 +1835,6 @@ private:
 			RebuildProjection();
 			return;
 		}
-		if (row.kind == EProjectsRowKind::SessionsToggle) {
-			m_sessionsExpanded = !m_sessionsExpanded;
-			m_selectedKind = EProjectsRowKind::SessionsToggle;
-			RebuildProjection();
-			return;
-		}
 		if (!row.enabled) { (void)::MessageBeep(MB_ICONWARNING); return; }
 		EProjectsActivationStatus status = EProjectsActivationStatus::Failed;
 		try {
@@ -1120,9 +1843,6 @@ private:
 			} else if (row.kind == EProjectsRowKind::Agent && row.agentIndex
 				&& *row.agentIndex < m_agents.size() && m_options.activateAgent) {
 				status = m_options.activateAgent(m_agents[*row.agentIndex].terminalId);
-			} else if (row.kind == EProjectsRowKind::Session && row.sessionIndex
-				&& *row.sessionIndex < m_sessions.size() && m_options.resumeAgentSession) {
-				status = m_options.resumeAgentSession(m_sessions[*row.sessionIndex], m_sessionsFolder);
 			} else if (row.worktreeIndex && m_worktrees
 				&& *row.worktreeIndex < m_worktrees->rows.size()) {
 				const auto& worktree = m_worktrees->rows[*row.worktreeIndex];
@@ -1137,10 +1857,9 @@ private:
 
 	[[nodiscard]] bool CanRemoveSelection() const noexcept
 	{
-		if (m_list == nullptr) return false;
-		const LRESULT selected = ::SendMessageW(m_list, LB_GETCURSEL, 0, 0);
-		if (selected == LB_ERR || static_cast<std::size_t>(selected) >= m_rows.size()) return false;
-		const auto& row = m_rows[static_cast<std::size_t>(selected)];
+		const auto selected = m_projectsList.Selection();
+		if (!selected || *selected >= m_rows.size()) return false;
+		const auto& row = m_rows[*selected];
 		return row.kind == EProjectsRowKind::Project && row.projectIndex < m_projects.size();
 	}
 
@@ -1169,27 +1888,28 @@ private:
 
 	void ShowProjectContextMenu(const LPARAM position) noexcept
 	{
-		if (m_list == nullptr || m_state != EPageState::Loaded) return;
+		const HWND list = m_projectsList.Handle();
+		if (list == nullptr || m_state != EPageState::Loaded) return;
 		POINT popup{};
 		if (position == static_cast<LPARAM>(-1)) {
 			CaptureSelection();
 			if (!CanRemoveSelection() || !m_selectedIndex) return;
 			RECT rowBounds{};
-			if (::SendMessageW(m_list, LB_GETITEMRECT, *m_selectedIndex,
+			if (::SendMessageW(list, LB_GETITEMRECT, *m_selectedIndex,
 				reinterpret_cast<LPARAM>(&rowBounds)) == LB_ERR) return;
 			popup = { rowBounds.left + ScaleDip(kRowInsetDip, m_dpi), rowBounds.bottom };
-			if (::ClientToScreen(m_list, &popup) == FALSE) return;
+			if (::ClientToScreen(list, &popup) == FALSE) return;
 		} else {
 			popup = {
 				static_cast<int>(static_cast<short>(LOWORD(position))),
 				static_cast<int>(static_cast<short>(HIWORD(position))),
 			};
 			POINT client = popup;
-			if (::ScreenToClient(m_list, &client) == FALSE) return;
-			const DWORD hit = static_cast<DWORD>(::SendMessageW(m_list,
+			if (::ScreenToClient(list, &client) == FALSE) return;
+			const DWORD hit = static_cast<DWORD>(::SendMessageW(list,
 				LB_ITEMFROMPOINT, 0, MAKELPARAM(client.x, client.y)));
 			if (HIWORD(hit) != 0 || LOWORD(hit) >= m_rows.size()) return;
-			(void)::SendMessageW(m_list, LB_SETCURSEL, LOWORD(hit), 0);
+			(void)::SendMessageW(list, LB_SETCURSEL, LOWORD(hit), 0);
 			CaptureSelection();
 			if (!CanRemoveSelection()) return;
 		}
@@ -1208,7 +1928,7 @@ private:
 			return;
 		}
 		const UINT command = ::TrackPopupMenuEx(menu,
-			TPM_RETURNCMD | TPM_RIGHTBUTTON, popup.x, popup.y, m_list, nullptr);
+			TPM_RETURNCMD | TPM_RIGHTBUTTON, popup.x, popup.y, list, nullptr);
 		::DestroyMenu(menu);
 		if (command == kOpenProjectInNewWindowMenuId) {
 			if (!m_selectedIndex || *m_selectedIndex >= m_rows.size()) return;
@@ -1226,7 +1946,8 @@ private:
 
 	void InvalidateContent() noexcept
 	{
-		if (m_list != nullptr) ::InvalidateRect(m_list, nullptr, FALSE);
+		m_projectsList.Invalidate();
+		m_sessionsList.Invalidate();
 		if (m_window != nullptr) ::InvalidateRect(m_window, &m_contentBounds, FALSE);
 	}
 
@@ -1242,11 +1963,19 @@ private:
 		const HGDIOBJ previousFont = m_font.Get() != nullptr ? ::SelectObject(dc, m_font.Get()) : nullptr;
 		const int previousMode = ::SetBkMode(dc, TRANSPARENT);
 		const COLORREF previousColor = ::SetTextColor(dc, m_palette.primaryText.ToColorRef());
-		if (m_state != EPageState::Loaded) {
+		if (HasSessionsView()) {
+			// The first header sits under the container title, which already
+			// separates it; every later header draws the section line.
+			viewcontainer::PaintViewPaneHeader(dc, m_projectsHeader, m_texts.projects,
+				m_projectsCollapsed, m_projectsHeader.top > m_contentBounds.top, m_dpi, m_palette);
+			viewcontainer::PaintViewPaneHeader(dc, m_sessionsHeader, m_texts.sessions,
+				m_sessionsCollapsed, m_sessionsHeader.top > m_contentBounds.top, m_dpi, m_palette);
+		}
+		if (m_state != EPageState::Loaded && !(HasSessionsView() && m_projectsCollapsed)) {
 			const wchar_t* message = m_state == EPageState::Empty
 				? LS(STR_WORKBENCH_PROJECTS_EMPTY)
 				: LS(STR_WORKBENCH_PROJECTS_PROFILE_UNAVAILABLE);
-			RECT body = m_contentBounds;
+			RECT body = m_projectsBody;
 			const int inset = ScaleDip(20, m_dpi);
 			body.left += inset;
 			body.right -= inset;
@@ -1260,22 +1989,63 @@ private:
 		::EndPaint(m_window, &paint);
 	}
 
-	[[nodiscard]] bool DrawItem(const DRAWITEMSTRUCT& item) noexcept
+	struct RowColors final {
+		COLORREF primary{};
+		COLORREF secondary{};
+	};
+
+	//! Fills one owner-drawn row of either list and selects the row font.
+	[[nodiscard]] RowColors BeginRow(const DRAWITEMSTRUCT& item, const bool enabled) noexcept
 	{
-		if (item.CtlID != kListControlId || item.itemID == static_cast<UINT>(-1)
-			|| item.itemID >= m_rows.size() || item.hDC == nullptr) return false;
-		const auto& row = m_rows[item.itemID];
 		const bool selected = (item.itemState & ODS_SELECTED) != 0;
 		::SetDCBrushColor(item.hDC, selected
 			? m_palette.listActiveSelectionBackground.ToColorRef()
 			: m_palette.sideBar.ToColorRef());
 		::FillRect(item.hDC, &item.rcItem, static_cast<HBRUSH>(::GetStockObject(DC_BRUSH)));
-		const HGDIOBJ previousFont = m_font.Get() != nullptr ? ::SelectObject(item.hDC, m_font.Get()) : nullptr;
-		const int previousMode = ::SetBkMode(item.hDC, TRANSPARENT);
+		if (m_font.Get() != nullptr) ::SelectObject(item.hDC, m_font.Get());
+		(void)::SetBkMode(item.hDC, TRANSPARENT);
 		const COLORREF primary = selected
 			? m_palette.listActiveSelectionForeground.ToColorRef()
-			: (row.enabled ? m_palette.primaryText.ToColorRef() : m_palette.descriptionText.ToColorRef());
-		const COLORREF secondary = selected ? primary : m_palette.descriptionText.ToColorRef();
+			: (enabled ? m_palette.primaryText.ToColorRef() : m_palette.descriptionText.ToColorRef());
+		return { primary, selected ? primary : m_palette.descriptionText.ToColorRef() };
+	}
+
+	//! Draws the right-aligned trailing text, then the label in what it leaves,
+	//! then the focus outline.
+	void EndRow(const DRAWITEMSTRUCT& item, RECT labelRect, const std::wstring& label,
+		const std::wstring& trailing, const RowColors colors) noexcept
+	{
+		if (!trailing.empty()) {
+			SIZE trailingSize{};
+			(void)::GetTextExtentPoint32W(item.hDC, trailing.c_str(),
+				static_cast<int>(trailing.size()), &trailingSize);
+			RECT trailingRect = labelRect;
+			trailingRect.left = std::max(trailingRect.left,
+				trailingRect.right - trailingSize.cx);
+			(void)::SetTextColor(item.hDC, colors.secondary);
+			::DrawTextW(item.hDC, trailing.c_str(), static_cast<int>(trailing.size()),
+				&trailingRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+			labelRect.right = std::max(labelRect.left,
+				trailingRect.left - ScaleDip(kColumnGapDip, m_dpi));
+		}
+		(void)::SetTextColor(item.hDC, colors.primary);
+		::DrawTextW(item.hDC, label.c_str(), static_cast<int>(label.size()), &labelRect,
+			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+		if ((item.itemState & ODS_FOCUS) != 0) {
+			::SetDCBrushColor(item.hDC, m_palette.listFocusAndSelectionOutline.ToColorRef());
+			RECT border = item.rcItem;
+			::FrameRect(item.hDC, &border, static_cast<HBRUSH>(::GetStockObject(DC_BRUSH)));
+		}
+	}
+
+	[[nodiscard]] bool DrawItem(const DRAWITEMSTRUCT& item) noexcept
+	{
+		if (item.itemID == static_cast<UINT>(-1)
+			|| item.itemID >= m_rows.size() || item.hDC == nullptr) return false;
+		const auto& row = m_rows[item.itemID];
+		const int savedDc = ::SaveDC(item.hDC);
+		const auto colors = BeginRow(item, row.enabled);
+		const COLORREF secondary = colors.secondary;
 
 		const int inset = ScaleDip(kRowInsetDip, m_dpi);
 		const int childIndent = ScaleDip(kChildIndentDip, m_dpi);
@@ -1283,9 +2053,8 @@ private:
 		labelRect.left += inset;
 		labelRect.right -= inset;
 		std::wstring trailing;
-		// Agent rows and the Sessions group nest under the CurrentWorktree row
-		// when that row exists for the same Project, otherwise under the
-		// Project row; session rows nest one level below their group.
+		// Agent rows nest under the CurrentWorktree row when that row exists
+		// for the same Project, otherwise under the Project row.
 		const bool underWorktree = std::ranges::any_of(m_rows, [&row](const auto& candidate) {
 			return candidate.kind == EProjectsRowKind::CurrentWorktree
 				&& candidate.projectIndex == row.projectIndex;
@@ -1293,25 +2062,15 @@ private:
 		const int folderChildIndent = childIndent * (underWorktree ? 2 : 1);
 		if (row.kind == EProjectsRowKind::Project) {
 			trailing = row.trailing;
-		} else if (row.kind == EProjectsRowKind::WorktreesToggle
-			|| row.kind == EProjectsRowKind::SessionsToggle) {
-			const bool sessions = row.kind == EProjectsRowKind::SessionsToggle;
-			trailing = sessions ? row.trailing : std::to_wstring(row.hiddenWorktreeCount);
+		} else if (row.kind == EProjectsRowKind::WorktreesToggle) {
+			trailing = std::to_wstring(row.hiddenWorktreeCount);
 			// The chevron takes the column just before the group label.
-			const int labelIndent = sessions ? folderChildIndent : childIndent;
 			(void)::SetTextColor(item.hDC, secondary);
 			RECT chevron = labelRect;
-			chevron.left += labelIndent - childIndent;
 			chevron.right = chevron.left + childIndent;
 			::DrawTextW(item.hDC, row.expanded ? L"v" : L">", -1, &chevron,
 				DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-			labelRect.left += labelIndent;
-		} else if (row.kind == EProjectsRowKind::Session) {
-			// The agent name and age stay visible in the trailing column; a
-			// long title is the part that gets the ellipsis.
-			trailing = row.description;
-			if (!row.trailing.empty()) trailing += L"  " + row.trailing;
-			labelRect.left += folderChildIndent + childIndent;
+			labelRect.left += childIndent;
 		} else {
 			const int rowIndent = row.kind == EProjectsRowKind::Agent ? folderChildIndent : childIndent;
 			labelRect.left += rowIndent;
@@ -1340,36 +2099,62 @@ private:
 				::Ellipse(item.hDC, dotRect.left, dotRect.top, dotRect.right, dotRect.bottom);
 			}
 		}
-		if (!trailing.empty()) {
-			SIZE trailingSize{};
-			(void)::GetTextExtentPoint32W(item.hDC, trailing.c_str(),
-				static_cast<int>(trailing.size()), &trailingSize);
-			RECT trailingRect = labelRect;
-			trailingRect.left = std::max(trailingRect.left,
-				trailingRect.right - trailingSize.cx);
-			(void)::SetTextColor(item.hDC, secondary);
-			::DrawTextW(item.hDC, trailing.c_str(), static_cast<int>(trailing.size()),
-				&trailingRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
-			labelRect.right = std::max(labelRect.left,
-				trailingRect.left - ScaleDip(kColumnGapDip, m_dpi));
-		}
 		std::wstring label = row.label;
 		if (row.kind != EProjectsRowKind::Project
-			&& row.kind != EProjectsRowKind::WorktreesToggle
-			&& row.kind != EProjectsRowKind::SessionsToggle
-			&& row.kind != EProjectsRowKind::Session && !row.description.empty()) {
+			&& row.kind != EProjectsRowKind::WorktreesToggle && !row.description.empty()) {
 			label += L"  " + row.description;
 		}
-		(void)::SetTextColor(item.hDC, primary);
-		::DrawTextW(item.hDC, label.c_str(), static_cast<int>(label.size()), &labelRect,
-			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
-		if ((item.itemState & ODS_FOCUS) != 0) {
-			::SetDCBrushColor(item.hDC, m_palette.listFocusAndSelectionOutline.ToColorRef());
-			RECT border = item.rcItem;
-			::FrameRect(item.hDC, &border, static_cast<HBRUSH>(::GetStockObject(DC_BRUSH)));
+		EndRow(item, labelRect, label, trailing, colors);
+		if (savedDc != 0) ::RestoreDC(item.hDC, savedDc);
+		return true;
+	}
+
+	//! #411: a Sessions View row is top level. The provider name and the age
+	//! stay visible in the trailing column; a long title takes the ellipsis.
+	[[nodiscard]] bool DrawSessionItem(const DRAWITEMSTRUCT& item) noexcept
+	{
+		if (item.itemID == static_cast<UINT>(-1)
+			|| item.itemID >= m_sessionRows.size() || item.hDC == nullptr) return false;
+		const auto& row = m_sessionRows[item.itemID];
+		const int savedDc = ::SaveDC(item.hDC);
+		const auto colors = BeginRow(item, true);
+		RECT labelRect = item.rcItem;
+		const int inset = ScaleDip(kRowInsetDip, m_dpi);
+		const int childIndent = ScaleDip(kChildIndentDip, m_dpi);
+		labelRect.left += inset;
+		labelRect.right -= inset;
+		std::wstring trailing;
+		if (row.kind == EAgentSessionsRowKind::ArchivedToggle) {
+			// The same chevron column as the Projects View's group row.
+			(void)::SetTextColor(item.hDC, colors.secondary);
+			RECT chevron = labelRect;
+			chevron.right = chevron.left + childIndent;
+			::DrawTextW(item.hDC, row.expanded ? L"v" : L">", -1, &chevron,
+				DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			labelRect.left += childIndent;
+			EndRow(item, labelRect, row.label, trailing, colors);
+			if (savedDc != 0) ::RestoreDC(item.hDC, savedDc);
+			return true;
 		}
-		::SetBkMode(item.hDC, previousMode);
-		if (previousFont != nullptr) ::SelectObject(item.hDC, previousFont);
+		if (row.archived) labelRect.left += childIndent;
+		if (row.pinned) {
+			// VS Code's `pinned` codicon at the row's trailing edge.
+			const int size = ScaleDip(kSessionPinIconDip, m_dpi);
+			const int top = item.rcItem.top + (item.rcItem.bottom - item.rcItem.top - size) / 2;
+			const icons::IconRect box{ labelRect.right - size, top, labelRect.right, top + size };
+			if (icons::PaintCodiconByName(item.hDC, box, L"pinned", colors.secondary, m_codiconFont)) {
+				labelRect.right = box.left - ScaleDip(kColumnGapDip, m_dpi);
+				if (m_font.Get() != nullptr) ::SelectObject(item.hDC, m_font.Get());
+			}
+		}
+		try {
+			trailing = row.description;
+			if (!row.trailing.empty()) trailing += L"  " + row.trailing;
+		} catch (...) {
+			trailing.clear();
+		}
+		EndRow(item, labelRect, row.label, trailing, colors);
+		if (savedDc != 0) ::RestoreDC(item.hDC, savedDc);
 		return true;
 	}
 
@@ -1381,8 +2166,12 @@ private:
 			try { m_options.agentsChanged({}); } catch (...) {}
 		}
 		if (m_window != nullptr) (void)::KillTimer(m_window, kRefreshTimer);
+		StopSessionCatchUp();
 		CancelSessionDiscovery();
+		CancelSessionOperation();
+		m_codiconFont.Release();
 		m_sessions.clear();
+		m_agentFirstSeen.clear();
 		m_sessionsFolder.clear();
 		m_sessionsState = EProjectSessionsState::Unavailable;
 		m_attachedHost.reset();
@@ -1399,13 +2188,16 @@ private:
 		m_worktrees.reset();
 		m_agents.clear();
 		m_agentsChangedPending = false;
-		m_hoveredRow.reset();
+		if (m_draggingSash) EndSashDrag();
+		// Each list takes its tooltip tool back while the tooltip still exists.
+		m_projectsList.Destroy();
+		m_sessionsList.Destroy();
+		m_sessionRows.clear();
 		// The tooltip is a top-level popup, owned by the frame rather than by
 		// m_window, so destroying m_window would not take it along.
 		if (m_tooltip != nullptr && ::IsWindow(m_tooltip)) ::DestroyWindow(m_tooltip);
 		m_tooltip = nullptr;
 		if (m_window != nullptr && ::IsWindow(m_window)) ::DestroyWindow(m_window);
-		m_list = nullptr;
 		m_window = nullptr;
 		m_created = false;
 	}
@@ -1424,7 +2216,6 @@ private:
 	std::vector<ProjectsRow> m_rows;
 	std::vector<ProjectAgentEntry> m_agents;
 	std::optional<std::size_t> m_selectedIndex;
-	std::optional<std::size_t> m_hoveredRow;	//! row whose tooltip text is current
 	std::optional<std::size_t> m_currentProjectIndex;
 	std::optional<EProjectsRowKind> m_selectedKind;
 	std::wstring m_selectedWorktreeIdentity;
@@ -1434,18 +2225,52 @@ private:
 	std::wstring m_sessionsFolder;	//! the folder m_sessions belongs to
 	EProjectSessionsState m_sessionsState{ EProjectSessionsState::Unavailable };
 	std::wstring m_selectedSessionIdentity;
+	//! The Sessions View's rows; each names an index into m_sessions.
+	std::vector<AgentSessionsRow> m_sessionRows;
 	std::future<std::optional<std::vector<AgentSessionRecord>>> m_sessionDiscovery;
 	std::wstring m_sessionDiscoveryFolder;
 	HANDLE m_sessionStop = nullptr;	//! manual-reset event owned with m_sessionDiscovery
 	bool m_sessionRerunPending = false;
-	bool m_sessionsExpanded = true;
+	//! #408: the view state the rows were projected with, and the one rename
+	//! or delete running in an agent's store.
+	AgentSessionViewState m_sessionView;
+	bool m_archivedExpanded = false;
+	std::future<EAgentSessionOperationStatus> m_sessionOperation;
+	HANDLE m_sessionOperationStop = nullptr;
+	EAgentSessionCommand m_sessionOperationCommand{ EAgentSessionCommand::Rename };
+	std::wstring m_sessionOperationIdentity;
+	icons::CCodiconGlyphFont m_codiconFont;
+	//! #410 catch-up: when each present agent row first appeared, and the
+	//! backoff state of the rerun that waits for its session.
+	std::map<std::wstring, std::int64_t> m_agentFirstSeen;
+	std::size_t m_sessionCatchUpAttempts{};
+	bool m_sessionCatchUpArmed = false;
 	std::wstring m_currentWorkspaceRoot;
 	std::optional<viewcontainer::ViewContainerPageHost> m_attachedHost;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	theme::CThemeFont m_font;
+	//! #411: the Projects View's list and, with session history, the Sessions
+	//! View's list. Both are children of m_window and share m_tooltip.
+	CProjectsListPane m_projectsList;
+	CProjectsListPane m_sessionsList;
 	RECT m_contentBounds{};
+	//! The View stack inside m_contentBounds, rebuilt by LayoutPanes. The
+	//! headers and the sash stay empty while the container has one View.
+	RECT m_projectsHeader{};
+	RECT m_projectsBody{};
+	RECT m_sessionsHeader{};
+	RECT m_sessionsBody{};
+	RECT m_sash{};
+	//! Collapse state and the sash position live with the page only; VS Code
+	//! keeps them in its view-state memento, which this container lacks.
+	double m_sessionsShare = kDefaultSessionsShare;
+	int m_sashDragOriginY{};
+	int m_sashDragOriginBody{};
+	EPane m_pressedHeader{ EPane::None };
+	bool m_projectsCollapsed = false;
+	bool m_sessionsCollapsed = false;
+	bool m_draggingSash = false;
 	HWND m_window = nullptr;
-	HWND m_list = nullptr;
 	HWND m_tooltip = nullptr;
 	HWND m_parkingParent = nullptr;
 	viewcontainer::ViewContainerNativeHandle m_nativeParent{};

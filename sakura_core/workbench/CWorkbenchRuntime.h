@@ -21,6 +21,8 @@
 #include "workbench/output/OutputProviderFactory.h"
 #include "workbench/output/OutputServiceRustCandidate.h"
 #include "workbench/problems/MarkerService.h"
+#include "workbench/projects/AgentSessionRestoreService.h"
+#include "workbench/projects/AgentSessionViewStateService.h"
 #include "workbench/projects/ProjectCatalogService.h"
 #include "workbench/recent/RecentlyOpenedWorkspaceService.h"
 #include "workbench/scm/SourceControlService.h"
@@ -81,6 +83,12 @@ struct WorkbenchRuntimeDependencies final {
 	//! Separate from Open Recent: stable saved Project navigation entries use a
 	//! dedicated profile record and do not inherit MRU clear/reorder semantics.
 	std::unique_ptr<projects::IProjectCatalogStore> projectCatalogStore;
+	//! #408: the Sessions view state (pins, archive marks, display count), a
+	//! second profile record with the same store contract as the catalog.
+	std::unique_ptr<projects::IProjectCatalogStore> agentSessionViewStateStore;
+	//! #406 Phase 2: the per-Project record of live agent sessions, a third
+	//! profile record with the same store contract.
+	std::unique_ptr<projects::IProjectCatalogStore> agentSessionRestoreStore;
 	//! Profile-scoped package authority. The runtime composes the separate
 	//! process host only when this dependency is present.
 	std::unique_ptr<senp::ISenpManagementService> senpManagementService;
@@ -124,6 +132,8 @@ public:
 		const workspace::WorkspaceFoldersEditRequest& request) override;
 	[[nodiscard]] recent::IRecentlyOpenedWorkspaceService* RecentlyOpenedWorkspaces() noexcept override;
 	[[nodiscard]] projects::IProjectCatalogService* Projects() noexcept override;
+	[[nodiscard]] projects::IAgentSessionViewStateService* AgentSessionViewState() noexcept override;
+	[[nodiscard]] projects::IAgentSessionRestoreService* AgentSessionRestore() noexcept override;
 	[[nodiscard]] layout::WorkbenchContributionRegistry& Contributions() noexcept override { return m_contributions; }
 	[[nodiscard]] const layout::WorkbenchContributionRegistry& Contributions() const noexcept override { return m_contributions; }
 	[[nodiscard]] layout::WorkbenchLayoutStateService& LayoutState() noexcept override { return m_layoutState; }
@@ -258,6 +268,8 @@ private:
 	std::unique_ptr<workspace::IWorkspaceEditingService> m_workspaceEditing;
 	std::unique_ptr<recent::IRecentlyOpenedWorkspaceService> m_recentlyOpenedWorkspaces;
 	std::unique_ptr<projects::IProjectCatalogService> m_projects;
+	std::unique_ptr<projects::IAgentSessionViewStateService> m_agentSessionViewState;
+	std::unique_ptr<projects::IAgentSessionRestoreService> m_agentSessionRestore;
 	std::unique_ptr<senp::ISenpManagementService> m_senpManagement;
 	std::unique_ptr<senp::ISenpRuntimeService> m_senpRuntime;
 	std::unique_ptr<senp::ISenpLanguageService> m_senpLanguage;

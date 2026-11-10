@@ -29,6 +29,7 @@
 #include "workbench/icons/ThemeIconResolver.h"
 #include "workbench/controls/CInputBoxGeometry.h"
 #include "workbench/controls/COverlayScrollbar.h"
+#include "workbench/controls/ListBoxOverlayScrolling.h"
 #include "workbench/rendering/CGdiBackBuffer.h"
 #include "workbench/rendering/LatestOnlyMailbox.h"
 #include "workbench/WorkerRetirementService.h"
@@ -89,57 +90,6 @@ constexpr int kScmInputLineCountUpperBound = 50;
 //! pixels, which is this margin above the box and the same margin below it.
 constexpr int kInputOuterMarginDip = 5;
 
-//! Scrolls an owner-drawn list box by one wheel notch worth of rows. The list
-//! boxes here keep WS_VSCROLL for their SCROLLINFO but hide the platform bar
-//! behind the themed overlay, and a list box whose scroll bar is hidden ignores
-//! WM_MOUSEWHEEL entirely, so the rows have to be moved by hand.
-void ScrollListBoxByWheel(HWND list, WPARAM wParam)
-{
-	if (list == nullptr) return;
-	const int count = static_cast<int>(::SendMessageW(list, LB_GETCOUNT, 0, 0));
-	if (count <= 0) return;
-	UINT linesPerNotch = 3;
-	if (::SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &linesPerNotch, 0) == FALSE) {
-		linesPerNotch = 3;
-	}
-	// WHEEL_PAGESCROLL asks for a page; the visible row count is the page here.
-	int rows = 0;
-	const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
-	if (linesPerNotch == WHEEL_PAGESCROLL) {
-		RECT client{};
-		::GetClientRect(list, &client);
-		const int rowHeight = static_cast<int>(::SendMessageW(list, LB_GETITEMHEIGHT, 0, 0));
-		const int page = rowHeight > 0
-			? std::max(1, static_cast<int>(client.bottom - client.top) / rowHeight) : 1;
-		rows = delta > 0 ? -page : page;
-	} else {
-		rows = -(delta * static_cast<int>(linesPerNotch)) / WHEEL_DELTA;
-	}
-	if (rows == 0) return;
-	const int top = static_cast<int>(::SendMessageW(list, LB_GETTOPINDEX, 0, 0));
-	const int next = std::clamp(top + rows, 0, std::max(0, count - 1));
-	if (next == top) return;
-	(void)::SendMessageW(list, LB_SETTOPINDEX, static_cast<WPARAM>(next), 0);
-}
-
-//! Builds the overlay model directly from the list's stable row contract.
-//! Native LISTBOX SCROLLINFO can publish its new page one paint later after a
-//! resize; using it would make the overlay thumb the only late SCM surface.
-[[nodiscard]] controls::OverlayScrollbarModel ListOverlayModel(HWND list)
-{
-	if (list == nullptr) return {};
-	const int count = std::max(0,
-		static_cast<int>(::SendMessageW(list, LB_GETCOUNT, 0, 0)));
-	const int itemHeight = std::max(1,
-		static_cast<int>(::SendMessageW(list, LB_GETITEMHEIGHT, 0, 0)));
-	RECT client{};
-	::GetClientRect(list, &client);
-	const int viewport = std::max(1,
-		static_cast<int>(client.bottom - client.top) / itemHeight);
-	const int top = std::max(0,
-		static_cast<int>(::SendMessageW(list, LB_GETTOPINDEX, 0, 0)));
-	return { .contentExtent = count, .viewportExtent = viewport, .offset = top };
-}
 //! The gap between the Commit button's label and the dropdown half, and the
 //! dropdown half's own width. Upstream's `.monaco-button-dropdown` is a 1px
 //! separator plus a `$(chevron-down)` box; this is that box at 100%.
@@ -1550,7 +1500,7 @@ struct CScmWorkbenchTool::Impl {
 	{
 		graphScrollbar.SetDpi(dpi);
 		graphScrollbar.SetColors(controls::ResolveOverlayScrollbarColors(palette, palette.sideBar));
-		graphScrollbar.SetScrollModel(ListOverlayModel(graphList));
+		graphScrollbar.SetScrollModel(controls::ListBoxOverlayScrollbarModel(graphList));
 		graphScrollbar.Update();
 	}
 	//! Feeds the overlay the current DPI and the Side Bar tokens the Explorer maps
@@ -1559,7 +1509,7 @@ struct CScmWorkbenchTool::Impl {
 	{
 		listScrollbar.SetDpi(dpi);
 		listScrollbar.SetColors(controls::ResolveOverlayScrollbarColors(palette, palette.sideBar));
-		listScrollbar.SetScrollModel(ListOverlayModel(list));
+		listScrollbar.SetScrollModel(controls::ListBoxOverlayScrollbarModel(list));
 		listScrollbar.Update();
 	}
 	void InvalidateListRow(int index) const
@@ -3330,7 +3280,7 @@ LRESULT CALLBACK CScmWorkbenchTool::ListSubclassProc(HWND window, UINT message, 
 		// visible scroll bar drops WM_MOUSEWHEEL on the floor -- the wheel scrolls
 		// nothing even though WS_VSCROLL is set and the SCROLLINFO is authoritative.
 		// Scroll explicitly instead, exactly as the Explorer tree does.
-		ScrollListBoxByWheel(window, wParam);
+		controls::ScrollListBoxByWheel(window, wParam);
 		if (window == impl->list) impl->UpdateListScrollbar();
 		else if (window == impl->graphList) impl->UpdateGraphScrollbar();
 		return 0;

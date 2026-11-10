@@ -1042,10 +1042,28 @@
 	<ClInclude Include="..\sakura_core\workbench\projects\CProjectsPage.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\projects\ProjectsListPane.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionHistory.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionDiscovery.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionViewStateService.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionRestore.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionRestoreService.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionStoreOperations.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionManagement.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\CWorkspaceContext.h">
@@ -1189,6 +1207,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\controls\COverlayScrollbar.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\controls\ListBoxOverlayScrolling.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.h">
@@ -3241,6 +3262,9 @@
     <ClCompile Include="..\sakura_core\window\CEditWnd.cpp">
       <Filter>Cpp Source Files\window</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\window\CEditWnd_AgentSessionRestore.cpp">
+      <Filter>Cpp Source Files\window</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\WorkbenchLayout.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
@@ -3274,10 +3298,28 @@
 	<ClCompile Include="..\sakura_core\workbench\projects\CProjectsPage.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\projects\ProjectsListPane.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionHistory.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionDiscovery.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionViewStateService.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionRestore.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionRestoreService.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionStoreOperations.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionManagement.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\CWorkspaceContext.cpp">
@@ -3334,6 +3376,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\controls\COverlayScrollbar.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\controls\ListBoxOverlayScrolling.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.cpp">

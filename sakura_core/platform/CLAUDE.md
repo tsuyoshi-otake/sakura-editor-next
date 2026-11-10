@@ -78,6 +78,16 @@ or root-process exit it terminates remaining job members and joins the stdin
 writer before returning. Tests that start descendants must verify the recorded
 PID is gone or signalled, then audit for surviving repository test processes.
 
+Standard input closes as soon as its payload is written, which is what a
+one-shot tool expects. A request/response child that ends its session at EOF
+would drop requests still in flight, so a request may name a borrowed
+manual-reset event with `SetStandardInputCloseEvent` (#408). The writer then
+keeps standard input open after the payload until that event is signalled,
+typically by the output observer once the awaited reply has arrived, or until
+the run ends. The stdin writer is joined on every path either way. `codex
+app-server` is the first user: `thread/name/set` is answered only while its
+input is still open.
+
 `process/InheritedHandleList` owns the STARTUPINFOEXW +
 `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` pair for launchers that redirect child
 stdio: the list holds exactly the distinct, non-null, inheritable std handles,

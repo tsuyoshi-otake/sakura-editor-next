@@ -127,13 +127,18 @@ std::wstring ProjectsAccessibleLabel(const ProjectsRow& row, const ProjectsTexts
 	if (row.kind == EProjectsRowKind::WorktreesToggle) {
 		result += L", " + FormatCount(texts.linkedWorktreesFormat, row.hiddenWorktreeCount);
 	}
-	if (row.kind == EProjectsRowKind::SessionsToggle && row.sessionCount > 0) {
-		// The trailing count is a bare number; say what it counts.
-		result = row.label + L", " + FormatCount(texts.sessionsCountFormat, row.sessionCount);
-	}
 	if (row.primaryWorktree) result += L", " + std::wstring(texts.primary);
 	if (row.kind == EProjectsRowKind::CurrentWorktree) result += L", " + std::wstring(texts.thisWindow);
 	if (!row.enabled) result += L", " + std::wstring(texts.unavailable);
+	return result;
+}
+
+std::wstring AgentSessionsAccessibleLabel(const AgentSessionsRow& row, const ProjectsTexts& texts)
+{
+	std::wstring result = row.label;
+	if (!row.description.empty()) result += L", " + row.description;
+	if (!row.trailing.empty()) result += L", " + row.trailing;
+	if (row.pinned) result += L", " + texts.pinnedSession;
 	return result;
 }
 
@@ -260,8 +265,7 @@ ProjectsProjection ProjectProjects(
 	const std::wstring_view preferredWorktreeIdentity,
 	const ProjectsTexts& texts,
 	const std::span<const ProjectAgentEntry> agents,
-	const std::wstring_view preferredAgentIdentity,
-	const ProjectSessionsInput& sessions)
+	const std::wstring_view preferredAgentIdentity)
 {
 	ProjectsProjection result;
 	for (std::size_t index = 0; index < projects.size(); ++index) {
@@ -271,7 +275,7 @@ ProjectsProjection ProjectProjects(
 		}
 	}
 	result.rows.reserve(projects.size() + (worktrees ? worktrees->rows.size() + 1U : 0U)
-		+ (result.currentProjectIndex ? agents.size() + sessions.sessions.size() + 1U : 0U));
+		+ (result.currentProjectIndex ? agents.size() : 0U));
 	for (std::size_t projectIndex = 0; projectIndex < projects.size(); ++projectIndex) {
 		const bool current = result.currentProjectIndex
 			&& *result.currentProjectIndex == projectIndex;
@@ -321,41 +325,6 @@ ProjectsProjection ProjectProjects(
 			});
 		}
 
-		// #406: the folder's agent session history, newest first.
-		if (sessions.state == EProjectSessionsState::Loading
-			|| (sessions.state == EProjectSessionsState::Ready && !sessions.sessions.empty())) {
-			const bool loading = sessions.state == EProjectSessionsState::Loading;
-			result.rows.push_back({
-				.kind = EProjectsRowKind::SessionsToggle,
-				.projectIndex = projectIndex,
-				.label = texts.sessions,
-				.trailing = loading && sessions.sessions.empty()
-					? texts.loadingSessions : std::to_wstring(sessions.sessions.size()),
-				.sessionCount = sessions.sessions.size(),
-				.currentProject = true,
-				.expanded = sessions.expanded,
-			});
-			if (sessions.expanded) {
-				for (std::size_t sessionIndex = 0; sessionIndex < sessions.sessions.size(); ++sessionIndex) {
-					const auto& session = sessions.sessions[sessionIndex];
-					const auto provider = std::wstring(AgentSessionProviderDisplayName(session.provider));
-					const auto title = session.title.empty() ? texts.untitledSession : session.title;
-					result.rows.push_back({
-						.kind = EProjectsRowKind::Session,
-						.projectIndex = projectIndex,
-						.sessionIndex = sessionIndex,
-						.label = title,
-						.description = provider,
-						.trailing = FormatAgentSessionAge(session.lastActivityUnixSeconds,
-							sessions.nowUnixSeconds, texts.sessionAge),
-						.tooltip = title + L"\n" + provider + L" - " + session.id
-							+ L"\n" + texts.resumeSessionHint,
-						.currentProject = true,
-					});
-				}
-			}
-		}
-
 		if (!currentWorktreeEmitted) continue;
 		const auto hiddenCount = worktrees->rows.size() - 1U;
 		if (hiddenCount == 0) continue;
@@ -402,13 +371,6 @@ ProjectsProjection ProjectProjects(
 				&& agents[*row.agentIndex].identity != preferredAgentIdentity) {
 				continue;
 			}
-			if (row.kind == EProjectsRowKind::Session && row.sessionIndex
-				&& *row.sessionIndex < sessions.sessions.size()
-				&& !sessions.preferredIdentity.empty()
-				&& AgentSessionIdentity(sessions.sessions[*row.sessionIndex])
-					!= sessions.preferredIdentity) {
-				continue;
-			}
 			result.selectedRowIndex = rowIndex;
 			break;
 		}
@@ -424,6 +386,110 @@ ProjectsProjection ProjectProjects(
 	}
 	if (!result.selectedRowIndex && !result.rows.empty()) result.selectedRowIndex = 0;
 	return result;
+}
+
+AgentSessionsProjection ProjectAgentSessions(
+	const ProjectSessionsInput& sessions, const ProjectsTexts& texts)
+{
+	AgentSessionsProjection result;
+	if (sessions.state == EProjectSessionsState::Unavailable) {
+		result.emptyMessage = texts.unavailable;
+		return result;
+	}
+	static const AgentSessionViewState kDefaultView;
+	const auto& view = sessions.view != nullptr ? *sessions.view : kDefaultView;
+	enum class EPart : std::uint8_t { Pinned, Listed, Archived };
+	std::vector<std::wstring> identities;
+	std::vector<EPart> parts;
+	identities.reserve(sessions.sessions.size());
+	parts.reserve(sessions.sessions.size());
+	std::size_t archivedCount = 0;
+	for (const auto& session : sessions.sessions) {
+		identities.push_back(AgentSessionIdentity(session));
+		const auto part = IsAgentSessionArchived(view, identities.back()) ? EPart::Archived
+			: IsAgentSessionPinned(view, identities.back()) ? EPart::Pinned : EPart::Listed;
+		if (part == EPart::Archived) ++archivedCount;
+		parts.push_back(part);
+	}
+	const auto append = [&](const EPart part, const std::size_t maximum) {
+		std::size_t added = 0;
+		for (std::size_t sessionIndex = 0; sessionIndex < sessions.sessions.size(); ++sessionIndex) {
+			if (parts[sessionIndex] != part) continue;
+			if (added == maximum) break;
+			++added;
+			const auto& session = sessions.sessions[sessionIndex];
+			const auto provider = std::wstring(AgentSessionProviderDisplayName(session.provider));
+			const auto title = session.title.empty() ? texts.untitledSession : session.title;
+			if (!result.selectedRowIndex && !sessions.preferredIdentity.empty()
+				&& identities[sessionIndex] == sessions.preferredIdentity) {
+				result.selectedRowIndex = result.rows.size();
+			}
+			result.rows.push_back({
+				.sessionIndex = sessionIndex,
+				.label = title,
+				.description = provider,
+				.trailing = FormatAgentSessionAge(session.lastActivityUnixSeconds,
+					sessions.nowUnixSeconds, texts.sessionAge),
+				.tooltip = title + L"\n" + provider + L" - " + session.id
+					+ L"\n" + texts.resumeSessionHint,
+				.pinned = part == EPart::Pinned,
+				.archived = part == EPart::Archived,
+			});
+		}
+	};
+	append(EPart::Pinned, sessions.sessions.size());
+	append(EPart::Listed, view.displayCount);
+	if (archivedCount != 0) {
+		if (sessions.preferredIdentity == kArchivedAgentSessionsRowIdentity) {
+			result.selectedRowIndex = result.rows.size();
+		}
+		result.rows.push_back({
+			.kind = EAgentSessionsRowKind::ArchivedToggle,
+			.label = FormatCount(texts.archivedSessionsFormat, archivedCount),
+			.expanded = sessions.archivedExpanded,
+		});
+		if (sessions.archivedExpanded) append(EPart::Archived, sessions.sessions.size());
+	}
+	if (result.rows.empty()) {
+		result.emptyMessage = sessions.state == EProjectSessionsState::Loading
+			? texts.loadingSessions : texts.noSessions;
+	}
+	return result;
+}
+
+std::size_t CountAgentsAwaitingSessionHistory(
+	const std::span<const ProjectAgentSighting> agents,
+	const std::span<const AgentSessionRecord> sessions)
+{
+	std::size_t waiting = 0;
+	for (const auto provider : { EAgentSessionProvider::ClaudeCode, EAgentSessionProvider::Codex,
+		EAgentSessionProvider::Devin, EAgentSessionProvider::Pi }) {
+		const auto name = AgentSessionProviderDisplayName(provider);
+		std::vector<std::int64_t> appeared;
+		for (const auto& agent : agents) {
+			if (agent.name == name) appeared.push_back(agent.firstSeenUnixSeconds);
+		}
+		if (appeared.empty()) continue;
+		std::vector<std::int64_t> activity;
+		for (const auto& session : sessions) {
+			if (session.provider == provider && session.lastActivityUnixSeconds > 0) {
+				activity.push_back(session.lastActivityUnixSeconds);
+			}
+		}
+		// The latest agent is the hardest to cover, so it takes the newest
+		// session first; a session too old for it may still cover an earlier one.
+		std::ranges::sort(appeared, std::ranges::greater{});
+		std::ranges::sort(activity, std::ranges::greater{});
+		std::size_t next = 0;
+		for (const auto firstSeen : appeared) {
+			if (next < activity.size() && activity[next] >= firstSeen) {
+				++next;
+			} else {
+				++waiting;
+			}
+		}
+	}
+	return waiting;
 }
 
 } // namespace workbench::projects

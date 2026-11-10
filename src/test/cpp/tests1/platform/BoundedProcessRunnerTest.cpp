@@ -14,6 +14,7 @@
 #include <charconv>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace platform::process {
 namespace {
@@ -164,6 +165,71 @@ TEST(BoundedProcessRunner, PublishesLiveSeparatedChunksAndTerminatesWhenRejected
 	rejectedRequest.SetOutputObserver(rejecting);
 	EXPECT_EQ(EBoundedProcessStatus::ObserverRejected,
 		RunBoundedProcess(rejectedRequest, nullptr).Status());
+}
+
+namespace {
+
+//! Signals the borrowed close event once the awaited reply has arrived.
+class ClosingObserver final : public IBoundedProcessOutputObserver {
+public:
+	ClosingObserver(const HANDLE closeEvent, std::string marker) : m_closeEvent(closeEvent), m_marker(std::move(marker)) {}
+	bool OnOutput(const EBoundedProcessStream stream, const std::span<const std::uint8_t> bytes) override
+	{
+		if (stream != EBoundedProcessStream::StandardOutput) return true;
+		m_output.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+		if (m_output.find(m_marker) != std::string::npos) (void)::SetEvent(m_closeEvent);
+		return true;
+	}
+private:
+	HANDLE m_closeEvent{};
+	std::string m_marker;
+	std::string m_output;
+};
+
+} // namespace
+
+TEST(BoundedProcessRunner, HoldsStandardInputOpenUntilTheCloseEvent)
+{
+	const HANDLE closeEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+	ASSERT_NE(nullptr, closeEvent);
+	// The pump echoes until EOF. It reaches EOF only after the observer has
+	// seen the echo, so a request/response child is never cut off mid-reply.
+	auto request = ChildRequest(L"pump");
+	request.SetStandardInput("request-1");
+	request.SetStandardInputCloseEvent(closeEvent);
+	request.SetOutputObserver(std::make_shared<ClosingObserver>(closeEvent, "request-1"));
+	const auto result = RunBoundedProcess(request, nullptr);
+	EXPECT_EQ(EBoundedProcessStatus::Succeeded, result.Status());
+	EXPECT_NE(std::string::npos, Bytes(result.StandardOutput()).find("request-1"));
+	EXPECT_EQ(WAIT_OBJECT_0, ::WaitForSingleObject(closeEvent, 0));
+
+	// Without the signal stdin stays open: the pump is still running well
+	// after its echo, so the run ends by cancellation instead of at EOF, and
+	// the writer is still joined. Waiting on the echo rather than on a fixed
+	// deadline keeps this independent of how long the child takes to start.
+	ASSERT_TRUE(::ResetEvent(closeEvent));
+	const HANDLE echoed = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+	const HANDLE stop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+	ASSERT_NE(nullptr, echoed);
+	ASSERT_NE(nullptr, stop);
+	auto held = ChildRequest(L"pump");
+	held.SetStandardInput("held");
+	held.SetStandardInputCloseEvent(closeEvent);
+	held.SetOutputObserver(std::make_shared<ClosingObserver>(echoed, "held"));
+	std::thread canceller([echoed, stop] {
+		(void)::WaitForSingleObject(echoed, 20000);
+		::Sleep(400);
+		(void)::SetEvent(stop);
+	});
+	const auto heldResult = RunBoundedProcess(held, stop);
+	canceller.join();
+	EXPECT_EQ(EBoundedProcessStatus::Cancelled, heldResult.Status());
+	EXPECT_EQ(WAIT_OBJECT_0, ::WaitForSingleObject(echoed, 0));
+	EXPECT_NE(std::string::npos, Bytes(heldResult.StandardOutput()).find("held"));
+	EXPECT_EQ(WAIT_TIMEOUT, ::WaitForSingleObject(closeEvent, 0));
+	EXPECT_TRUE(::CloseHandle(echoed));
+	EXPECT_TRUE(::CloseHandle(stop));
+	EXPECT_TRUE(::CloseHandle(closeEvent));
 }
 
 TEST(BoundedProcessRunner, StreamsInputLargerThanThePipeWithoutDeadlock)

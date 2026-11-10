@@ -68,6 +68,12 @@ public:
 		m_outputObserver = std::move(value);
 	}
 	void SetSensitiveStandardOutput(const bool value) noexcept { m_sensitiveStandardOutput = value; }
+	//! Keeps standard input open after the payload until this borrowed
+	//! manual-reset event is signalled (typically by the output observer) or
+	//! the run ends. For a request/response child that ends its session at
+	//! EOF and would drop requests still in flight. Null = close after the
+	//! payload, the default.
+	void SetStandardInputCloseEvent(const HANDLE value) noexcept { m_standardInputCloseEvent = value; }
 
 	[[nodiscard]] const std::wstring& ExecutablePath() const noexcept { return m_executablePath; }
 	[[nodiscard]] const std::wstring& WorkingDirectory() const noexcept { return m_workingDirectory; }
@@ -89,6 +95,7 @@ public:
 		return m_outputObserver;
 	}
 	[[nodiscard]] bool SensitiveStandardOutput() const noexcept { return m_sensitiveStandardOutput; }
+	[[nodiscard]] HANDLE StandardInputCloseEvent() const noexcept { return m_standardInputCloseEvent; }
 
 private:
 	std::wstring m_executablePath;
@@ -99,6 +106,7 @@ private:
 	std::vector<std::wstring> m_environmentRemovals;
 	std::shared_ptr<IBoundedProcessOutputObserver> m_outputObserver;
 	bool m_sensitiveStandardOutput{ false };
+	HANDLE m_standardInputCloseEvent{ nullptr };
 	std::uint32_t m_timeoutMilliseconds{ 15000 };
 	std::size_t m_maximumStandardOutputBytes{ 4u * 1024u * 1024u };
 	std::size_t m_maximumStandardErrorBytes{ 64u * 1024u };

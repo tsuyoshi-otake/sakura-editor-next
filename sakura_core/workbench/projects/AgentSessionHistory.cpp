@@ -50,18 +50,23 @@ bool HasBoundedJsonNesting(const std::string_view payload) noexcept
 	return !inString && depth == 0;
 }
 
-//! One complete JSON value, or nothing. Never throws.
+//! RFC 8259 insignificant whitespace.
+constexpr bool IsJsonWhitespace(const char character) noexcept
+{
+	return character == ' ' || character == '\t' || character == '\n' || character == '\r';
+}
+
+//! One complete JSON value, or nothing. Never throws. Trailing whitespace,
+//! including the newline a CLI ends its whole-document output with (#410),
+//! is not content.
 std::optional<JsonValue> ParseJson(std::string_view text) noexcept
 {
 	try {
-		while (!text.empty() && (text.back() == '\r' || text.back() == ' ' || text.back() == '\t')) {
-			text.remove_suffix(1);
-		}
+		while (!text.empty() && IsJsonWhitespace(text.back())) text.remove_suffix(1);
 		if (text.empty() || !HasBoundedJsonNesting(text)) return std::nullopt;
 		JsonValue value;
 		std::string error;
 		auto position = picojson::parse(value, text.begin(), text.end(), &error);
-		while (position != text.end() && (*position == ' ' || *position == '\t')) ++position;
 		if (!error.empty() || position != text.end()) return std::nullopt;
 		return value;
 	} catch (...) {
@@ -503,6 +508,201 @@ std::vector<AgentSessionRecord> ParseDevinSessionList(
 		result.push_back(std::move(session));
 	}
 	return result;
+}
+
+namespace {
+
+//! Strict UTF-8: nullopt for an unpaired surrogate.
+std::optional<std::string> Narrow(const std::wstring_view value)
+{
+	if (value.empty()) return std::string{};
+	if (value.size() > static_cast<std::size_t>(INT_MAX)) return std::nullopt;
+	const int length = static_cast<int>(value.size());
+	const int required = ::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), length,
+		nullptr, 0, nullptr, nullptr);
+	if (required <= 0) return std::nullopt;
+	std::string result(static_cast<std::size_t>(required), '\0');
+	if (::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(), length, result.data(), required,
+		nullptr, nullptr) != required) return std::nullopt;
+	return result;
+}
+
+//! A JSON string literal, quotes included, the way JSON.stringify writes it:
+//! only `"`, `\`, and control characters are escaped.
+std::string QuoteJsonUtf8(const std::string_view utf8)
+{
+	static constexpr char kHex[] = "0123456789abcdef";
+	std::string result;
+	result.reserve(utf8.size() + 2U);
+	result.push_back('"');
+	for (const char character : utf8) {
+		const auto byte = static_cast<unsigned char>(character);
+		if (character == '"' || character == '\\') {
+			result.push_back('\\');
+			result.push_back(character);
+		} else if (byte < 0x20) {
+			result += "\\u00";
+			result.push_back(kHex[byte >> 4]);
+			result.push_back(kHex[byte & 0x0f]);
+		} else {
+			result.push_back(character);
+		}
+	}
+	result.push_back('"');
+	return result;
+}
+
+std::optional<std::string> QuoteJsonTitle(const std::wstring_view title)
+{
+	const auto prepared = PrepareAgentSessionRenameTitle(title);
+	if (!prepared) return std::nullopt;
+	const auto utf8 = Narrow(*prepared);
+	if (!utf8) return std::nullopt;
+	return QuoteJsonUtf8(*utf8);
+}
+
+//! Valid ids are ASCII, so the narrowing is exact.
+std::optional<std::string> QuoteJsonId(const std::wstring_view id)
+{
+	if (!IsValidAgentSessionId(id)) return std::nullopt;
+	std::string ascii;
+	ascii.reserve(id.size());
+	for (const wchar_t character : id) ascii.push_back(static_cast<char>(character));
+	return QuoteJsonUtf8(ascii);
+}
+
+bool IsPiEntryId(const std::string_view id) noexcept
+{
+	return id.size() == 8 && std::ranges::all_of(id, [](const char character) {
+		return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f');
+	});
+}
+
+} // namespace
+
+std::optional<std::wstring> PrepareAgentSessionRenameTitle(const std::wstring_view raw)
+{
+	std::wstring result;
+	bool pendingSpace = false;
+	for (const wchar_t character : raw) {
+		if (character < 0x20 || character == 0x7f || std::iswspace(character)) {
+			pendingSpace = !result.empty();
+			continue;
+		}
+		if (pendingSpace) result.push_back(L' ');
+		pendingSpace = false;
+		result.push_back(character);
+		if (result.size() > kMaximumAgentSessionTitleLength) return std::nullopt;
+	}
+	if (result.empty() || !Narrow(result)) return std::nullopt;
+	return result;
+}
+
+std::optional<std::string> BuildClaudeCodeCustomTitleRecord(
+	const std::wstring_view id, const std::wstring_view title)
+{
+	const auto quotedId = QuoteJsonId(id);
+	const auto quotedTitle = QuoteJsonTitle(title);
+	if (!quotedId || !quotedTitle) return std::nullopt;
+	return "{\"type\":\"custom-title\",\"customTitle\":" + *quotedTitle + ",\"sessionId\":" + *quotedId + "}\n";
+}
+
+std::optional<std::string> BuildClaudeCodeCustomTitleSidecar(const std::wstring_view title)
+{
+	const auto quotedTitle = QuoteJsonTitle(title);
+	if (!quotedTitle) return std::nullopt;
+	return "{\"customTitle\":" + *quotedTitle + "}";
+}
+
+std::optional<ClaudeCodeLiveSession> ParseClaudeCodeLiveSession(const std::string_view json)
+{
+	const auto value = ParseJson(json);
+	if (!value || !value->is<JsonObject>()) return std::nullopt;
+	const auto& object = value->get<JsonObject>();
+	auto sessionId = StringField(object, "sessionId");
+	const auto* pid = Find(object, "pid");
+	if (!IsValidAgentSessionId(sessionId) || pid == nullptr || !pid->is<double>()) return std::nullopt;
+	const double number = pid->get<double>();
+	if (!(number >= 1.0) || number > 4294967295.0 || number != static_cast<double>(static_cast<std::uint32_t>(number))) {
+		return std::nullopt;
+	}
+	return ClaudeCodeLiveSession{ std::move(sessionId), static_cast<std::uint32_t>(number) };
+}
+
+std::optional<std::string> BuildCodexRenameRequests(const std::wstring_view id, const std::wstring_view title)
+{
+	const auto quotedId = QuoteJsonId(id);
+	const auto quotedTitle = QuoteJsonTitle(title);
+	if (!quotedId || !quotedTitle) return std::nullopt;
+	return std::string("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":"
+		"{\"name\":\"sakura-editor-next\",\"version\":\"1\"}}}\n"
+		"{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}\n"
+		"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"thread/name/set\",\"params\":{\"threadId\":")
+		+ *quotedId + ",\"name\":" + *quotedTitle + "}}\n";
+}
+
+ECodexRenameReply ParseCodexRenameReplies(const std::string_view standardOutput)
+{
+	auto reply = ECodexRenameReply::Pending;
+	// Only complete lines count: a reply cut by the read boundary is not one yet.
+	const auto lastNewline = standardOutput.rfind('\n');
+	if (lastNewline == std::string_view::npos) return reply;
+	ForEachJsonLine(standardOutput.substr(0, lastNewline + 1), [&reply](const JsonObject& message) {
+		const auto* id = Find(message, "id");
+		if (id == nullptr || !id->is<double>()) return true;	// a notification
+		const double number = id->get<double>();
+		if (number != 1.0 && number != 2.0) return true;
+		if (Find(message, "error") != nullptr) {
+			reply = ECodexRenameReply::Failed;
+			return false;
+		}
+		if (number == 2.0 && Find(message, "result") != nullptr) {
+			reply = ECodexRenameReply::Succeeded;
+			return false;
+		}
+		return true;
+	});
+	return reply;
+}
+
+std::optional<PiSessionChain> ReadPiSessionChain(const std::string_view file, const std::wstring_view sessionId)
+{
+	if (file.empty() || file.back() != '\n' || !IsValidAgentSessionId(sessionId)) return std::nullopt;
+	PiSessionChain chain;
+	bool first = true;
+	std::size_t start = 0;
+	while (start < file.size()) {
+		const auto end = file.find('\n', start);
+		auto line = file.substr(start, end - start);
+		start = end + 1;
+		if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+		const auto value = ParseJson(line);
+		if (!value || !value->is<JsonObject>()) return std::nullopt;
+		const auto& object = value->get<JsonObject>();
+		const auto* id = FindString(object, "id");
+		if (id == nullptr || id->empty()) return std::nullopt;
+		if (first) {
+			first = false;
+			const auto* type = FindString(object, "type");
+			if (type == nullptr || *type != "session" || Widen(*id) != sessionId) return std::nullopt;
+			continue;
+		}
+		chain.entryIds.push_back(*id);
+	}
+	if (first) return std::nullopt;
+	if (!chain.entryIds.empty()) chain.lastEntryId = chain.entryIds.back();
+	return chain;
+}
+
+std::optional<std::string> BuildPiSessionInfoRecord(const std::string_view entryId,
+	const PiSessionChain& chain, const std::string_view timestampIso8601, const std::wstring_view name)
+{
+	const auto quotedName = QuoteJsonTitle(name);
+	if (!quotedName || !IsPiEntryId(entryId) || timestampIso8601.empty()
+		|| std::ranges::find(chain.entryIds, entryId) != chain.entryIds.end()) return std::nullopt;
+	return "{\"type\":\"session_info\",\"id\":" + QuoteJsonUtf8(entryId) + ",\"parentId\":"
+		+ (chain.lastEntryId ? QuoteJsonUtf8(*chain.lastEntryId) : std::string("null"))
+		+ ",\"timestamp\":" + QuoteJsonUtf8(timestampIso8601) + ",\"name\":" + *quotedName + "}\n";
 }
 
 std::vector<AgentSessionRecord> MergeAgentSessions(

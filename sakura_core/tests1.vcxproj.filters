@@ -246,6 +246,15 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\AgentSessionHistoryTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\AgentSessionStoreOperationsTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\AgentSessionManagementTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\AgentSessionRestoreTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceResourceDescriptorsTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>

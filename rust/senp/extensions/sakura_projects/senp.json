@@ -26,6 +26,12 @@
           "name": "Projects",
           "provider": "sakura.projects",
           "order": 10
+        },
+        {
+          "id": "sakura.agentSessions",
+          "name": "Sessions",
+          "provider": "sakura.projects",
+          "order": 20
         }
       ]
     }

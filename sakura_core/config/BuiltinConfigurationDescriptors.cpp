@@ -166,6 +166,13 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		{ "sakura.terminal.shortcutPreset", ConfigurationValue(L"screen"),
 			{ Scope::Profile, Scope::Workspace, Scope::Folder },
 			{ Kind::String, 16, { L"none", L"tmux", L"screen" } } },
+		// #406 Phase 2 (fork extension): whether opening a Project resumes the
+		// agent CLI sessions recorded as live when a window last left it. VS
+		// Code has no equivalent. Application/Profile only, like http.* and
+		// update.*: a repository must not be able to re-enable process spawning
+		// on open that the user turned off.
+		{ "sakura.projects.restoreAgentSessions", ConfigurationValue(true),
+			{ Scope::Application, Scope::Profile }, { Kind::Boolean } },
 		// Network policy is deliberately application/profile-only.  A repository
 		// must not be able to redirect an editor to a proxy or registry, weaken
 		// certificate handling, or make requests wait longer by committing a

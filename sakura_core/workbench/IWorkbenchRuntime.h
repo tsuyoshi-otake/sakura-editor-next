@@ -39,6 +39,8 @@ namespace workbench::recent {
 
 namespace workbench::projects {
 	class IProjectCatalogService;
+	class IAgentSessionViewStateService;
+	class IAgentSessionRestoreService;
 }
 
 namespace workbench::problems {
@@ -177,6 +179,13 @@ public:
 	//! Saved Project navigation catalog. Entries point to Folder or Workspace
 	//! identities; WorkspaceContext remains the only active workspace authority.
 	[[nodiscard]] virtual projects::IProjectCatalogService* Projects() noexcept { return nullptr; }
+	//! #408: the Sessions view's pins, archive marks, and display count,
+	//! shared by the profile. UI thread only; the view loads it on refresh.
+	[[nodiscard]] virtual projects::IAgentSessionViewStateService* AgentSessionViewState() noexcept { return nullptr; }
+	//! #406 Phase 2: which agent sessions were live when a window left each
+	//! Project, shared by the profile. UI thread only; the window loads it
+	//! before planning a restore and updates it on close and Project switches.
+	[[nodiscard]] virtual projects::IAgentSessionRestoreService* AgentSessionRestore() noexcept { return nullptr; }
 	//! Stable-ID contributions and HWND-free layout state remain separate from native workbench adapters.
 	[[nodiscard]] virtual layout::WorkbenchContributionRegistry& Contributions() noexcept = 0;
 	[[nodiscard]] virtual const layout::WorkbenchContributionRegistry& Contributions() const noexcept = 0;

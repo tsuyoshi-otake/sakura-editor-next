@@ -10,6 +10,7 @@
 #include "config/WorkspaceContextTypes.h"
 #include "workbench/agent/AgentWorkspacesModel.h"
 #include "workbench/projects/AgentSessionHistory.h"
+#include "workbench/projects/AgentSessionManagement.h"
 #include "workbench/projects/ProjectCatalogService.h"
 
 #include <cstddef>
@@ -44,11 +45,16 @@ struct ProjectsTexts final {
 	std::wstring branchesFormat{ L"{0} branches" };
 	std::wstring hideLinkedWorktrees{ L"Hide linked worktrees" };
 	std::wstring showLinkedWorktrees{ L"Show linked worktrees" };
+	//! #411: the two pane headers of the Projects ViewContainer.
+	std::wstring projects{ L"Projects" };
 	std::wstring sessions{ L"Sessions" };
 	std::wstring loadingSessions{ L"Loading..." };
-	std::wstring sessionsCountFormat{ L"{0} sessions" };
+	std::wstring noSessions{ L"No sessions" };
 	std::wstring untitledSession{ L"Untitled session" };
 	std::wstring resumeSessionHint{ L"Double-click to resume in a new terminal" };
+	//! #408: a pinned row's accessible suffix and the Archived group's label.
+	std::wstring pinnedSession{ L"Pinned" };
+	std::wstring archivedSessionsFormat{ L"Archived ({0})" };
 	AgentSessionAgeTexts sessionAge;
 };
 
@@ -58,8 +64,6 @@ enum class EProjectsRowKind : std::uint8_t {
 	WorktreesToggle,
 	Worktree,
 	Agent,
-	SessionsToggle,
-	Session,
 };
 
 enum class EProjectBranchSummaryStatus : std::uint8_t {
@@ -124,13 +128,11 @@ struct ProjectsRow final {
 	std::size_t projectIndex{};
 	std::optional<std::size_t> worktreeIndex;
 	std::optional<std::size_t> agentIndex;
-	std::optional<std::size_t> sessionIndex;
 	std::wstring label;
 	std::wstring description;
 	std::wstring trailing;
 	std::wstring tooltip;	//! hover text; empty means the row shows no tooltip
 	std::size_t hiddenWorktreeCount{};
-	std::size_t sessionCount{};	//! SessionsToggle only: sessions in the group
 	bool currentProject = false;
 	bool primaryWorktree = false;
 	bool expanded = false;
@@ -139,8 +141,8 @@ struct ProjectsRow final {
 	[[nodiscard]] bool operator==(const ProjectsRow&) const noexcept = default;
 };
 
-//! #406 session history for the current Project. Loading shows the group row
-//! with a loading marker; Ready with no sessions, and Unavailable, show none.
+//! #406 session history of the current folder. Loading keeps the sessions
+//! last accepted for that folder; Unavailable shows none.
 enum class EProjectSessionsState : std::uint8_t {
 	Unavailable,
 	Loading,
@@ -150,9 +152,45 @@ enum class EProjectSessionsState : std::uint8_t {
 struct ProjectSessionsInput final {
 	EProjectSessionsState state{ EProjectSessionsState::Unavailable };
 	std::span<const AgentSessionRecord> sessions;
-	bool expanded = true;
 	std::int64_t nowUnixSeconds{};	//! for the relative age column
-	std::wstring_view preferredIdentity;	//! AgentSessionIdentity of the row to select
+	//! AgentSessionIdentity of the row to select, or
+	//! kArchivedAgentSessionsRowIdentity for the Archived group row.
+	std::wstring_view preferredIdentity;
+	//! #408: pins, archive marks, and the display count. Null = no marks and
+	//! the default count.
+	const AgentSessionViewState* view{};
+	bool archivedExpanded{};
+};
+
+inline constexpr std::wstring_view kArchivedAgentSessionsRowIdentity = L"#archived";
+
+enum class EAgentSessionsRowKind : std::uint8_t {
+	Session,
+	ArchivedToggle,	//! the collapsible "Archived (n)" group row
+};
+
+//! #411: one row of the Sessions View, a sibling of the Projects View in the
+//! Projects ViewContainer rather than a group inside the Projects tree.
+struct AgentSessionsRow final {
+	EAgentSessionsRowKind kind{ EAgentSessionsRowKind::Session };
+	std::size_t sessionIndex{};	//! Session rows only
+	std::wstring label;	//! the session title, or texts.untitledSession
+	std::wstring description;	//! the provider's display name
+	std::wstring trailing;	//! the relative age
+	std::wstring tooltip;
+	bool pinned{};
+	bool archived{};	//! a session row inside the Archived group
+	bool expanded{};	//! ArchivedToggle only
+
+	[[nodiscard]] bool operator==(const AgentSessionsRow&) const noexcept = default;
+};
+
+struct AgentSessionsProjection final {
+	std::vector<AgentSessionsRow> rows;
+	//! The row whose identity is preferredIdentity; nothing is selected otherwise.
+	std::optional<std::size_t> selectedRowIndex;
+	//! What the list says while it has no rows; empty when rows exist.
+	std::wstring emptyMessage;
 };
 
 struct ProjectsProjection final {
@@ -173,8 +211,18 @@ struct ProjectsProjection final {
 	std::wstring_view preferredWorktreeIdentity = {},
 	const ProjectsTexts& texts = {},
 	std::span<const ProjectAgentEntry> agents = {},
-	std::wstring_view preferredAgentIdentity = {},
-	const ProjectSessionsInput& sessions = {});
+	std::wstring_view preferredAgentIdentity = {});
+
+//! #411: the Sessions View's rows. Loading with no sessions yet says
+//! loadingSessions, Ready with none says noSessions, and Unavailable says
+//! unavailable and lists nothing, even sessions accepted earlier.
+//! #408 order, each part in the order discovery returned it (newest first):
+//! every pinned session, then at most view.displayCount sessions that are
+//! neither pinned nor archived, then, when any session is archived, the
+//! Archived group row followed by the archived sessions while it is expanded.
+[[nodiscard]] AgentSessionsProjection ProjectAgentSessions(
+	const ProjectSessionsInput& sessions,
+	const ProjectsTexts& texts = {});
 
 //! Aggregates completed repository observations without inventing a branch for
 //! failed or truncated inputs.  A mixed result counts distinct branch labels.
@@ -201,5 +249,22 @@ struct ProjectsProjection final {
 [[nodiscard]] std::wstring ProjectsAccessibleLabel(
 	const ProjectsRow& row,
 	const ProjectsTexts& texts = {});
+[[nodiscard]] std::wstring AgentSessionsAccessibleLabel(
+	const AgentSessionsRow& row, const ProjectsTexts& texts = {});
+
+//! #410: an agent row the page saw appear, and when it first saw it.
+struct ProjectAgentSighting final {
+	std::wstring_view name;	//! ProjectAgentEntry::name, the product name
+	std::int64_t firstSeenUnixSeconds{};
+};
+
+//! How many sighted agents still lack a session of their own provider with
+//! activity at or after the moment the agent appeared. An agent CLI writes its
+//! session file only after the first message, so the row appears before the
+//! session exists. Each session covers at most one agent, and an agent whose
+//! product name is not a session provider's display name is never waiting.
+[[nodiscard]] std::size_t CountAgentsAwaitingSessionHistory(
+	std::span<const ProjectAgentSighting> agents,
+	std::span<const AgentSessionRecord> sessions);
 
 } // namespace workbench::projects

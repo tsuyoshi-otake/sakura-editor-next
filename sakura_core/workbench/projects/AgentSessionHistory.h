@@ -117,6 +117,63 @@ inline constexpr std::size_t kMaximumAgentSessionTitleLength = 160;
 [[nodiscard]] std::vector<AgentSessionRecord> MergeAgentSessions(
 	std::vector<AgentSessionRecord> sessions, std::size_t maximum);
 
+//! #408 rename: the write side of the formats parsed above. Each record is
+//! the exact UTF-8 bytes to append, one JSON object ending with '\n'.
+
+//! The title a rename writes: whitespace and control characters collapsed to
+//! single spaces and trimmed. nullopt when nothing is left, when the result
+//! exceeds kMaximumAgentSessionTitleLength, or for an unpaired surrogate. A
+//! title is never truncated on its way into an agent's store.
+[[nodiscard]] std::optional<std::wstring> PrepareAgentSessionRenameTitle(std::wstring_view raw);
+
+//! Claude Code 2.1: `{"type":"custom-title","customTitle":..,"sessionId":..}`.
+//! The CLI appends this line itself and the latest one wins.
+[[nodiscard]] std::optional<std::string> BuildClaudeCodeCustomTitleRecord(
+	std::wstring_view id, std::wstring_view title);
+//! Claude Code 2.1 `<id>\custom-title.json`: `{"customTitle":..}`, the whole
+//! file. The session list reads it before the transcript's custom-title.
+[[nodiscard]] std::optional<std::string> BuildClaudeCodeCustomTitleSidecar(std::wstring_view title);
+//! Claude Code `sessions\<pid>.json`: the session a running CLI process owns.
+struct ClaudeCodeLiveSession final {
+	std::wstring sessionId;
+	std::uint32_t processId{};
+};
+[[nodiscard]] std::optional<ClaudeCodeLiveSession> ParseClaudeCodeLiveSession(std::string_view json);
+
+//! Codex 0.167 keeps the displayed name in its state database, so a rename
+//! goes through `codex app-server` (`thread/name/set`), which updates the
+//! database and `session_index.jsonl` together. These are the three JSON-RPC
+//! lines to send: initialize (id 1), initialized, thread/name/set (id 2).
+[[nodiscard]] std::optional<std::string> BuildCodexRenameRequests(
+	std::wstring_view id, std::wstring_view title);
+enum class ECodexRenameReply : std::uint8_t {
+	Pending,	//! no reply to thread/name/set yet
+	Succeeded,
+	Failed,	//! initialize or thread/name/set answered with an error
+};
+//! Reads the app-server's standard output so far (JSON lines; a cut last line
+//! is ignored).
+[[nodiscard]] ECodexRenameReply ParseCodexRenameReplies(std::string_view standardOutput);
+
+//! Pi 1.3 links every entry to the one before it. The chain end of a whole
+//! session file: the id a new entry must name as its parent (nullopt when the
+//! file holds only the header) and every id already used.
+struct PiSessionChain final {
+	std::optional<std::string> lastEntryId;
+	std::vector<std::string> entryIds;
+};
+//! nullopt unless `file` is a complete Pi session for `sessionId`: it ends
+//! with '\n', its first line is the `session` header with that id, and every
+//! later line is an object with a string `id`.
+[[nodiscard]] std::optional<PiSessionChain> ReadPiSessionChain(
+	std::string_view file, std::wstring_view sessionId);
+//! Pi 1.3 `appendSessionInfo`: `{"type":"session_info","id":..,"parentId":..,
+//! "timestamp":..,"name":..}`; parentId is null for a header-only file.
+//! `entryId` is 8 lowercase hex digits that `chain` does not use yet.
+[[nodiscard]] std::optional<std::string> BuildPiSessionInfoRecord(
+	std::string_view entryId, const PiSessionChain& chain,
+	std::string_view timestampIso8601, std::wstring_view name);
+
 struct AgentSessionAgeTexts final {
 	std::wstring now{ L"now" };
 	std::wstring minutesFormat{ L"{0}m" };

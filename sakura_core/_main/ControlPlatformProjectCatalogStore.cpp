@@ -15,7 +15,6 @@
 namespace {
 
 constexpr char kOwner[] = "workbench.projects";
-constexpr char kKey[] = "state";
 
 std::string GenerateOperationId()
 {
@@ -42,7 +41,8 @@ bool IsValidOperationId(const std::string& value) noexcept
 
 CControlPlatformProjectCatalogStore::CControlPlatformProjectCatalogStore(
 	platform::controlipc::CEditorControlPlatformRuntime& runtime,
-	std::string canonicalProfileId) :
+	std::string canonicalProfileId,
+	std::string key) :
 	CControlPlatformProjectCatalogStore(std::move(canonicalProfileId), {
 		.storageCacheCoordinates = [&runtime] { return runtime.StorageCacheCoordinates(); },
 		.waitForStorageCacheReady = [&runtime](const std::chrono::milliseconds timeout) {
@@ -55,14 +55,16 @@ CControlPlatformProjectCatalogStore::CControlPlatformProjectCatalogStore(
 			return runtime.Apply(request);
 		},
 		.operationIdFactory = GenerateOperationId,
-	})
+	}, std::move(key))
 {
 }
 
 CControlPlatformProjectCatalogStore::CControlPlatformProjectCatalogStore(
 	std::string canonicalProfileId,
-	workbench::projects::ControlPlatformProjectCatalogStoreDependencies dependencies) :
+	workbench::projects::ControlPlatformProjectCatalogStoreDependencies dependencies,
+	std::string key) :
 	m_canonicalProfileId(std::move(canonicalProfileId)),
+	m_key(std::move(key)),
 	m_dependencies(std::move(dependencies))
 {
 }
@@ -71,7 +73,7 @@ std::optional<platform::storage::StorageAddress>
 CControlPlatformProjectCatalogStore::Address() const noexcept
 {
 	platform::storage::StorageAddress address{
-		platform::storage::EStorageScope::Profile, m_canonicalProfileId, kOwner, kKey };
+		platform::storage::EStorageScope::Profile, m_canonicalProfileId, kOwner, m_key };
 	return address.IsValid()
 		? std::optional<platform::storage::StorageAddress>(std::move(address)) : std::nullopt;
 }

@@ -604,6 +604,14 @@ bool CNormalProcess::InitializeProcess()
 	workbenchDependencies.projectCatalogStore =
 		std::make_unique<CControlPlatformProjectCatalogStore>(
 			*m_editorControlPlatformRuntime, platformIdentity->profileId);
+	workbenchDependencies.agentSessionViewStateStore =
+		std::make_unique<CControlPlatformProjectCatalogStore>(
+			*m_editorControlPlatformRuntime, platformIdentity->profileId,
+			kAgentSessionViewStateStorageKey);
+	workbenchDependencies.agentSessionRestoreStore =
+		std::make_unique<CControlPlatformProjectCatalogStore>(
+			*m_editorControlPlatformRuntime, platformIdentity->profileId,
+			kAgentSessionRestoreStorageKey);
 	workbenchDependencies.statusbarVisibilityMementoStore =
 		std::make_unique<CControlPlatformStatusbarVisibilityMementoStore>(
 			*m_editorControlPlatformRuntime, platformIdentity->profileId);

@@ -316,6 +316,14 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	, m_projects(dependencies.projectCatalogStore
 		? std::make_unique<projects::CProjectCatalogService>(std::move(dependencies.projectCatalogStore))
 		: nullptr)
+	, m_agentSessionViewState(dependencies.agentSessionViewStateStore
+		? std::make_unique<projects::CAgentSessionViewStateService>(
+			std::move(dependencies.agentSessionViewStateStore))
+		: nullptr)
+	, m_agentSessionRestore(dependencies.agentSessionRestoreStore
+		? std::make_unique<projects::CAgentSessionRestoreService>(
+			std::move(dependencies.agentSessionRestoreStore))
+		: nullptr)
 	, m_senpManagement(std::move(dependencies.senpManagementService))
 	, m_senpRuntime(m_senpManagement ? senp::CreateWin32SenpRuntimeService(*m_senpManagement) : nullptr)
 	, m_senpLanguage(m_senpManagement ? senp::CreateSenpLanguageService(*m_senpManagement) : nullptr)
@@ -404,6 +412,18 @@ projects::IProjectCatalogService* CWorkbenchRuntime::Projects() noexcept
 {
 	std::lock_guard lock(m_stateMutex);
 	return IsReadyForServiceAccessLocked() ? m_projects.get() : nullptr;
+}
+
+projects::IAgentSessionViewStateService* CWorkbenchRuntime::AgentSessionViewState() noexcept
+{
+	std::lock_guard lock(m_stateMutex);
+	return IsReadyForServiceAccessLocked() ? m_agentSessionViewState.get() : nullptr;
+}
+
+projects::IAgentSessionRestoreService* CWorkbenchRuntime::AgentSessionRestore() noexcept
+{
+	std::lock_guard lock(m_stateMutex);
+	return IsReadyForServiceAccessLocked() ? m_agentSessionRestore.get() : nullptr;
 }
 
 senp::ISenpManagementService* CWorkbenchRuntime::Extensions() noexcept

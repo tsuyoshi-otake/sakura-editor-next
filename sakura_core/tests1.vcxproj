@@ -285,6 +285,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\AgentWorkspacesModelTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ProjectsTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\AgentSessionHistoryTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\AgentSessionStoreOperationsTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\AgentSessionManagementTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\AgentSessionRestoreTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\FolderTaskCatalogRegistryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\TaskConfigurationCatalogTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\TaskExecutionServiceTest.cpp" />

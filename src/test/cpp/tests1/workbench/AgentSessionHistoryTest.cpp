@@ -369,6 +369,26 @@ TEST(AgentSessionHistory, DevinListKeepsValidSessionsForTheFolder)
 	EXPECT_TRUE(ParseDevinSessionList("", L"C:\\repo").empty());
 }
 
+// #410: `devin list --format json` (3000.12.17) pretty-prints the whole array
+// and ends it with a newline. That newline is JSON whitespace, not trailing
+// content, so the list must still parse; any other trailing byte rejects it.
+TEST(AgentSessionHistory, DevinListAcceptsTheCliTrailingNewline)
+{
+	const std::string body = "[\n  {\n    \"id\": \"sweltering-grade\",\n"
+		"    \"working_directory\": \"C:\\\\repo\",\n"
+		"    \"last_activity_at\": 1794275330,\n"
+		"    \"title\": \"Hello\"\n  }\n]";
+	for (const std::string_view ending : { "\n", "\r\n", " \n\t\r\n" }) {
+		const auto sessions = ParseDevinSessionList(body + std::string(ending), L"C:\\repo");
+		ASSERT_EQ(1U, sessions.size());
+		EXPECT_EQ(L"sweltering-grade", sessions[0].id);
+		EXPECT_EQ(L"Hello", sessions[0].title);
+		EXPECT_EQ(1794275330, sessions[0].lastActivityUnixSeconds);
+	}
+	EXPECT_TRUE(ParseDevinSessionList(body + "\nx", L"C:\\repo").empty());
+	EXPECT_TRUE(ParseDevinSessionList(body + "\n[]", L"C:\\repo").empty());
+}
+
 TEST(AgentSessionHistory, MergeOrdersNewestFirstWithUnknownTimesLastAndRemovesDuplicates)
 {
 	std::vector<AgentSessionRecord> sessions{
@@ -546,4 +566,192 @@ TEST(AgentSessionDiscovery, StopDiscardsResultsAndMissingRootsContributeNothing)
 	const auto relative = DiscoverAgentSessions(L"repo", homes.roots, {}, nullptr);
 	ASSERT_TRUE(relative.has_value());
 	EXPECT_TRUE(relative->empty());
+}
+
+TEST(AgentSessionHistory, RenameTitlesAreOneNormalisedLineWithinTheBound)
+{
+	EXPECT_EQ(std::optional<std::wstring>(L"Fix the parser"), PrepareAgentSessionRenameTitle(L"  Fix\tthe \r\n parser  "));
+	EXPECT_EQ(std::optional<std::wstring>(L"a b"), PrepareAgentSessionRenameTitle(L"a\x01\x7f" L"b"));
+	EXPECT_EQ(std::optional<std::wstring>(L"\u65e5\u672c\u8a9e"), PrepareAgentSessionRenameTitle(L"\u3000\u65e5\u672c\u8a9e\u3000"));
+	EXPECT_FALSE(PrepareAgentSessionRenameTitle(L"").has_value());
+	EXPECT_FALSE(PrepareAgentSessionRenameTitle(L" \t\r\n").has_value());
+	// An unpaired surrogate has no UTF-8 form.
+	EXPECT_FALSE(PrepareAgentSessionRenameTitle(std::wstring(1, static_cast<wchar_t>(0xD800))).has_value());
+	EXPECT_TRUE(PrepareAgentSessionRenameTitle(std::wstring(kMaximumAgentSessionTitleLength, L'x')).has_value());
+	EXPECT_FALSE(PrepareAgentSessionRenameTitle(std::wstring(kMaximumAgentSessionTitleLength + 1U, L'x')).has_value());
+}
+
+TEST(AgentSessionHistory, ClaudeCodeRenameRecordsAreExactAndReadBackAsTheTitle)
+{
+	const auto record = BuildClaudeCodeCustomTitleRecord(kClaudeId, L" Quote \" and \\ back ");
+	EXPECT_EQ(std::optional<std::string>(
+		"{\"type\":\"custom-title\",\"customTitle\":\"Quote \\\" and \\\\ back\","
+		"\"sessionId\":\"0f1e2d3c-4b5a-4968-8776-655443322110\"}\n"), record);
+	EXPECT_EQ(std::optional<std::string>("{\"customTitle\":\"Quote \\\" and \\\\ back\"}"),
+		BuildClaudeCodeCustomTitleSidecar(L" Quote \" and \\ back "));
+	EXPECT_EQ(std::optional<std::string>("{\"customTitle\":\"\xE6\x97\xA5\xE6\x9C\xAC\"}"),
+		BuildClaudeCodeCustomTitleSidecar(L"\u65e5\u672c"));
+	EXPECT_FALSE(BuildClaudeCodeCustomTitleRecord(L"a b", L"Title").has_value());
+	EXPECT_FALSE(BuildClaudeCodeCustomTitleRecord(kClaudeId, L"  ").has_value());
+	EXPECT_FALSE(BuildClaudeCodeCustomTitleSidecar(L"").has_value());
+
+	// Appended to a transcript, the record is the title discovery reports.
+	TemporaryAgentHomes homes;
+	WriteFile(homes.ClaudeProject() / (std::wstring(kClaudeId) + L".jsonl"),
+		ClaudeTranscript(homes.folder.wstring(), "Generated title") + *record, 1'700'000'000);
+	const auto sessions = DiscoverAgentSessions(homes.folder.wstring(), homes.roots, {}, nullptr);
+	ASSERT_TRUE(sessions.has_value());
+	ASSERT_EQ(1U, sessions->size());
+	EXPECT_EQ(L"Quote \" and \\ back", (*sessions)[0].title);
+}
+
+TEST(AgentSessionHistory, ClaudeCodeLiveSessionMarkersNeedAValidIdAndProcessId)
+{
+	const auto live = ParseClaudeCodeLiveSession(
+		R"({"pid":4242,"sessionId":"0f1e2d3c-4b5a-4968-8776-655443322110","cwd":"C:\\repo","kind":"interactive"})");
+	ASSERT_TRUE(live.has_value());
+	EXPECT_EQ(kClaudeId, live->sessionId);
+	EXPECT_EQ(4242U, live->processId);
+	for (const std::string_view json : {
+		std::string_view(""), std::string_view("[]"), std::string_view(R"({"pid":4242})"),
+		std::string_view(R"({"sessionId":"abc"})"), std::string_view(R"({"pid":"4242","sessionId":"abc"})"),
+		std::string_view(R"({"pid":0,"sessionId":"abc"})"), std::string_view(R"({"pid":-3,"sessionId":"abc"})"),
+		std::string_view(R"({"pid":1.5,"sessionId":"abc"})"), std::string_view(R"({"pid":4294967296,"sessionId":"abc"})"),
+		std::string_view(R"({"pid":4242,"sessionId":"a b"})") }) {
+		EXPECT_FALSE(ParseClaudeCodeLiveSession(json).has_value()) << json;
+	}
+}
+
+TEST(AgentSessionHistory, CodexRenameRequestsAndRepliesFollowTheAppServerProtocol)
+{
+	EXPECT_EQ(std::optional<std::string>(
+		"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":"
+		"{\"name\":\"sakura-editor-next\",\"version\":\"1\"}}}\n"
+		"{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}\n"
+		"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"thread/name/set\",\"params\":{\"threadId\":"
+		"\"019a0000-0000-7000-8000-000000000001\",\"name\":\"Add \\\"sessions\\\"\"}}\n"),
+		BuildCodexRenameRequests(kCodexId, L"Add \"sessions\""));
+	EXPECT_FALSE(BuildCodexRenameRequests(L"-x", L"Name").has_value());
+	EXPECT_FALSE(BuildCodexRenameRequests(kCodexId, L"").has_value());
+
+	EXPECT_EQ(ECodexRenameReply::Pending, ParseCodexRenameReplies(""));
+	EXPECT_EQ(ECodexRenameReply::Pending, ParseCodexRenameReplies("{\"id\":1,\"result\":{}}\n"));
+	// A reply cut by the read boundary is not a reply yet.
+	EXPECT_EQ(ECodexRenameReply::Pending, ParseCodexRenameReplies("{\"id\":1,\"result\":{}}\n{\"id\":2,\"result\":{}}"));
+	EXPECT_EQ(ECodexRenameReply::Pending,
+		ParseCodexRenameReplies("{\"method\":\"thread/name/updated\",\"params\":{}}\n{\"id\":7,\"result\":{}}\nnoise\n"));
+	EXPECT_EQ(ECodexRenameReply::Succeeded,
+		ParseCodexRenameReplies("{\"id\":1,\"result\":{}}\n{\"method\":\"x\"}\n{\"id\":2,\"result\":{}}\n"));
+	EXPECT_EQ(ECodexRenameReply::Failed,
+		ParseCodexRenameReplies("{\"id\":1,\"error\":{\"code\":-32600}}\n{\"id\":2,\"result\":{}}\n"));
+	EXPECT_EQ(ECodexRenameReply::Failed,
+		ParseCodexRenameReplies("{\"id\":1,\"result\":{}}\n{\"id\":2,\"error\":{\"message\":\"unknown thread\"}}\n"));
+}
+
+TEST(AgentSessionHistory, PiSessionInfoEntriesLinkToTheEndOfACompleteChain)
+{
+	const std::string header = "{\"type\":\"session\",\"version\":3,\"id\":\"019a1111-2222-7333-8444-555566667777\"}\n";
+	const auto empty = ReadPiSessionChain(header, kPiId);
+	ASSERT_TRUE(empty.has_value());
+	EXPECT_FALSE(empty->lastEntryId.has_value());
+	EXPECT_TRUE(empty->entryIds.empty());
+	EXPECT_EQ(std::optional<std::string>("{\"type\":\"session_info\",\"id\":\"0a1b2c3d\",\"parentId\":null,"
+		"\"timestamp\":\"2026-11-10T01:02:03.004Z\",\"name\":\"Named\"}\n"),
+		BuildPiSessionInfoRecord("0a1b2c3d", *empty, "2026-11-10T01:02:03.004Z", L" Named "));
+
+	const std::string file = header
+		+ "{\"type\":\"message\",\"id\":\"aaaaaaaa\",\"parentId\":null}\r\n"
+		+ "{\"type\":\"message\",\"id\":\"bbbbbbbb\",\"parentId\":\"aaaaaaaa\"}\n";
+	const auto chain = ReadPiSessionChain(file, kPiId);
+	ASSERT_TRUE(chain.has_value());
+	EXPECT_EQ(std::optional<std::string>("bbbbbbbb"), chain->lastEntryId);
+	EXPECT_EQ((std::vector<std::string>{ "aaaaaaaa", "bbbbbbbb" }), chain->entryIds);
+	const auto record = BuildPiSessionInfoRecord("0a1b2c3d", *chain, "2026-11-10T01:02:03.004Z", L"Port \"it\"");
+	EXPECT_EQ(std::optional<std::string>("{\"type\":\"session_info\",\"id\":\"0a1b2c3d\",\"parentId\":\"bbbbbbbb\","
+		"\"timestamp\":\"2026-11-10T01:02:03.004Z\",\"name\":\"Port \\\"it\\\"\"}\n"), record);
+	// The appended entry extends the chain and is the name the parser reports.
+	const auto extended = ReadPiSessionChain(file + *record, kPiId);
+	ASSERT_TRUE(extended.has_value());
+	EXPECT_EQ(std::optional<std::string>("0a1b2c3d"), extended->lastEntryId);
+
+	// An id already in the file, a malformed id, and an empty timestamp or name are refused.
+	EXPECT_FALSE(BuildPiSessionInfoRecord("aaaaaaaa", *chain, "2026-11-10T01:02:03.004Z", L"Named").has_value());
+	EXPECT_FALSE(BuildPiSessionInfoRecord("0A1B2C3D", *chain, "2026-11-10T01:02:03.004Z", L"Named").has_value());
+	EXPECT_FALSE(BuildPiSessionInfoRecord("0a1b2c3", *chain, "2026-11-10T01:02:03.004Z", L"Named").has_value());
+	EXPECT_FALSE(BuildPiSessionInfoRecord("0a1b2c3d", *chain, "", L"Named").has_value());
+	EXPECT_FALSE(BuildPiSessionInfoRecord("0a1b2c3d", *chain, "2026-11-10T01:02:03.004Z", L" ").has_value());
+
+	// Only a complete file for this session is a chain.
+	EXPECT_FALSE(ReadPiSessionChain("", kPiId).has_value());
+	EXPECT_FALSE(ReadPiSessionChain(header.substr(0, header.size() - 1), kPiId).has_value());
+	EXPECT_FALSE(ReadPiSessionChain(header, kCodexId).has_value());
+	EXPECT_FALSE(ReadPiSessionChain(header + "{\"type\":\"message\"}\n", kPiId).has_value());
+	EXPECT_FALSE(ReadPiSessionChain(header + "{\"type\":\"message\",\"id\":7}\n", kPiId).has_value());
+	EXPECT_FALSE(ReadPiSessionChain(header + "not json\n", kPiId).has_value());
+	EXPECT_FALSE(ReadPiSessionChain(header + "{\"type\":\"mess", kPiId).has_value());
+	EXPECT_FALSE(ReadPiSessionChain("{\"type\":\"message\",\"id\":\"019a1111-2222-7333-8444-555566667777\"}\n", kPiId)
+		.has_value());
+}
+
+// #408: a pinned or archived session stays listed however many newer sessions exist.
+TEST(AgentSessionDiscovery, RequiredIdentitiesAreReadFirstAndDoNotCountAgainstTheProviderLimit)
+{
+	TemporaryAgentHomes homes;
+	const auto folder = homes.folder.wstring();
+	constexpr std::int64_t base = 1'700'000'000;
+	const auto claudeId = [](const int index) { return L"claude-" + std::to_wstring(index); };
+	const auto piId = [](const int index) { return L"pi-" + std::to_wstring(index); };
+	// Index 0 is the oldest session of each provider.
+	for (int index = 0; index < 6; ++index) {
+		WriteFile(homes.ClaudeProject() / (claudeId(index) + L".jsonl"),
+			ClaudeTranscript(folder, "Claude " + std::to_string(index)), base + index);
+		WriteFile(homes.PiSessions() / (L"2026-11-09T10-00-0" + std::to_wstring(index) + L"-000Z_" + piId(index) + L".jsonl"),
+			PiSession(piId(index), folder, "Pi " + std::to_string(index)), base + 100 + index);
+	}
+	WriteFile(homes.CodexDay() / (L"rollout-2026-11-09T10-00-00-" + std::wstring(kCodexId) + L".jsonl"),
+		CodexRollout(kCodexId, folder, "user"), base - 500);
+
+	const auto ids = [](const std::optional<std::vector<AgentSessionRecord>>& sessions) {
+		std::vector<std::wstring> result;
+		if (sessions) for (const auto& session : *sessions) result.push_back(AgentSessionIdentity(session));
+		return result;
+	};
+	AgentSessionDiscoveryLimits limits;
+	limits.maximumSessionsPerProvider = 2;
+	limits.maximumSessions = 20;
+	EXPECT_EQ((std::vector<std::wstring>{ L"pi:pi-5", L"pi:pi-4", L"claude-code:claude-5", L"claude-code:claude-4",
+		std::wstring(L"codex:") + kCodexId }), ids(DiscoverAgentSessions(folder, homes.roots, limits, nullptr)));
+
+	// The old marked sessions come on top of the two newest of each provider.
+	limits.requiredIdentities = { L"claude-code:claude-0", L"pi:pi-1", L"pi:missing", L"devin:not-a-file" };
+	EXPECT_EQ((std::vector<std::wstring>{ L"pi:pi-5", L"pi:pi-4", L"pi:pi-1", L"claude-code:claude-5",
+		L"claude-code:claude-4", L"claude-code:claude-0", std::wstring(L"codex:") + kCodexId }),
+		ids(DiscoverAgentSessions(folder, homes.roots, limits, nullptr)));
+
+	// A marked session that is among the newest is listed once, and it does
+	// not use up one of its provider's two unmarked places.
+	limits.requiredIdentities = { L"claude-code:claude-5" };
+	EXPECT_EQ((std::vector<std::wstring>{ L"pi:pi-5", L"pi:pi-4", L"claude-code:claude-5", L"claude-code:claude-4",
+		L"claude-code:claude-3", std::wstring(L"codex:") + kCodexId }),
+		ids(DiscoverAgentSessions(folder, homes.roots, limits, nullptr)));
+
+	// The overall bound still holds.
+	limits.requiredIdentities = { L"claude-code:claude-0", L"pi:pi-1" };
+	limits.maximumSessions = 3;
+	EXPECT_EQ(3U, ids(DiscoverAgentSessions(folder, homes.roots, limits, nullptr)).size());
+}
+
+TEST(AgentSessionDiscovery, LimitsForTheSessionsViewLeaveRoomForEveryMarkedSession)
+{
+	const auto limits = AgentSessionDiscoveryLimitsFor(30, { L"codex:a", L"pi:b", L"devin:c" });
+	EXPECT_EQ(30U, limits.maximumSessionsPerProvider);
+	EXPECT_EQ(123U, limits.maximumSessions);
+	EXPECT_EQ((std::vector<std::wstring>{ L"codex:a", L"pi:b", L"devin:c" }), limits.requiredIdentities);
+	const AgentSessionDiscoveryLimits defaults;
+	EXPECT_EQ(defaults.headBytes, limits.headBytes);
+	EXPECT_EQ(defaults.maximumFileReadsPerProvider, limits.maximumFileReadsPerProvider);
+
+	const auto plain = AgentSessionDiscoveryLimitsFor(10, {});
+	EXPECT_EQ(10U, plain.maximumSessionsPerProvider);
+	EXPECT_EQ(40U, plain.maximumSessions);
 }
