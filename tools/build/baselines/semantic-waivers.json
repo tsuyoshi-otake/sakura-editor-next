@@ -2610,6 +2610,233 @@
           "baseline_finding_count": 8
         }
       ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#406 Phase 2 restores agent sessions when a Project is opened: AgentSessionRestore is the pure record, codec and per-open plan model (plain value-struct fields), AgentSessionRestoreService persists it under its own key, and CEditWnd_AgentSessionRestore wires record-on-close and one bounded restore attempt into the window. Its catch-alls are noexcept containment with defined fallbacks (record nothing, restore nothing), and the restore SetTimer and stop event are released by CancelAgentSessionRestore and PollAgentSessionRestore on every path. The test includes the model's own header.",
+      "tracking_issue": 389,
+      "created": "2026-11-10",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/window/CEditWnd_AgentSessionRestore.cpp": "sha256:236d0f22462369f3288992f740a6c124ee398aaf2347addb9b35276760399ead",
+        "sakura_core/workbench/projects/AgentSessionRestore.cpp": "sha256:7c1f3d72a8c7c12ccd294f1e651f04eb3a602b423ee83f88d8bb1a4ada62465c",
+        "sakura_core/workbench/projects/AgentSessionRestore.h": "sha256:a385943ace39d1730fcf83baf11b8b91b6c8acde5df210cee14d31fb691c71aa",
+        "src/test/cpp/tests1/workbench/AgentSessionRestoreTest.cpp": "sha256:6ebdb672f922e69308fdd7067aa5c3be93a569b95fad0dfd5ffa28783654ac5a"
+      },
+      "new_findings": [
+        {
+          "rule_id": "boundary.private_include",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 15,
+          "column": 11,
+          "evidence_sha256": "sha256:c8ed734d6fbe92af010309293d74262a6eaadbe30d6da19ced2bc6e07bf4a30c"
+        },
+        {
+          "rule_id": "boundary.private_include",
+          "path": "src/test/cpp/tests1/workbench/AgentSessionRestoreTest.cpp",
+          "line": 10,
+          "column": 11,
+          "evidence_sha256": "sha256:dcd0886304af13466473af33729faa056798a9e5b1fd8914c9d93ae180f276f5"
+        },
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 236,
+          "column": 8,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 65,
+          "column": 4,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 126,
+          "column": 5,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 154,
+          "column": 37,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 156,
+          "column": 6,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 166,
+          "column": 4,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 177,
+          "column": 4,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 203,
+          "column": 4,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 222,
+          "column": 4,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 244,
+          "column": 2,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 282,
+          "column": 5,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 299,
+          "column": 46,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "error.catch_all",
+          "path": "sakura_core/workbench/projects/AgentSessionRestore.cpp",
+          "line": 374,
+          "column": 5,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1"
+        },
+        {
+          "rule_id": "resource.stop_required_acquisition",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 227,
+          "column": 8,
+          "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941"
+        },
+        {
+          "rule_id": "state.mutable_member",
+          "path": "sakura_core/window/CEditWnd_AgentSessionRestore.cpp",
+          "line": 214,
+          "column": 41,
+          "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/AgentSessionRestore.h",
+          "line": 38,
+          "column": 15,
+          "evidence_sha256": "sha256:94a765aea66b162ec2b085f420eed15d59ce27ec430bebf13ce53cd17736a582"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/AgentSessionRestore.h",
+          "line": 42,
+          "column": 30,
+          "evidence_sha256": "sha256:af3cbaaea984d926111276d84d3a53ad6dd392a38cc835afde72c9ed364df3ff"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/AgentSessionRestore.h",
+          "line": 71,
+          "column": 15,
+          "evidence_sha256": "sha256:b9846921ef0e077ab712e7b8ebeabee7a9889b58980bda995c50351b8472baff"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/AgentSessionRestore.h",
+          "line": 72,
+          "column": 28,
+          "evidence_sha256": "sha256:e018a0fb3a4350a393fd51c97a042f3f7208cd7ace4e5279b2c9790bc0c63dd0"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/AgentSessionRestore.h",
+          "line": 74,
+          "column": 21,
+          "evidence_sha256": "sha256:d3bdeb2d85834265fdf3d371a1e4d6ee77fb373610f3e2858947ed79f51a847f"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/AgentSessionRestore.h",
+          "line": 79,
+          "column": 40,
+          "evidence_sha256": "sha256:c1aa9ed48b433bca2e060c9421b419c9d82ca69928f80d13c759bfe7190ab857"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/AgentSessionRestore.h",
+          "line": 81,
+          "column": 21,
+          "evidence_sha256": "sha256:578b5911b36fd5c4716e9292774c3278d331314b5c1be85ea89ff37d58e57a68"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/AgentSessionRestore.h",
+          "line": 125,
+          "column": 34,
+          "evidence_sha256": "sha256:382b22aa54845af633019041dfff7f885c41e0714918ab6ea1c05d27ceb0ef40"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/workbench/projects/AgentSessionRestore.h",
+          "line": 127,
+          "column": 28,
+          "evidence_sha256": "sha256:5a0f11608f9826752eea45fd02bbdab3d1564d40b9de08e7c18b6a7de7571aba"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/workbench/AgentSessionRestoreTest.cpp",
+          "line": 53,
+          "column": 44,
+          "evidence_sha256": "sha256:8de8037f842f9f817f7d2168610a7d0e1019237c349efe6c60bbc4fe0725df2e"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/workbench/AgentSessionRestoreTest.cpp",
+          "line": 54,
+          "column": 45,
+          "evidence_sha256": "sha256:b8415fef28de252256d79fa3cd14790dea0e744711c2f4f0a9f45383138c7d5e"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/workbench/AgentSessionRestoreTest.cpp",
+          "line": 55,
+          "column": 27,
+          "evidence_sha256": "sha256:fab9a4ad4f27521acb71334edeab3b1ca3ccb35372dbc707e495a63a863a0c97"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "src/test/cpp/tests1/workbench/AgentSessionRestoreTest.cpp",
+          "line": 56,
+          "column": 6,
+          "evidence_sha256": "sha256:36b84ebe1469c0eeb33e01d9acbc646dde44ade44b124b5559e656fc38fdcc08"
+        }
+      ],
+      "missing_touched_reductions": []
     }
   ]
 }
