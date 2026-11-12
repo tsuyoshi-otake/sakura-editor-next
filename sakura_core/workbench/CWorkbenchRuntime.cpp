@@ -8,6 +8,7 @@
 #include "StdAfx.h"
 
 #include "workbench/CWorkbenchRuntime.h"
+#include "debug/StartupTrace.h"
 
 #include "config/ConfigurationFileSourceController.h"
 #include "config/ConfigurationFileWatchController.h"
@@ -1914,6 +1915,7 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 		return std::nullopt;
 	};
 
+	CStartupTrace::Mark(CStartupTrace::Event::WorkbenchRuntimeStartBegin);
 	if (!m_initializationFailure.empty() || !m_fileSources) {
 		return FailStart(EWorkbenchRuntimeDiagnosticCode::InternalFailure,
 			m_initializationFailure.empty()
@@ -1948,6 +1950,7 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 			}
 		}
 
+		CStartupTrace::Mark(CStartupTrace::Event::ExtensionManagementStarted);
 		RestoreInitialLayoutMemento();
 		RestoreStatusbarVisibilityMemento();
 		if (auto terminal = terminalResult()) return std::move(*terminal);
@@ -1978,6 +1981,7 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 			}
 		}
 
+		CStartupTrace::Mark(CStartupTrace::Event::ExtensionLanguagesStarted);
 		if (!ApplyBootstrapWorkspace()) {
 			return FailStart(EWorkbenchRuntimeDiagnosticCode::WorkspaceTransitionFailed,
 				"immutable bootstrap workspace did not match the semantic workspace service");
@@ -1990,6 +1994,7 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 		ReloadWorkspaceSettings(initiallyLoadedWorkspace);
 		if (auto terminal = terminalResult()) return std::move(*terminal);
 
+		CStartupTrace::Mark(CStartupTrace::Event::WorkbenchRuntimeStartEnd);
 		const auto gate = m_listenerGate;
 		m_workspaceSubscription = m_workspaceContext.Subscribe([gate](const config::WorkspaceContextChange& change) {
 			CWorkbenchRuntime::DispatchListener(gate, [&change](CWorkbenchRuntime& owner) {

@@ -355,6 +355,15 @@ public:
 
 private:
 	[[nodiscard]] ManagementOperationResult LoadBuiltInCatalog();
+	//! The raw results of the `list` and `list-uninstalled` tool runs.
+	struct InstalledListings final {
+		detail::ToolResult installed;
+		detail::ToolResult uninstalled;
+	};
+	//! Runs both listings; touches no service state, so it may run beside other reads.
+	[[nodiscard]] InstalledListings ReadInstalledListings() const;
+	//! Validates the listings and publishes them as the installed snapshot.
+	[[nodiscard]] ManagementOperationResult AdoptInstalledListings(const InstalledListings& listings);
 	[[nodiscard]] ManagementOperationResult ReloadInstalled();
 	[[nodiscard]] ManagementOperationResult Terminal(
 		EManagementOperationStatus status, std::wstring diagnostic = {});

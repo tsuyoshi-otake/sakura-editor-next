@@ -342,6 +342,15 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   exactly those ids instead of answering `AlreadyReady` while they exist.
   `LoadBuiltInCatalog` stays all-or-nothing: an embedded package failing
   inspection is a build defect, not a per-package degradation.
+- `Start()` is on every editor window's startup path, so its tool runs overlap
+  (#413): the ten `inspect-builtin` runs go out together, and the `list` /
+  `list-uninstalled` pair is read beside them (`ReadInstalledListings`) and
+  adopted afterwards (`AdoptInstalledListings`). Results are still judged in
+  table order and every run is joined before `Start()` returns. An injected
+  `runTool` / `embeddedResource` hook is driven one call at a time in the old
+  order. `CSenpLanguageService` loads grammars the same way and adopts them in
+  declaration order. Serial, these cost about 300 ms + 90 ms per window; a
+  spawn-free start (a trusted cached catalog) is still open.
 - Runtime descriptors carry the validated lowercase SHA-256 for
   `module/extension.wasm`. The host reads the module once into a bounded byte
   vector, compares that digest, and gives those same bytes to Wasmtime. A path

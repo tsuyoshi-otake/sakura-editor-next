@@ -16,6 +16,7 @@ SPDX-License-Identifier: Zlib
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <thread>
 #include <utility>
 
@@ -967,11 +968,19 @@ ManagementOperationResult CWin32SenpManagementService::Start()
 			retry = m_failedBuiltIns;
 		}
 	}
+	// The installed listings do not depend on the catalog, only their adoption
+	// does, so on the window startup path (#413) they are read beside the
+	// catalog inspections. An injected runner keeps the one-call-at-a-time order.
+	std::future<InstalledListings> listing;
+	if (!m_hooks.runTool && !IsStopped()) {
+		listing = std::async(std::launch::async, [this] { return ReadInstalledListings(); });
+	}
 	if (retry.empty()) {
 		const auto catalog = LoadBuiltInCatalog();
+		// Leaving here joins the listing run: no tool process outlives Start.
 		if (!catalog.Succeeded()) return catalog;
 	}
-	auto loaded = ReloadInstalled();
+	auto loaded = listing.valid() ? AdoptInstalledListings(listing.get()) : ReloadInstalled();
 	if (!loaded.Succeeded()) return loaded;
 	// A built-in tracks the product that bundles it, as VS Code's built-in
 	// extensions do. An offered (not installed-by-default) built-in the user
@@ -1031,21 +1040,61 @@ ManagementOperationResult CWin32SenpManagementService::Start()
 
 ManagementOperationResult CWin32SenpManagementService::LoadBuiltInCatalog()
 {
+	// Every editor window pays for this on its startup path (#413). The
+	// inspections are independent read-only tool runs, so they are launched
+	// together and joined; the results are then judged in table order, which
+	// keeps the catalog all-or-nothing and the first-failure diagnostic stable.
+	struct Inspection final {
+		bool staged = false;
+		std::wstring stagingDiagnostic;
+		ProcessResult result;
+	};
+	const auto inspect = [this](const BuiltInResource& builtIn) {
+		Inspection inspection;
+		const auto staged = StageBuiltInPackage(builtIn, m_installRoot, inspection.stagingDiagnostic, m_hooks);
+		if (!staged) return inspection;
+		inspection.staged = true;
+		inspection.result = RunTool({ L"inspect-builtin", staged->path.native(), staged->hash }, m_hooks);
+		std::error_code ignored;
+		std::filesystem::remove(staged->path, ignored);
+		return inspection;
+	};
+	std::vector<Inspection> inspections;
+	inspections.reserve(kBuiltInResources.size());
+	// An injected runner or resource source stands in for the process boundary
+	// and is not required to be thread-safe, so it is driven one call at a time.
+	if (m_hooks.runTool || m_hooks.embeddedResource) {
+		for (const auto& builtIn : kBuiltInResources) {
+			inspections.push_back(inspect(builtIn));
+			// Sequential runs stop at the first failure, as the judge below does.
+			if (!inspections.back().staged) break;
+			const auto& result = inspections.back().result;
+			if (!result.launched || result.timedOut || result.exitCode != 0 || result.outputTruncated) break;
+		}
+	} else {
+		std::vector<std::future<Inspection>> running;
+		running.reserve(kBuiltInResources.size());
+		for (const auto& builtIn : kBuiltInResources) {
+			running.push_back(std::async(std::launch::async, inspect, std::cref(builtIn)));
+		}
+		// Join every run before judging any: no tool process outlives this call.
+		for (auto& run : running) run.wait();
+		for (auto& run : running) inspections.push_back(run.get());
+	}
+
 	std::vector<ExtensionDescriptor> catalog;
 	catalog.reserve(kBuiltInResources.size());
-	for (const auto& builtIn : kBuiltInResources) {
-		std::wstring diagnostic;
-		const auto staged = StageBuiltInPackage(builtIn, m_installRoot, diagnostic, m_hooks);
-		if (!staged) {
+	for (std::size_t index = 0; index < kBuiltInResources.size(); ++index) {
+		const auto& builtIn = kBuiltInResources[index];
+		auto& inspection = inspections[index];
+		if (!inspection.staged) {
 			std::lock_guard lock(m_mutex);
 			m_snapshot.state = EManagementState::Failed;
 			++m_snapshot.revision;
-			m_snapshot.diagnostic = std::move(diagnostic);
+			m_snapshot.diagnostic = std::move(inspection.stagingDiagnostic);
 			return { EManagementOperationStatus::Unavailable, m_snapshot };
 		}
-		const auto inspected = RunTool({ L"inspect-builtin", staged->path.native(), staged->hash }, m_hooks);
-		std::error_code ignored;
-		std::filesystem::remove(staged->path, ignored);
+		const auto& inspected = inspection.result;
 		if (!inspected.launched || inspected.timedOut || inspected.exitCode != 0
 			|| inspected.outputTruncated) {
 			std::lock_guard lock(m_mutex);
@@ -1069,7 +1118,36 @@ ManagementOperationResult CWin32SenpManagementService::LoadBuiltInCatalog()
 	return { EManagementOperationStatus::Succeeded, m_snapshot };
 }
 
+CWin32SenpManagementService::InstalledListings CWin32SenpManagementService::ReadInstalledListings() const
+{
+	InstalledListings listings;
+	// The two listings are independent reads of the same root. An injected
+	// runner is driven one call at a time and, as before, is not asked for the
+	// second listing once the first has failed.
+	if (m_hooks.runTool) {
+		listings.installed = RunTool({ L"list", m_installRoot }, m_hooks);
+		if (listings.installed.launched && !listings.installed.timedOut
+			&& listings.installed.exitCode == 0 && !listings.installed.outputTruncated) {
+			listings.uninstalled = RunTool({ L"list-uninstalled", m_installRoot }, m_hooks);
+		}
+		return listings;
+	}
+	auto uninstalled = std::async(std::launch::async, [this] {
+		return RunTool({ L"list-uninstalled", m_installRoot }, m_hooks);
+	});
+	listings.installed = RunTool({ L"list", m_installRoot }, m_hooks);
+	listings.uninstalled = uninstalled.get();
+	return listings;
+}
+
 ManagementOperationResult CWin32SenpManagementService::ReloadInstalled()
+{
+	if (IsStopped()) return Terminal(EManagementOperationStatus::Stopped);
+	return AdoptInstalledListings(ReadInstalledListings());
+}
+
+ManagementOperationResult CWin32SenpManagementService::AdoptInstalledListings(
+	const InstalledListings& listings)
 {
 	if (IsStopped()) return Terminal(EManagementOperationStatus::Stopped);
 	const auto failedListing = [&](const ProcessResult& result, std::wstring fallback) {
@@ -1080,7 +1158,7 @@ ManagementOperationResult CWin32SenpManagementService::ReloadInstalled()
 		m_snapshot.diagnostic = ProcessDiagnostic(result, std::move(fallback));
 		return ManagementOperationResult{ EManagementOperationStatus::Failed, m_snapshot };
 	};
-	const auto listed = RunTool({ L"list", m_installRoot }, m_hooks);
+	const auto& listed = listings.installed;
 	// A truncated stream is a typed failure, never a partial listing to parse.
 	if (!listed.launched || listed.timedOut || listed.exitCode != 0) {
 		return failedListing(listed, L"Installed SENP extensions could not be read");
@@ -1089,7 +1167,7 @@ ManagementOperationResult CWin32SenpManagementService::ReloadInstalled()
 		return failedListing(listed,
 			L"Installed SENP extension listing exceeded the 4 MiB output budget");
 	}
-	const auto listedUninstalled = RunTool({ L"list-uninstalled", m_installRoot }, m_hooks);
+	const auto& listedUninstalled = listings.uninstalled;
 	if (!listedUninstalled.launched || listedUninstalled.timedOut
 		|| listedUninstalled.exitCode != 0) {
 		return failedListing(listedUninstalled,

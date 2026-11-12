@@ -98,6 +98,11 @@ public:
 		StartupMakeOneLineWorkSummary,
 		StartupMakeOneLineCostSummary,
 		FirstContentPainted,
+		// CWorkbenchRuntime::Start phases on the editor startup path (#413).
+		WorkbenchRuntimeStartBegin,
+		ExtensionManagementStarted,
+		ExtensionLanguagesStarted,
+		WorkbenchRuntimeStartEnd,
 	};
 
 	enum class LayoutReason : std::uint8_t {

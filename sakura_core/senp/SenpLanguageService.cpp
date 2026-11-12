@@ -17,6 +17,7 @@ SPDX-License-Identifier: Zlib
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -200,10 +201,24 @@ struct GrammarSet final {
 std::shared_ptr<const GrammarSet> BuildGrammarSet(const ManagementSnapshot& snapshot)
 {
 	auto result = std::make_shared<GrammarSet>();
+	// Each grammar is an independent bounded read and parse with no shared
+	// state, and every editor window pays for the whole set on its startup path
+	// (#413). The loads run together; the results are adopted in declaration
+	// order below, so the first declaration of a scope name still wins.
+	std::vector<std::future<std::shared_ptr<const textmate::Grammar>>> loading;
 	for (const auto& extension : snapshot.extensions) {
 		if (!extension.installed || !extension.enabled) continue;
 		for (const auto& grammar : extension.grammars) {
-			auto loaded = LoadGrammar(extension, grammar);
+			loading.push_back(std::async(std::launch::async,
+				[&extension, &grammar] { return LoadGrammar(extension, grammar); }));
+		}
+	}
+	for (auto& load : loading) load.wait();
+	std::size_t next = 0;
+	for (const auto& extension : snapshot.extensions) {
+		if (!extension.installed || !extension.enabled) continue;
+		for (const auto& grammar : extension.grammars) {
+			auto loaded = loading[next++].get();
 			if (loaded) result->grammars.try_emplace(grammar.scopeName, std::move(loaded));
 		}
 		for (const auto& language : extension.languages) {

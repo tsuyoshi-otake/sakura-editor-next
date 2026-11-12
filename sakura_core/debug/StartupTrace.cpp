@@ -195,6 +195,10 @@ const char* EventName(CStartupTrace::Event event)
 	case CStartupTrace::Event::StartupMakeOneLineWorkSummary: return "startup_make_one_line_work_summary";
 	case CStartupTrace::Event::StartupMakeOneLineCostSummary: return "startup_make_one_line_cost_summary";
 	case CStartupTrace::Event::FirstContentPainted: return "first_content_painted";
+	case CStartupTrace::Event::WorkbenchRuntimeStartBegin: return "workbench_runtime_start_begin";
+	case CStartupTrace::Event::ExtensionManagementStarted: return "extension_management_started";
+	case CStartupTrace::Event::ExtensionLanguagesStarted: return "extension_languages_started";
+	case CStartupTrace::Event::WorkbenchRuntimeStartEnd: return "workbench_runtime_start_end";
 	default: return "unknown";
 	}
 }

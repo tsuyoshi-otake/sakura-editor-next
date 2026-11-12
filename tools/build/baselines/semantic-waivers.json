@@ -2426,7 +2426,6 @@
         "sakura_core/terminal/window/TerminalAgentPresence.h": "sha256:2515401104395f28d717c3d245b9653a2b3592473d768a00df95de7b6ea5b517",
         "sakura_core/window/CEditWnd.cpp": "sha256:aecf2b34e53caa1f68066a671aa8c6fbd5dc4ec6a42006ba6d343d6c3752a8d7",
         "sakura_core/window/CEditWnd.h": "sha256:b0d8c15172c9fa1a461286e050c579084ac4c94fc983ef770b5368d0ebf13ee2",
-        "sakura_core/workbench/CWorkbenchRuntime.cpp": "sha256:f9de7f8e9c8e0f1bac17fdf89a9811d0860de3eb3ef1e1a7a47c9707021c817e",
         "sakura_core/workbench/CWorkbenchRuntime.h": "sha256:3687f8cca9f4b1c44a55fbedf128d5336e9114261e483f95b63ba13788bcf728",
         "sakura_core/workbench/IWorkbenchRuntime.h": "sha256:4d197479cf0e96c0140f95796de73b7cc90ac27e9d03cd01c134470e7a4f975f"
       },
@@ -2596,10 +2595,6 @@
         {
           "path": "sakura_core/window/CEditWnd.h",
           "baseline_finding_count": 61
-        },
-        {
-          "path": "sakura_core/workbench/CWorkbenchRuntime.cpp",
-          "baseline_finding_count": 23
         },
         {
           "path": "sakura_core/workbench/CWorkbenchRuntime.h",
@@ -2837,6 +2832,54 @@
         }
       ],
       "missing_touched_reductions": []
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#413 cuts New Window latency: SenpManagementService overlaps its read-only sakura-senp-tool runs on the window startup path and splits the installed listing into ReadInstalledListings / AdoptInstalledListings, SenpLanguageService loads grammars concurrently and adopts them in declaration order, and CWorkbenchRuntime::Start plus StartupTrace gain four named trace events. Each item was reviewed: the two new public fields are the members of InstalledListings, a plain value struct that is a private nested type of CWin32SenpManagementService and carries the two tool results between the read and the adoption; the four touched files keep their baseline findings because the change adds trace marks, includes and concurrency around existing calls and removes none of the reviewed constructs, so no reduction was available without unrelated refactoring.",
+      "tracking_issue": 389,
+      "created": "2026-11-12",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/debug/StartupTrace.cpp": "sha256:fce3506a8c63e4188df577e66784c6e7ec5fd3ca4dbb5a40feae29e8a56aacae",
+        "sakura_core/senp/SenpLanguageService.cpp": "sha256:b2c18fde1a99b7add6fb286bc88deff83947d5c6710b8c88d8ba8d1944278060",
+        "sakura_core/senp/SenpManagementService.h": "sha256:9aa6a34acdd03a1dfbcff79f83e398d29cc799918731f5a1d967317f47f9bb2c",
+        "sakura_core/workbench/CWorkbenchRuntime.cpp": "sha256:a180e66e4eec3356883f8d8b60a32c9d6df12b15d62cfac27e8559332e2dce72"
+      },
+      "new_findings": [
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/senp/SenpManagementService.h",
+          "line": 360,
+          "column": 22,
+          "evidence_sha256": "sha256:9ba61b1eeb167eb6d62cafa3503345f1ae5c62c1c11929f7347d24970ce2283a"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/senp/SenpManagementService.h",
+          "line": 361,
+          "column": 22,
+          "evidence_sha256": "sha256:961f9f81be9523b40d9e3dbeb4732d0fb2306b0510d98eac3961a454726a777a"
+        }
+      ],
+      "missing_touched_reductions": [
+        {
+          "path": "sakura_core/debug/StartupTrace.cpp",
+          "baseline_finding_count": 1
+        },
+        {
+          "path": "sakura_core/senp/SenpLanguageService.cpp",
+          "baseline_finding_count": 7
+        },
+        {
+          "path": "sakura_core/senp/SenpManagementService.h",
+          "baseline_finding_count": 64
+        },
+        {
+          "path": "sakura_core/workbench/CWorkbenchRuntime.cpp",
+          "baseline_finding_count": 23
+        }
+      ]
     }
   ]
 }

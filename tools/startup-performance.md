@@ -608,6 +608,10 @@ paired trace の `records` が空、malformed、または launch QPC clock と�
 `editor_wait_end` までを、PID ではなく役割で対応付けます。これは `SetEvent` が終わってから相手
 プロセスが待機を抜けるまでのクロスプロセス handoff であり、個々の待機／通知 phase と混同しません。
 
+`workbench_runtime_start_begin` / `extension_management_started` / `extension_languages_started` /
+`workbench_runtime_start_end` は editor の `CWorkbenchRuntime::Start()` 内の区切りです（#413）。
+前 2 つの差が SENP パッケージ管理（`sakura-senp-tool.exe` の起動）、次の差が TextMate 文法の読込です。
+
 `value1` / `value2` はイベント固有の結果を補います。生成成功などの真偽結果と
 `*_ready_event_end`、`startup_draw_commit_end` では `value1` が成功 `1`、失敗 `0`、イベントハンドルまたは
 IPC HWND が存在しない明示的な経路では `-1` です。後者の通知イベントの `value2` は Win32 error、コミットが
