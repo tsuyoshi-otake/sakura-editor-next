@@ -349,8 +349,17 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   table order and every run is joined before `Start()` returns. An injected
   `runTool` / `embeddedResource` hook is driven one call at a time in the old
   order. `CSenpLanguageService` loads grammars the same way and adopts them in
-  declaration order. Serial, these cost about 300 ms + 90 ms per window; a
-  spawn-free start (a trusted cached catalog) is still open.
+  declaration order. Serial, these cost about 300 ms + 90 ms per window.
+- The built-in catalog is cached in `<installRoot>/builtin-catalog.cache` (owner
+  decision, #413): an `inspect-builtin` result depends only on this executable,
+  the tool and the embedded archives, so the record is keyed by the size and
+  write time of `sakura.exe` and `sakura-senp-tool.exe` plus every embedded
+  archive hash, and a start under the same key spawns no inspection. A record
+  under another key, a cut record or one whose entry does not decode to the
+  table id with the embedded archive digest is ignored and rewritten (temp file
+  + rename). It carries the same trust as the rest of the install root: no
+  defence against a same-user writer. Injected hooks never read or write it.
+  The two listings are still tool runs on every start.
 - Runtime descriptors carry the validated lowercase SHA-256 for
   `module/extension.wasm`. The host reads the module once into a bounded byte
   vector, compares that digest, and gives those same bytes to Wasmtime. A path

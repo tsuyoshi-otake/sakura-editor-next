@@ -327,6 +327,14 @@ struct SenpServiceHooks final {
 //! HANDLE passed as void* so this header stays free of windows.h.
 void ReadPipeBounded(void* pipe, std::string& target, bool& overflow) noexcept;
 
+//! The built-in catalog cache record: `key`, then one `inspect-builtin` output
+//! per embedded built-in in table order, each line newline-terminated.
+[[nodiscard]] std::string EncodeBuiltInCatalogCache(std::string_view key, const std::vector<std::string>& lines);
+//! The `count` entries of a record written under exactly `key`; nothing for a
+//! record under another key, a cut record, or one with another entry count.
+[[nodiscard]] std::optional<std::vector<std::string>> DecodeBuiltInCatalogCache(
+	std::string_view text, std::string_view key, std::size_t count);
+
 } // namespace detail
 
 //! Owns profile-scoped SENP package state. It never loads extension code; the

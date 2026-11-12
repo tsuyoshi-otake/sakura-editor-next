@@ -2843,25 +2843,9 @@
       "files": {
         "sakura_core/debug/StartupTrace.cpp": "sha256:fce3506a8c63e4188df577e66784c6e7ec5fd3ca4dbb5a40feae29e8a56aacae",
         "sakura_core/senp/SenpLanguageService.cpp": "sha256:b2c18fde1a99b7add6fb286bc88deff83947d5c6710b8c88d8ba8d1944278060",
-        "sakura_core/senp/SenpManagementService.h": "sha256:9aa6a34acdd03a1dfbcff79f83e398d29cc799918731f5a1d967317f47f9bb2c",
         "sakura_core/workbench/CWorkbenchRuntime.cpp": "sha256:a180e66e4eec3356883f8d8b60a32c9d6df12b15d62cfac27e8559332e2dce72"
       },
-      "new_findings": [
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "sakura_core/senp/SenpManagementService.h",
-          "line": 360,
-          "column": 22,
-          "evidence_sha256": "sha256:9ba61b1eeb167eb6d62cafa3503345f1ae5c62c1c11929f7347d24970ce2283a"
-        },
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "sakura_core/senp/SenpManagementService.h",
-          "line": 361,
-          "column": 22,
-          "evidence_sha256": "sha256:961f9f81be9523b40d9e3dbeb4732d0fb2306b0510d98eac3961a454726a777a"
-        }
-      ],
+      "new_findings": [],
       "missing_touched_reductions": [
         {
           "path": "sakura_core/debug/StartupTrace.cpp",
@@ -2872,12 +2856,46 @@
           "baseline_finding_count": 7
         },
         {
+          "path": "sakura_core/workbench/CWorkbenchRuntime.cpp",
+          "baseline_finding_count": 23
+        }
+      ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#413 caches the built-in catalog beside the install root: SenpManagementService.h declares the pure EncodeBuiltInCatalogCache / DecodeBuiltInCatalogCache record codec next to the existing detail seam, and SenpBuiltInStartupTest.cpp gains two tests of that codec. Each item was reviewed: the two public fields are the members of InstalledListings, the private nested value struct of CWin32SenpManagementService introduced by e7e04fe73 and only moved eight lines down by the new declarations; the header and the test file keep their baseline findings because this change adds two free function declarations and two tests and removes none of the reviewed constructs, so no reduction was available without unrelated refactoring.",
+      "tracking_issue": 389,
+      "created": "2026-11-12",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/senp/SenpManagementService.h": "sha256:6229f58c90ab76f4274445bfa45fba2adba933167ff9aa10e081c48624a15199",
+        "src/test/cpp/tests1/senp/SenpBuiltInStartupTest.cpp": "sha256:2ab9765eaed71fa0f2513a9a0bfaf4750377a5b5ee8af5bc79164c6587932eb8"
+      },
+      "new_findings": [
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/senp/SenpManagementService.h",
+          "line": 368,
+          "column": 22,
+          "evidence_sha256": "sha256:9ba61b1eeb167eb6d62cafa3503345f1ae5c62c1c11929f7347d24970ce2283a"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/senp/SenpManagementService.h",
+          "line": 369,
+          "column": 22,
+          "evidence_sha256": "sha256:961f9f81be9523b40d9e3dbeb4732d0fb2306b0510d98eac3961a454726a777a"
+        }
+      ],
+      "missing_touched_reductions": [
+        {
           "path": "sakura_core/senp/SenpManagementService.h",
           "baseline_finding_count": 64
         },
         {
-          "path": "sakura_core/workbench/CWorkbenchRuntime.cpp",
-          "baseline_finding_count": 23
+          "path": "src/test/cpp/tests1/senp/SenpBuiltInStartupTest.cpp",
+          "baseline_finding_count": 7
         }
       ]
     }

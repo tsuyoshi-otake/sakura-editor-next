@@ -344,3 +344,29 @@ TEST(SenpBuiltInStartup, UninstallPackageRunsTheToolByStateNameAndFailsWithADiag
 }
 
 } // namespace
+
+// The catalog cache record is read only under the exact key it was written
+// for, and only when it is complete (#413).
+TEST(SenpBuiltInCatalogCache, RoundTripsUnderItsKeyOnly)
+{
+	const std::vector<std::string> lines{ "{\"a\":1}", "{\"b\":2}" };
+	const auto text = senp::detail::EncodeBuiltInCatalogCache("key|exe=1.2", lines);
+	const auto decoded = senp::detail::DecodeBuiltInCatalogCache(text, "key|exe=1.2", 2);
+	ASSERT_TRUE(decoded.has_value());
+	EXPECT_EQ(*decoded, lines);
+	EXPECT_FALSE(senp::detail::DecodeBuiltInCatalogCache(text, "key|exe=1.3", 2).has_value());
+	EXPECT_FALSE(senp::detail::DecodeBuiltInCatalogCache(text, "key|exe=1", 2).has_value());
+	EXPECT_FALSE(senp::detail::DecodeBuiltInCatalogCache(text, "", 2).has_value());
+}
+
+TEST(SenpBuiltInCatalogCache, RejectsACutOrMiscountedRecord)
+{
+	const std::vector<std::string> lines{ "{\"a\":1}", "{\"b\":2}" };
+	const auto text = senp::detail::EncodeBuiltInCatalogCache("key", lines);
+	EXPECT_FALSE(senp::detail::DecodeBuiltInCatalogCache(text, "key", 1).has_value());
+	EXPECT_FALSE(senp::detail::DecodeBuiltInCatalogCache(text, "key", 3).has_value());
+	// The last entry lost its terminating newline: the writer was interrupted.
+	EXPECT_FALSE(senp::detail::DecodeBuiltInCatalogCache(text.substr(0, text.size() - 1), "key", 2).has_value());
+	EXPECT_FALSE(senp::detail::DecodeBuiltInCatalogCache("key\n\n{}\n", "key", 2).has_value());
+	EXPECT_FALSE(senp::detail::DecodeBuiltInCatalogCache("key", "key", 0).has_value());
+}

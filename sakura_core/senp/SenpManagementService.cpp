@@ -1038,10 +1038,165 @@ ManagementOperationResult CWin32SenpManagementService::Start()
 	return loaded;
 }
 
+std::string detail::EncodeBuiltInCatalogCache(std::string_view key, const std::vector<std::string>& lines)
+{
+	std::string text(key);
+	text.push_back('\n');
+	for (const auto& line : lines) {
+		text += line;
+		text.push_back('\n');
+	}
+	return text;
+}
+
+std::optional<std::vector<std::string>> detail::DecodeBuiltInCatalogCache(
+	std::string_view text, std::string_view key, std::size_t count)
+{
+	// The first line is the key the entries were inspected under; a record
+	// written for any other executable, tool or embedded package set is not read.
+	if (key.empty() || key.find('\n') != std::string_view::npos
+		|| text.size() <= key.size() || !text.starts_with(key) || text[key.size()] != '\n') return std::nullopt;
+	text.remove_prefix(key.size() + 1);
+	std::vector<std::string> lines;
+	while (!text.empty()) {
+		const auto end = text.find('\n');
+		// Every entry is one complete, newline-terminated line: a cut file is no record.
+		if (end == std::string_view::npos || end == 0 || lines.size() == count) return std::nullopt;
+		lines.emplace_back(text.substr(0, end));
+		text.remove_prefix(end + 1);
+	}
+	if (lines.size() != count) return std::nullopt;
+	return lines;
+}
+
+namespace {
+
+constexpr std::size_t kMaximumCatalogCacheBytes = 4U * 1024U * 1024U;
+
+std::string FileIdentity(const std::filesystem::path& path)
+{
+	std::error_code error;
+	const auto size = std::filesystem::file_size(path, error);
+	if (error) return {};
+	const auto written = std::filesystem::last_write_time(path, error);
+	if (error) return {};
+	return std::to_string(size) + "." + std::to_string(written.time_since_epoch().count());
+}
+
+std::string EmbeddedHash(const BuiltInResource& builtIn, const detail::SenpServiceHooks& hooks)
+{
+	const auto bytes = EmbeddedResource(builtIn.HashResource(), hooks);
+	if (!bytes) return {};
+	std::string hash(reinterpret_cast<const char*>(bytes->data()), bytes->size());
+	while (!hash.empty() && (hash.back() == '\r' || hash.back() == '\n')) hash.pop_back();
+	const bool hex = std::ranges::all_of(hash, [](char ch) {
+		return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
+	});
+	return hash.size() == 64 && hex ? hash : std::string{};
+}
+
+//! Names everything an `inspect-builtin` result depends on: this executable,
+//! the tool that produces the result, and each embedded archive. Empty when
+//! any part cannot be read, which disables the cache for this start.
+std::string BuiltInCatalogCacheKey(const detail::SenpServiceHooks& hooks)
+{
+	std::array<wchar_t, 32768> path{};
+	const DWORD length = ::GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+	if (length == 0 || length >= path.size()) return {};
+	const std::filesystem::path executable(std::wstring(path.data(), length));
+	const auto self = FileIdentity(executable);
+	const auto tool = FileIdentity(executable.parent_path() / L"sakura-senp-tool.exe");
+	if (self.empty() || tool.empty()) return {};
+	std::string key = "sakura-senp-builtin-catalog/1|exe=" + self + "|tool=" + tool;
+	for (const auto& builtIn : kBuiltInResources) {
+		const auto hash = EmbeddedHash(builtIn, hooks);
+		if (hash.empty()) return {};
+		key.push_back('|');
+		for (const wchar_t ch : builtIn.Id()) key.push_back(static_cast<char>(ch));
+		key.push_back('=');
+		key += hash;
+	}
+	return key;
+}
+
+std::optional<std::string> ReadBoundedFile(const std::filesystem::path& path)
+{
+	std::ifstream input(path, std::ios::binary);
+	if (!input) return std::nullopt;
+	std::string text;
+	constexpr std::size_t kChunkBytes = 64U * 1024U;
+	while (input && text.size() <= kMaximumCatalogCacheBytes) {
+		const std::size_t offset = text.size();
+		text.resize(offset + kChunkBytes);
+		input.read(text.data() + offset, static_cast<std::streamsize>(kChunkBytes));
+		text.resize(offset + static_cast<std::size_t>(input.gcount()));
+	}
+	if (input.bad() || text.size() > kMaximumCatalogCacheBytes) return std::nullopt;
+	return text;
+}
+
+//! The cached catalog, or nothing when the record is absent, cut, written
+//! under another key, or does not describe exactly the embedded archives.
+std::optional<std::vector<ExtensionDescriptor>> ReadCachedBuiltInCatalog(
+	const std::filesystem::path& path, const std::string& key)
+{
+	const auto text = ReadBoundedFile(path);
+	if (!text) return std::nullopt;
+	const auto lines = detail::DecodeBuiltInCatalogCache(*text, key, kBuiltInResources.size());
+	if (!lines) return std::nullopt;
+	std::vector<ExtensionDescriptor> catalog;
+	catalog.reserve(kBuiltInResources.size());
+	for (std::size_t index = 0; index < kBuiltInResources.size(); ++index) {
+		const auto& builtIn = kBuiltInResources[index];
+		auto extension = DecodeBuiltInExtension((*lines)[index]);
+		// The archive digest is checked against the embedded one again here, so
+		// an entry can only stand for the package this executable carries.
+		if (!extension || extension->id != builtIn.Id()
+			|| extension->archiveSha256 != Utf8ToWide(EmbeddedHash(builtIn, {}))) return std::nullopt;
+		catalog.push_back(std::move(*extension));
+	}
+	return catalog;
+}
+
+//! Publishes the record with a rename so a concurrent window never reads a
+//! half-written one. A failed write only costs the next start its inspections.
+void WriteBuiltInCatalogCache(const std::filesystem::path& path, const std::string& text) noexcept
+{
+	try {
+		auto temporary = path;
+		temporary += L"." + std::to_wstring(::GetCurrentProcessId()) + L".tmp";
+		std::error_code error;
+		const std::vector<std::byte> bytes(reinterpret_cast<const std::byte*>(text.data()),
+			reinterpret_cast<const std::byte*>(text.data()) + text.size());
+		if (WriteBytes(temporary, bytes)) std::filesystem::rename(temporary, path, error);
+		else error = std::make_error_code(std::errc::io_error);
+		if (error) std::filesystem::remove(temporary, error);
+	} catch (...) {
+		// The cache is an optimization; the catalog in memory is already complete.
+	}
+}
+
+} // namespace
+
 ManagementOperationResult CWin32SenpManagementService::LoadBuiltInCatalog()
 {
-	// Every editor window pays for this on its startup path (#413). The
-	// inspections are independent read-only tool runs, so they are launched
+	// Every editor window pays for this on its startup path (#413), and an
+	// inspection result depends only on this executable, the tool and the
+	// embedded archives. The results are therefore kept beside the install
+	// root under a key naming all three and reused until any of them changes.
+	// An injected runner or resource source always inspects.
+	const auto cachePath = std::filesystem::path(m_installRoot) / L"builtin-catalog.cache";
+	const auto cacheKey = m_hooks.runTool || m_hooks.embeddedResource
+		? std::string{} : BuiltInCatalogCacheKey(m_hooks);
+	if (!cacheKey.empty()) {
+		if (auto cached = ReadCachedBuiltInCatalog(cachePath, cacheKey)) {
+			std::lock_guard lock(m_mutex);
+			m_builtInCatalog = std::move(*cached);
+			return { EManagementOperationStatus::Succeeded, m_snapshot };
+		}
+	}
+
+	// The inspections are independent read-only tool runs, so they are launched
 	// together and joined; the results are then judged in table order, which
 	// keeps the catalog all-or-nothing and the first-failure diagnostic stable.
 	struct Inspection final {
@@ -1112,6 +1267,20 @@ ManagementOperationResult CWin32SenpManagementService::LoadBuiltInCatalog()
 			return { EManagementOperationStatus::Failed, m_snapshot };
 		}
 		catalog.push_back(std::move(*extension));
+	}
+	if (!cacheKey.empty()) {
+		std::vector<std::string> lines;
+		lines.reserve(inspections.size());
+		bool singleLines = true;
+		for (const auto& inspection : inspections) {
+			auto line = inspection.result.output;
+			while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+			singleLines = singleLines && !line.empty() && line.find('\n') == std::string::npos;
+			lines.push_back(std::move(line));
+		}
+		if (singleLines) {
+			WriteBuiltInCatalogCache(cachePath, detail::EncodeBuiltInCatalogCache(cacheKey, lines));
+		}
 	}
 	std::lock_guard lock(m_mutex);
 	m_builtInCatalog = std::move(catalog);
