@@ -2439,3 +2439,23 @@ TEST(ProjectsPage, SessionContextMenuManagesTheRowItWasOpenedFor)
 	page.reset();
 	::DestroyWindow(hostWindow);
 }
+
+TEST(ProjectsPage, RowTextSplitGivesTheLabelPriorityOverTheTrailingText)
+{
+	using workbench::projects::ProjectsRowTextSplit;
+	using workbench::projects::SplitProjectsRowText;
+	// Both fit: the trailing text has its own width and the label the rest.
+	EXPECT_EQ((ProjectsRowTextSplit{ 152, 40 }), SplitProjectsRowText(200, 60, 40, 8));
+	EXPECT_EQ((ProjectsRowTextSplit{ 200, 0 }), SplitProjectsRowText(200, 60, 0, 8));
+	// A short name beside a long branch: the name is whole, the branch is cut.
+	EXPECT_EQ((ProjectsRowTextSplit{ 70, 122 }), SplitProjectsRowText(200, 70, 180, 8));
+	// A long title beside "agent age": the title keeps three fifths of the row.
+	EXPECT_EQ((ProjectsRowTextSplit{ 114, 78 }), SplitProjectsRowText(200, 400, 120, 8));
+	// A long title beside a short trailing text: the title takes what is left over.
+	EXPECT_EQ((ProjectsRowTextSplit{ 162, 30 }), SplitProjectsRowText(200, 400, 30, 8));
+	// Degenerate rows never produce a negative width.
+	EXPECT_EQ((ProjectsRowTextSplit{ 0, 0 }), SplitProjectsRowText(0, 50, 50, 8));
+	EXPECT_EQ((ProjectsRowTextSplit{ 0, 0 }), SplitProjectsRowText(6, 50, 50, 8));
+	EXPECT_EQ((ProjectsRowTextSplit{ 0, 0 }), SplitProjectsRowText(-5, 50, 50, 8));
+	static_assert(SplitProjectsRowText(200, 70, 180, 8).labelWidth == 70);
+}

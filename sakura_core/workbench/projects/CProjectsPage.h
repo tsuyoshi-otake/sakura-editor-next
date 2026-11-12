@@ -138,4 +138,31 @@ struct ProjectsPageOptions final {
 [[nodiscard]] std::unique_ptr<viewcontainer::IViewContainerPage>
 CreateProjectsPage(HWND parkingParent, ProjectsPageOptions options) noexcept;
 
+struct ProjectsRowTextSplit final {
+	int labelWidth{};
+	int trailingWidth{};
+
+	[[nodiscard]] bool operator==(const ProjectsRowTextSplit&) const noexcept = default;
+};
+
+//! Shares one row's text width between the label (project name, session title)
+//! and the right-aligned trailing text (branch, agent and age), `gap` apart.
+//! The label comes first (#414): when both do not fit it keeps its own width up
+//! to three fifths of the row and the trailing text is the part that is cut.
+//! Either part takes whatever the other does not need. Widths are pixels.
+[[nodiscard]] constexpr ProjectsRowTextSplit SplitProjectsRowText(
+	const int available, const int label, const int trailing, const int gap) noexcept
+{
+	if (available <= 0) return {};
+	if (trailing <= 0) return { available, 0 };
+	const int usable = available > gap ? available - (gap > 0 ? gap : 0) : 0;
+	const int wanted = label > 0 ? label : 0;
+	if (trailing >= usable - wanted) {
+		const int guaranteed = usable / 5 * 3 < wanted ? usable / 5 * 3 : wanted;
+		const int left = usable - trailing > guaranteed ? usable - trailing : guaranteed;
+		return { left, usable - left };
+	}
+	return { usable - trailing, trailing };
+}
+
 } // namespace workbench::projects

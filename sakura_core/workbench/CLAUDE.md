@@ -187,7 +187,9 @@ and lifecycle rules as the rest of the native workbench.
   alone; `ProjectsRow::tooltip` carries the agent's session title. The page
   owns one tooltip window; each list adds one TTF_IDISHWND tool to it, and
   the tool's text follows the hovered row's painted rectangle. The accessible
-  label stays the visible text. The session-title rules live in
+  label stays the visible text. A row's label has priority over its
+  right-aligned trailing text (#414): `SplitProjectsRowText` keeps the label's
+  own width up to three fifths of the row and ellipsizes the trailing text. The session-title rules live in
   [`../terminal/CLAUDE.md`](../terminal/CLAUDE.md).
 - Single click (#412) follows VS Code's `singleClick` defaults of
   `workbench.list.openMode` and `workbench.tree.expandMode`.

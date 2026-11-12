@@ -2010,23 +2010,27 @@ private:
 		return { primary, selected ? primary : m_palette.descriptionText.ToColorRef() };
 	}
 
-	//! Draws the right-aligned trailing text, then the label in what it leaves,
-	//! then the focus outline.
+	//! Draws the label and the right-aligned trailing text in the widths
+	//! SplitProjectsRowText gives them, then the focus outline.
 	void EndRow(const DRAWITEMSTRUCT& item, RECT labelRect, const std::wstring& label,
 		const std::wstring& trailing, const RowColors colors) noexcept
 	{
 		if (!trailing.empty()) {
-			SIZE trailingSize{};
+			SIZE trailingSize{}, labelSize{};
 			(void)::GetTextExtentPoint32W(item.hDC, trailing.c_str(),
 				static_cast<int>(trailing.size()), &trailingSize);
-			RECT trailingRect = labelRect;
-			trailingRect.left = std::max(trailingRect.left,
-				trailingRect.right - trailingSize.cx);
-			(void)::SetTextColor(item.hDC, colors.secondary);
-			::DrawTextW(item.hDC, trailing.c_str(), static_cast<int>(trailing.size()),
-				&trailingRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
-			labelRect.right = std::max(labelRect.left,
-				trailingRect.left - ScaleDip(kColumnGapDip, m_dpi));
+			(void)::GetTextExtentPoint32W(item.hDC, label.c_str(),
+				static_cast<int>(label.size()), &labelSize);
+			const auto split = SplitProjectsRowText(labelRect.right - labelRect.left,
+				labelSize.cx, trailingSize.cx, ScaleDip(kColumnGapDip, m_dpi));
+			if (split.trailingWidth > 0) {
+				RECT trailingRect = labelRect;
+				trailingRect.left = trailingRect.right - split.trailingWidth;
+				(void)::SetTextColor(item.hDC, colors.secondary);
+				::DrawTextW(item.hDC, trailing.c_str(), static_cast<int>(trailing.size()),
+					&trailingRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+			}
+			labelRect.right = labelRect.left + split.labelWidth;
 		}
 		(void)::SetTextColor(item.hDC, colors.primary);
 		::DrawTextW(item.hDC, label.c_str(), static_cast<int>(label.size()), &labelRect,
