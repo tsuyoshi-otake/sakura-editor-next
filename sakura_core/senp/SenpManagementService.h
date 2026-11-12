@@ -334,6 +334,18 @@ void ReadPipeBounded(void* pipe, std::string& target, bool& overflow) noexcept;
 //! record under another key, a cut record, or one with another entry count.
 [[nodiscard]] std::optional<std::vector<std::string>> DecodeBuiltInCatalogCache(
 	std::string_view text, std::string_view key, std::size_t count);
+//! The installed listings cache record: the key line, then the `list` and the
+//! `list-uninstalled` output, each as its byte count on a line and its bytes.
+[[nodiscard]] std::string EncodeInstalledListingsCache(
+	std::string_view key, std::string_view installed, std::string_view uninstalled);
+//! The two outputs of a record written under exactly `key`; nothing for a
+//! record under another key or one that is cut, padded or miscounted.
+[[nodiscard]] std::optional<std::pair<std::string, std::string>> DecodeInstalledListingsCache(
+	std::string_view text, std::string_view key);
+//! Names every file a listing of `installRoot` reads: path, size and write
+//! time of everything under `profiles`, `uninstalled` and `content`. Empty
+//! when the store cannot be walked or holds anything but files and directories.
+[[nodiscard]] std::string InstalledStoreStamp(std::wstring_view installRoot);
 
 } // namespace detail
 
@@ -369,7 +381,8 @@ private:
 		detail::ToolResult uninstalled;
 	};
 	//! Runs both listings; touches no service state, so it may run beside other reads.
-	[[nodiscard]] InstalledListings ReadInstalledListings() const;
+	//! With `allowCached` a record of an earlier run over the unchanged store answers instead.
+	[[nodiscard]] InstalledListings ReadInstalledListings(bool allowCached) const;
 	//! Validates the listings and publishes them as the installed snapshot.
 	[[nodiscard]] ManagementOperationResult AdoptInstalledListings(const InstalledListings& listings);
 	[[nodiscard]] ManagementOperationResult ReloadInstalled();

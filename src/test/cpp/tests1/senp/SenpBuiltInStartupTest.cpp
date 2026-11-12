@@ -4,6 +4,8 @@
 #include <gtest/gtest.h>
 #include "senp/SenpManagementService.h"
 
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <set>
 
@@ -369,4 +371,68 @@ TEST(SenpBuiltInCatalogCache, RejectsACutOrMiscountedRecord)
 	EXPECT_FALSE(senp::detail::DecodeBuiltInCatalogCache(text.substr(0, text.size() - 1), "key", 2).has_value());
 	EXPECT_FALSE(senp::detail::DecodeBuiltInCatalogCache("key\n\n{}\n", "key", 2).has_value());
 	EXPECT_FALSE(senp::detail::DecodeBuiltInCatalogCache("key", "key", 0).has_value());
+}
+
+TEST(SenpInstalledListingsCache, RoundTripsBothOutputsUnderItsKeyOnly)
+{
+	const std::string installed = "{\"id\":\"a\"}\n{\"id\":\"b\"}\n", uninstalled;
+	const auto text = senp::detail::EncodeInstalledListingsCache("key|tool=1.2", installed, uninstalled);
+	const auto decoded = senp::detail::DecodeInstalledListingsCache(text, "key|tool=1.2");
+	ASSERT_TRUE(decoded.has_value());
+	EXPECT_EQ(installed, decoded->first);
+	EXPECT_EQ(uninstalled, decoded->second);
+	EXPECT_FALSE(senp::detail::DecodeInstalledListingsCache(text, "key|tool=1.3").has_value());
+	EXPECT_FALSE(senp::detail::DecodeInstalledListingsCache(text, "key|tool=1").has_value());
+	EXPECT_FALSE(senp::detail::DecodeInstalledListingsCache(text, "").has_value());
+}
+
+TEST(SenpInstalledListingsCache, RejectsACutPaddedOrMiscountedRecord)
+{
+	const auto text = senp::detail::EncodeInstalledListingsCache("key", "one\n", "two\n");
+	ASSERT_TRUE(senp::detail::DecodeInstalledListingsCache(text, "key").has_value());
+	for (std::size_t cut = 1; cut < text.size(); ++cut)
+		EXPECT_FALSE(senp::detail::DecodeInstalledListingsCache(text.substr(0, text.size() - cut), "key").has_value()) << cut;
+	EXPECT_FALSE(senp::detail::DecodeInstalledListingsCache(text + "x", "key").has_value());
+	EXPECT_FALSE(senp::detail::DecodeInstalledListingsCache("key\n-1\n0\n", "key").has_value());
+	EXPECT_FALSE(senp::detail::DecodeInstalledListingsCache("key\n4 \none\n0\n", "key").has_value());
+	EXPECT_FALSE(senp::detail::DecodeInstalledListingsCache("key\n9999999999\n", "key").has_value());
+}
+
+TEST(SenpInstalledListingsCache, StoreStampChangesWithAnyFileTheListingReads)
+{
+	namespace fs = std::filesystem;
+	const auto root = fs::temp_directory_path() / (L"sakura-senp-stamp-" + std::to_wstring(::GetCurrentProcessId()));
+	std::error_code error;
+	fs::remove_all(root, error);
+	const auto write = [](const fs::path& path, std::string_view text) {
+		fs::create_directories(path.parent_path());
+		std::ofstream(path, std::ios::binary | std::ios::trunc) << text;
+	};
+	// A store with none of the three directories is an empty store, not an unreadable one.
+	fs::create_directories(root);
+	const auto empty = senp::detail::InstalledStoreStamp(root.native());
+	EXPECT_FALSE(empty.empty());
+	write(root / L"profiles" / L"a.json", "{\"enabled\":true}");
+	write(root / L"content" / L"abc" / L"senp.json", "{}");
+	const auto first = senp::detail::InstalledStoreStamp(root.native());
+	EXPECT_FALSE(first.empty());
+	EXPECT_NE(empty, first);
+	EXPECT_EQ(first, senp::detail::InstalledStoreStamp(root.native()));
+	// Files beside the three directories, such as the cache records, are not part of it.
+	write(root / L"installed-listings.cache", "x");
+	EXPECT_EQ(first, senp::detail::InstalledStoreStamp(root.native()));
+	write(root / L"profiles" / L"a.json", "{\"enabled\":false}");
+	const auto toggled = senp::detail::InstalledStoreStamp(root.native());
+	EXPECT_NE(first, toggled);
+	write(root / L"content" / L"abc" / L"module" / L"extension.wasm", "wasm");
+	const auto added = senp::detail::InstalledStoreStamp(root.native());
+	EXPECT_NE(toggled, added);
+	write(root / L"uninstalled" / L"b.json", "{}");
+	const auto removed = senp::detail::InstalledStoreStamp(root.native());
+	EXPECT_NE(added, removed);
+	// Same size, later write time: an in-place edit is still another stamp.
+	const auto module = root / L"content" / L"abc" / L"module" / L"extension.wasm";
+	fs::last_write_time(module, fs::last_write_time(module) + std::chrono::seconds(2));
+	EXPECT_NE(removed, senp::detail::InstalledStoreStamp(root.native()));
+	fs::remove_all(root, error);
 }

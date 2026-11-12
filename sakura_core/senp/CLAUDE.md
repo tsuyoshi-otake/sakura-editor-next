@@ -304,7 +304,9 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   package bytes are never reopened after their digest and trust decision. An
   installed listing re-reads every allowed payload file, requires exact
   checksum coverage and directory shape, rejects reparse points, and recomputes
-  each SHA-256 before publishing contributions.
+  each SHA-256 before publishing contributions. A window start may reuse the
+  recorded output of such a listing while the store's files are unchanged by
+  path, size and write time (see the installed listings cache below).
 - Archive and package-store hygiene (#353, #342, #362): every ZIP entry is read
   through `declared + 1` bytes and must match its declared size exactly (zip
   5.1.1 does not bound Deflate output), so the declared-size expanded budget
@@ -359,7 +361,24 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   table id with the embedded archive digest is ignored and rewritten (temp file
   + rename). It carries the same trust as the rest of the install root: no
   defence against a same-user writer. Injected hooks never read or write it.
-  The two listings are still tool runs on every start.
+- The `list` / `list-uninstalled` output is cached in
+  `<installRoot>/installed-listings.cache` (owner decision, #413). The key
+  names the tool (size and write time), the install root, and the relative
+  path, size and write time of every file and directory under `profiles/`,
+  `uninstalled/` and `content/` (`detail::InstalledStoreStamp`). `Start()`
+  replays the recorded output through the unchanged `AdoptInstalledListings`
+  parser when the key matches; any install, enable, uninstall or hand edit of
+  the store is another key and runs the tool. `ReloadInstalled()` always runs
+  the tool and refreshes the record, and a record is written only when both
+  runs completed and the key is the same before and after them. A store that
+  holds a link, junction or anything else that is not a file or directory has
+  no key, so the tool still refuses it itself. **What this gives up:** on a
+  cache hit the per-window re-read that recomputes each payload SHA-256 does
+  not run, so an in-place change that preserves a file's size and write time
+  is not noticed by that start. The Wasm module is unaffected (the host
+  re-checks its digest when it loads it); declarative payload files are
+  covered by size and write time only until the next reload, store change or
+  tool update. An injected `runTool` hook never reads or writes the record.
 - Runtime descriptors carry the validated lowercase SHA-256 for
   `module/extension.wasm`. The host reads the module once into a bounded byte
   vector, compares that digest, and gives those same bytes to Wasmtime. A path

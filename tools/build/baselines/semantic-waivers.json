@@ -2863,44 +2863,6 @@
     },
     {
       "owner": "tsuyoshi-otake",
-      "reason": "#413 caches the built-in catalog beside the install root: SenpManagementService.h declares the pure EncodeBuiltInCatalogCache / DecodeBuiltInCatalogCache record codec next to the existing detail seam, and SenpBuiltInStartupTest.cpp gains two tests of that codec. Each item was reviewed: the two public fields are the members of InstalledListings, the private nested value struct of CWin32SenpManagementService introduced by e7e04fe73 and only moved eight lines down by the new declarations; the header and the test file keep their baseline findings because this change adds two free function declarations and two tests and removes none of the reviewed constructs, so no reduction was available without unrelated refactoring.",
-      "tracking_issue": 389,
-      "created": "2026-11-12",
-      "expires": "2027-02-07",
-      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
-      "files": {
-        "sakura_core/senp/SenpManagementService.h": "sha256:6229f58c90ab76f4274445bfa45fba2adba933167ff9aa10e081c48624a15199",
-        "src/test/cpp/tests1/senp/SenpBuiltInStartupTest.cpp": "sha256:2ab9765eaed71fa0f2513a9a0bfaf4750377a5b5ee8af5bc79164c6587932eb8"
-      },
-      "new_findings": [
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "sakura_core/senp/SenpManagementService.h",
-          "line": 368,
-          "column": 22,
-          "evidence_sha256": "sha256:9ba61b1eeb167eb6d62cafa3503345f1ae5c62c1c11929f7347d24970ce2283a"
-        },
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "sakura_core/senp/SenpManagementService.h",
-          "line": 369,
-          "column": 22,
-          "evidence_sha256": "sha256:961f9f81be9523b40d9e3dbeb4732d0fb2306b0510d98eac3961a454726a777a"
-        }
-      ],
-      "missing_touched_reductions": [
-        {
-          "path": "sakura_core/senp/SenpManagementService.h",
-          "baseline_finding_count": 64
-        },
-        {
-          "path": "src/test/cpp/tests1/senp/SenpBuiltInStartupTest.cpp",
-          "baseline_finding_count": 7
-        }
-      ]
-    },
-    {
-      "owner": "tsuyoshi-otake",
       "reason": "#413 creates a view pane's title action buttons and their shared tooltip on first use instead of for every pane at window start. Each item was reviewed: the boundary.win32_type finding in SenpViewContainer.cpp is the TTM_ADDTOOLW SendMessageW/LPARAM call that already existed in Initialize and only moved into the new EnsureActionControl helper inside the same native view container implementation, which is the Win32 owner of these HWNDs; no Win32 type crosses a new boundary. SenpViewContainerTest.cpp gains one native-window test (TitleActionButtonsExistFromTheirFirstUseAndKeepTheirOrder) and its 15 baseline findings are the fixture's existing Win32 usage, which this change does not touch and cannot reduce without rewriting an unrelated fixture.",
       "tracking_issue": 389,
       "created": "2026-11-12",
@@ -2923,6 +2885,44 @@
         {
           "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
           "baseline_finding_count": 15
+        }
+      ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#413 caches the built-in catalog and the installed listings beside the install root: SenpManagementService.h declares the pure EncodeBuiltInCatalogCache / DecodeBuiltInCatalogCache and EncodeInstalledListingsCache / DecodeInstalledListingsCache record codecs and InstalledStoreStamp next to the existing detail seam, and SenpBuiltInStartupTest.cpp gains tests of those codecs and of the stamp. Each item was reviewed: the two state.public_mutable_field findings are the installed / uninstalled members of InstalledListings, the private nested value struct of CWin32SenpManagementService that carries the two raw tool results from ReadInstalledListings to AdoptInstalledListings and is never shared state; they only moved down with the added declarations. The header's 64 and the test's 7 baseline findings are existing declarations and fixtures this change does not touch and cannot reduce without an unrelated rewrite.",
+      "tracking_issue": 389,
+      "created": "2026-11-12",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/senp/SenpManagementService.h": "sha256:13cb284e828a5f9eaf1ec8206c7fb9f8ab1eae31b5e0350be61056952a406990",
+        "src/test/cpp/tests1/senp/SenpBuiltInStartupTest.cpp": "sha256:e15ace73915d5a16f456589d9bfca8a4c309118dd1bbe0e7375d580555d415bd"
+      },
+      "new_findings": [
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/senp/SenpManagementService.h",
+          "line": 380,
+          "column": 22,
+          "evidence_sha256": "sha256:9ba61b1eeb167eb6d62cafa3503345f1ae5c62c1c11929f7347d24970ce2283a"
+        },
+        {
+          "rule_id": "state.public_mutable_field",
+          "path": "sakura_core/senp/SenpManagementService.h",
+          "line": 381,
+          "column": 22,
+          "evidence_sha256": "sha256:961f9f81be9523b40d9e3dbeb4732d0fb2306b0510d98eac3961a454726a777a"
+        }
+      ],
+      "missing_touched_reductions": [
+        {
+          "path": "sakura_core/senp/SenpManagementService.h",
+          "baseline_finding_count": 64
+        },
+        {
+          "path": "src/test/cpp/tests1/senp/SenpBuiltInStartupTest.cpp",
+          "baseline_finding_count": 7
         }
       ]
     }

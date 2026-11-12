@@ -973,7 +973,7 @@ ManagementOperationResult CWin32SenpManagementService::Start()
 	// catalog inspections. An injected runner keeps the one-call-at-a-time order.
 	std::future<InstalledListings> listing;
 	if (!m_hooks.runTool && !IsStopped()) {
-		listing = std::async(std::launch::async, [this] { return ReadInstalledListings(); });
+		listing = std::async(std::launch::async, [this] { return ReadInstalledListings(true); });
 	}
 	if (retry.empty()) {
 		const auto catalog = LoadBuiltInCatalog();
@@ -1069,6 +1069,90 @@ std::optional<std::vector<std::string>> detail::DecodeBuiltInCatalogCache(
 	return lines;
 }
 
+std::string detail::EncodeInstalledListingsCache(
+	std::string_view key, std::string_view installed, std::string_view uninstalled)
+{
+	std::string text(key);
+	text.push_back('\n');
+	for (const auto part : { installed, uninstalled }) {
+		text += std::to_string(part.size());
+		text.push_back('\n');
+		text += part;
+	}
+	return text;
+}
+
+std::optional<std::pair<std::string, std::string>> detail::DecodeInstalledListingsCache(
+	std::string_view text, std::string_view key)
+{
+	if (key.empty() || key.find('\n') != std::string_view::npos
+		|| text.size() <= key.size() || !text.starts_with(key) || text[key.size()] != '\n') return std::nullopt;
+	text.remove_prefix(key.size() + 1);
+	std::array<std::string, 2> parts;
+	for (auto& part : parts) {
+		const auto end = text.find('\n');
+		if (end == std::string_view::npos || end == 0 || end > 9) return std::nullopt;
+		std::size_t size = 0;
+		for (const char ch : text.substr(0, end)) {
+			if (ch < '0' || ch > '9') return std::nullopt;
+			size = size * 10 + static_cast<std::size_t>(ch - '0');
+		}
+		text.remove_prefix(end + 1);
+		// The bytes a count promises must all be there: a cut file is no record.
+		if (text.size() < size) return std::nullopt;
+		part.assign(text.substr(0, size));
+		text.remove_prefix(size);
+	}
+	if (!text.empty()) return std::nullopt;
+	return std::pair{ std::move(parts[0]), std::move(parts[1]) };
+}
+
+std::string detail::InstalledStoreStamp(std::wstring_view installRoot)
+{
+	constexpr std::size_t kMaximumEntries = 20000;
+	try {
+		std::vector<std::string> entries;
+		for (const wchar_t* name : { L"profiles", L"uninstalled", L"content" }) {
+			const auto directory = std::filesystem::path(installRoot) / name;
+			std::error_code error;
+			const auto status = std::filesystem::symlink_status(directory, error);
+			if (status.type() == std::filesystem::file_type::not_found) continue;
+			if (error || status.type() != std::filesystem::file_type::directory) return {};
+			std::filesystem::recursive_directory_iterator walk(directory, error);
+			for (; !error && walk != std::filesystem::recursive_directory_iterator(); walk.increment(error)) {
+				const auto type = walk->symlink_status(error).type();
+				if (error) return {};
+				const bool file = type == std::filesystem::file_type::regular;
+				// A link, junction or device is the tool's to refuse, never to cache.
+				if (!file && type != std::filesystem::file_type::directory) return {};
+				const auto entry = walk->path().lexically_relative(installRoot).generic_u8string();
+				std::string line(reinterpret_cast<const char*>(entry.data()), entry.size());
+				if (line.find_first_of("\n|") != std::string::npos || entries.size() == kMaximumEntries) return {};
+				if (file) {
+					const auto size = walk->file_size(error);
+					if (error) return {};
+					const auto written = walk->last_write_time(error);
+					if (error) return {};
+					line += ":" + std::to_string(size) + "." + std::to_string(written.time_since_epoch().count());
+				} else {
+					line += "/";
+				}
+				entries.push_back(std::move(line));
+			}
+			if (error) return {};
+		}
+		std::ranges::sort(entries);
+		std::string stamp = "store";
+		for (const auto& entry : entries) {
+			stamp.push_back('|');
+			stamp += entry;
+		}
+		return stamp;
+	} catch (...) {
+		return {};
+	}
+}
+
 namespace {
 
 constexpr std::size_t kMaximumCatalogCacheBytes = 4U * 1024U * 1024U;
@@ -1095,15 +1179,41 @@ std::string EmbeddedHash(const BuiltInResource& builtIn, const detail::SenpServi
 	return hash.size() == 64 && hex ? hash : std::string{};
 }
 
+std::filesystem::path SelfExecutable()
+{
+	std::array<wchar_t, 32768> path{};
+	const DWORD length = ::GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+	if (length == 0 || length >= path.size()) return {};
+	return std::filesystem::path(std::wstring(path.data(), length));
+}
+
+//! Names everything a listing of `installRoot` depends on: the tool that
+//! produces it, the root its paths are reported under, and every file it
+//! reads. Empty when any part cannot be read, which disables the cache.
+std::string InstalledListingsCacheKey(const std::wstring& installRoot)
+{
+	const auto executable = SelfExecutable();
+	if (executable.empty()) return {};
+	const auto tool = FileIdentity(executable.parent_path() / L"sakura-senp-tool.exe");
+	const auto stamp = detail::InstalledStoreStamp(installRoot);
+	const auto where = std::filesystem::path(installRoot).generic_u8string();
+	const std::string root(reinterpret_cast<const char*>(where.data()), where.size());
+	if (tool.empty() || stamp.empty() || root.find('\n') != std::string::npos) return {};
+	return "sakura-senp-installed-listings/1|tool=" + tool + "|root=" + root + "|" + stamp;
+}
+
+bool Completed(const detail::ToolResult& result) noexcept
+{
+	return result.launched && !result.timedOut && result.exitCode == 0 && !result.outputTruncated;
+}
+
 //! Names everything an `inspect-builtin` result depends on: this executable,
 //! the tool that produces the result, and each embedded archive. Empty when
 //! any part cannot be read, which disables the cache for this start.
 std::string BuiltInCatalogCacheKey(const detail::SenpServiceHooks& hooks)
 {
-	std::array<wchar_t, 32768> path{};
-	const DWORD length = ::GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
-	if (length == 0 || length >= path.size()) return {};
-	const std::filesystem::path executable(std::wstring(path.data(), length));
+	const auto executable = SelfExecutable();
+	if (executable.empty()) return {};
 	const auto self = FileIdentity(executable);
 	const auto tool = FileIdentity(executable.parent_path() / L"sakura-senp-tool.exe");
 	if (self.empty() || tool.empty()) return {};
@@ -1287,7 +1397,7 @@ ManagementOperationResult CWin32SenpManagementService::LoadBuiltInCatalog()
 	return { EManagementOperationStatus::Succeeded, m_snapshot };
 }
 
-CWin32SenpManagementService::InstalledListings CWin32SenpManagementService::ReadInstalledListings() const
+CWin32SenpManagementService::InstalledListings CWin32SenpManagementService::ReadInstalledListings(bool allowCached) const
 {
 	InstalledListings listings;
 	// The two listings are independent reads of the same root. An injected
@@ -1301,18 +1411,43 @@ CWin32SenpManagementService::InstalledListings CWin32SenpManagementService::Read
 		}
 		return listings;
 	}
+	// Every editor window pays for the two runs on its startup path (#413), and
+	// their output depends only on the tool and on the files of the store. A
+	// start therefore reuses the output recorded under a key naming the tool and
+	// the path, size and write time of every one of those files; any change to
+	// the store, by this product or by hand, is another key and runs the tool.
+	// A reload always runs it and refreshes the record.
+	const auto cachePath = std::filesystem::path(m_installRoot) / L"installed-listings.cache";
+	const auto cacheKey = m_hooks.embeddedResource ? std::string{} : InstalledListingsCacheKey(m_installRoot);
+	if (allowCached && !cacheKey.empty()) {
+		if (const auto text = ReadBoundedFile(cachePath)) {
+			if (auto cached = detail::DecodeInstalledListingsCache(*text, cacheKey)) {
+				listings.installed.launched = listings.uninstalled.launched = true;
+				listings.installed.exitCode = listings.uninstalled.exitCode = 0;
+				listings.installed.output = std::move(cached->first);
+				listings.uninstalled.output = std::move(cached->second);
+				return listings;
+			}
+		}
+	}
 	auto uninstalled = std::async(std::launch::async, [this] {
 		return RunTool({ L"list-uninstalled", m_installRoot }, m_hooks);
 	});
 	listings.installed = RunTool({ L"list", m_installRoot }, m_hooks);
 	listings.uninstalled = uninstalled.get();
+	// Recorded only when the store did not change under the two runs.
+	if (!cacheKey.empty() && Completed(listings.installed) && Completed(listings.uninstalled)
+		&& InstalledListingsCacheKey(m_installRoot) == cacheKey) {
+		WriteBuiltInCatalogCache(cachePath, detail::EncodeInstalledListingsCache(
+			cacheKey, listings.installed.output, listings.uninstalled.output));
+	}
 	return listings;
 }
 
 ManagementOperationResult CWin32SenpManagementService::ReloadInstalled()
 {
 	if (IsStopped()) return Terminal(EManagementOperationStatus::Stopped);
-	return AdoptInstalledListings(ReadInstalledListings());
+	return AdoptInstalledListings(ReadInstalledListings(false));
 }
 
 ManagementOperationResult CWin32SenpManagementService::AdoptInstalledListings(
