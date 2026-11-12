@@ -208,38 +208,57 @@ struct CSenpViewContainers::Impl {
 			panes.push_back(std::move(value));
 			if (!CreateNode(pane.root, NodeKind::Pane, pane.container->root.window, &pane, nullptr)
 				|| !CreateNode(pane.sash, NodeKind::Sash, pane.container->root.window, &pane, nullptr)) return false;
-			for (std::size_t i = 0; i < pane.controls.size(); ++i) {
-				auto& control = pane.controls[i]; control.pane = &pane; control.index = i;
-				control.window = ::CreateWindowExW(0, L"BUTTON", i == 0 ? pane.title.c_str() : L"",
-					WS_CHILD | WS_TABSTOP | BS_OWNERDRAW, 0, 0, 0, 0, pane.root.window,
-					reinterpret_cast<HMENU>(static_cast<UINT_PTR>(i + 1)), ::GetModuleHandleW(nullptr), nullptr);
-				if (!control.window || !::SetWindowSubclass(control.window, ControlProcedure, kControlSubclass,
-					reinterpret_cast<DWORD_PTR>(&control))) return false;
-			}
-			pane.tooltip = ::CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP,
-				CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, pane.root.window, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-			if (!pane.tooltip) return false;
-			for (std::size_t i = 1; i < pane.controls.size(); ++i) {
-				TOOLINFOW info{ sizeof(info) }; info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-				info.hwnd = pane.root.window; info.uId = reinterpret_cast<UINT_PTR>(pane.controls[i].window);
-				info.lpszText = const_cast<LPWSTR>(L"");
-				if (!::SendMessageW(pane.tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info))) return false;
-			}
+			for (std::size_t i = 0; i < pane.controls.size(); ++i) { pane.controls[i].pane = &pane; pane.controls[i].index = i; }
+			if (!CreateControl(pane, 0)) return false;
 			pane.body = pane.definition.createBody({ pane.root.window, [this, &pane] { ScheduleInteraction(pane); }, [this]() noexcept { Fault(); } });
 			if (!pane.body || !::IsWindow(pane.body->Window()) || ::GetParent(pane.body->Window()) != pane.root.window) return false;
 			pane.body->SetVisible(false); pane.bodyLocation = Location(*pane.container);
 			pane.body->SetPalette(palette, pane.bodyLocation);
 			if (!pane.font.Recreate(theme::ThemeFontKind::Chrome, 96)) return false;
-			UpdateActions(pane);
+			if (!UpdateActions(pane)) return false;
 		}
 		options.views.clear(); // Native panes are the sole body/factory owners now.
 		return true;
 	}
-	void UpdateActions(Pane& pane)
+	bool CreateControl(Pane& pane, std::size_t index)
+	{
+		auto& control = pane.controls[index];
+		control.window = ::CreateWindowExW(0, L"BUTTON", index == 0 ? pane.title.c_str() : L"",
+			WS_CHILD | WS_TABSTOP | BS_OWNERDRAW, 0, 0, 0, 0, pane.root.window,
+			reinterpret_cast<HMENU>(static_cast<UINT_PTR>(index + 1)), ::GetModuleHandleW(nullptr), nullptr);
+		return control.window && ::SetWindowSubclass(control.window, ControlProcedure, kControlSubclass,
+			reinterpret_cast<DWORD_PTR>(&control));
+	}
+	// A title action button, and the tooltip the action buttons share, exist
+	// from the first time that action slot is used and then live as long as the
+	// pane. Every window start registers the built-in views, and a view that
+	// declares no title action pays for neither there (#413).
+	bool EnsureActionControl(Pane& pane, std::size_t index)
+	{
+		auto& control = pane.controls[index];
+		if (control.window) return true;
+		if (!pane.tooltip) {
+			pane.tooltip = ::CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP,
+				CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, pane.root.window, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+			if (!pane.tooltip) return false;
+		}
+		if (!CreateControl(pane, index)) return false;
+		// Slots fill in ascending order, so the predecessor exists: sit directly
+		// behind it, where creating every button up front used to leave this one.
+		::SetWindowPos(control.window, pane.controls[index - 1].window, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		TOOLINFOW info{ sizeof(info) }; info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+		info.hwnd = pane.root.window; info.uId = reinterpret_cast<UINT_PTR>(control.window);
+		info.lpszText = const_cast<LPWSTR>(L"");
+		return ::SendMessageW(pane.tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info)) != 0;
+	}
+	//! False when a button a present action needs could not be created.
+	bool UpdateActions(Pane& pane)
 	{
 		for (std::size_t i = 1; i < pane.controls.size(); ++i) {
 			auto& control = pane.controls[i];
 			const bool present = i <= pane.definition.actions.size();
+			if (present && !EnsureActionControl(pane, i)) return false;
+			if (!control.window) continue;
 			const wchar_t* title = present ? pane.definition.actions[i - 1].Title().c_str() : L"";
 			::SetWindowTextW(control.window, title);
 			::EnableWindow(control.window, present && pane.definition.actions[i - 1].Enabled());
@@ -247,6 +266,7 @@ struct CSenpViewContainers::Impl {
 			info.uId = reinterpret_cast<UINT_PTR>(control.window); info.lpszText = const_cast<LPWSTR>(title);
 			::SendMessageW(pane.tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&info));
 		}
+		return true;
 	}
 	void Close() noexcept
 	{
@@ -402,7 +422,7 @@ void CSenpViewContainers::Impl::LayoutPane(Pane& pane, int width, int height)
 			::SetWindowPos(control.window, nullptr, actionLeft, (header - actionSide) / 2, actionSide, actionSide,
 				SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
 			actionLeft -= gap;
-		} else ::ShowWindow(control.window, SW_HIDE);
+		} else if (control.window) ::ShowWindow(control.window, SW_HIDE);
 	}
 	const int headerWidth = actionsVisible && !pane.definition.actions.empty() ? std::max(0, actionLeft) : width;
 	::SetWindowPos(pane.controls[0].window, nullptr, 0, 0, headerWidth, header, SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
@@ -865,9 +885,9 @@ ESenpViewProjectionStatus CSenpViewContainers::SetTitleActions(std::string_view 
 	auto* pane = m_impl->FindPane(id);
 	if (!pane || !ValidActions(actions) || (!actions.empty() && !m_impl->options.execute)) return ESenpViewProjectionStatus::Invalid;
 	for (std::size_t i = 1; i < pane->controls.size(); ++i)
-		if (::GetFocus() == pane->controls[i].window && (i > actions.size() || !actions[i - 1].Enabled())) ::SetFocus(pane->controls[0].window);
+		if (pane->controls[i].window && ::GetFocus() == pane->controls[i].window && (i > actions.size() || !actions[i - 1].Enabled())) ::SetFocus(pane->controls[0].window);
 	pane->definition.actions = std::move(actions);
-	m_impl->UpdateActions(*pane);
+	if (!m_impl->UpdateActions(*pane)) { m_impl->Fault(); return ESenpViewProjectionStatus::Failed; }
 	m_impl->Layout(*pane->container);
 	return IsUsable() ? ESenpViewProjectionStatus::Applied : ESenpViewProjectionStatus::Failed;
 }

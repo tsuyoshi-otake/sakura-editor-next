@@ -68,6 +68,14 @@
   intermediate frame. `Attach` lays the panes out while the container is still
   hidden and shows it afterwards, so a retained page never appears at its
   previous geometry first.
+- A view pane creates its header BUTTON up front, and a title action BUTTON
+  (with the one tooltip window the action buttons share) the first time that
+  action slot is used; the button then lives as long as the pane and is only
+  hidden when its action goes away. Creating all eight slots and the tooltip
+  for every pane cost about 30 ms on each window start for the built-in views
+  (#413). A late button is moved directly behind its predecessor so the child
+  order stays header, actions in slot order, body. Code that walks
+  `Pane::controls` must skip a slot whose `window` is null.
 - An owner-draw header or action BUTTON (and the declared tree view's Retry)
   returns 1 for `WM_ERASEBKGND`; its `WM_DRAWITEM` already fills the whole item.
   Showing a page erases a newly visible child synchronously with the btnface

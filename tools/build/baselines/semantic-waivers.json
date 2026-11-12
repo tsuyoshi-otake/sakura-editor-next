@@ -2898,6 +2898,33 @@
           "baseline_finding_count": 7
         }
       ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#413 creates a view pane's title action buttons and their shared tooltip on first use instead of for every pane at window start. Each item was reviewed: the boundary.win32_type finding in SenpViewContainer.cpp is the TTM_ADDTOOLW SendMessageW/LPARAM call that already existed in Initialize and only moved into the new EnsureActionControl helper inside the same native view container implementation, which is the Win32 owner of these HWNDs; no Win32 type crosses a new boundary. SenpViewContainerTest.cpp gains one native-window test (TitleActionButtonsExistFromTheirFirstUseAndKeepTheirOrder) and its 15 baseline findings are the fixture's existing Win32 usage, which this change does not touch and cannot reduce without rewriting an unrelated fixture.",
+      "tracking_issue": 389,
+      "created": "2026-11-12",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp": "sha256:88d86b8dac6c0c5582fa1c09a9a20fb060027c667a20daf5f34b4bb8733ed66a",
+        "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp": "sha256:68fa6c25811c09f82e54adcb8c2d2304a7ba0ea2aeef84a24f5ab98f6e1b5403"
+      },
+      "new_findings": [
+        {
+          "rule_id": "boundary.win32_type",
+          "path": "sakura_core/workbench/viewcontainer/SenpViewContainer.cpp",
+          "line": 252,
+          "column": 73,
+          "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c"
+        }
+      ],
+      "missing_touched_reductions": [
+        {
+          "path": "src/test/cpp/tests1/workbench/SenpViewContainerTest.cpp",
+          "baseline_finding_count": 15
+        }
+      ]
     }
   ]
 }

@@ -328,6 +328,30 @@ TEST_F(SenpViewContainer, TitleActionsRespectEnabledStateAndRestoreFocusWhenRemo
 	EXPECT_EQ(ESenpViewProjectionStatus::Invalid, owner->SetTitleActions(first.viewId, { { "test.duplicate", L"One", L"refresh" }, { "test.duplicate", L"Two", L"refresh" } }));
 }
 
+TEST_F(SenpViewContainer, TitleActionButtonsExistFromTheirFirstUseAndKeepTheirOrder)
+{
+	Create(true); ASSERT_NE(nullptr, owner);
+	const auto first = owner->Snapshot("test.issueList").value();
+	// The two declared actions have their buttons; an unused slot has none.
+	const auto one = ::GetDlgItem(first.pane, 2), two = ::GetDlgItem(first.pane, 3);
+	ASSERT_NE(nullptr, one); ASSERT_NE(nullptr, two);
+	EXPECT_EQ(nullptr, ::GetDlgItem(first.pane, 4));
+	ASSERT_EQ(ESenpViewProjectionStatus::Applied, owner->SetTitleActions(first.viewId,
+		{ { "test.one", L"One", L"refresh", true }, { "test.two", L"Two", L"close", true }, { "test.three", L"Three", L"refresh", true } }));
+	const auto three = ::GetDlgItem(first.pane, 4);
+	ASSERT_NE(nullptr, three);
+	EXPECT_EQ(one, ::GetDlgItem(first.pane, 2)); EXPECT_EQ(two, ::GetDlgItem(first.pane, 3));
+	// A late button sits where creating every slot up front left it: header, actions in order, then the body.
+	EXPECT_EQ(first.header, ::GetWindow(first.pane, GW_CHILD));
+	EXPECT_EQ(one, ::GetWindow(first.header, GW_HWNDNEXT)); EXPECT_EQ(two, ::GetWindow(one, GW_HWNDNEXT));
+	EXPECT_EQ(three, ::GetWindow(two, GW_HWNDNEXT)); EXPECT_EQ(first.body, ::GetWindow(three, GW_HWNDNEXT));
+	::SetFocus(first.header); Pump(); EXPECT_TRUE(::IsWindowVisible(three));
+	::SendMessageW(three, BM_CLICK, 0, 0); EXPECT_EQ("test.three", command); EXPECT_EQ(first.viewId, commandView);
+	// Removing the actions hides the buttons and keeps them for the next use.
+	ASSERT_EQ(ESenpViewProjectionStatus::Applied, owner->SetTitleActions(first.viewId, {}));
+	EXPECT_EQ(three, ::GetDlgItem(first.pane, 4)); EXPECT_FALSE(::IsWindowVisible(three));
+}
+
 TEST_F(SenpViewContainer, LayoutReservesItsRepaintAndShowsAPageOnlyAtItsFinalGeometry)
 {
 	Create(true); ASSERT_NE(nullptr, owner);
