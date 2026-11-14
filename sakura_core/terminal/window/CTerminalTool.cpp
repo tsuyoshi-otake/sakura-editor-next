@@ -12,6 +12,7 @@
 #include "terminal/DefaultTerminalLaunchProfileService.h"
 #include "terminal/input/TerminalShortcutPreset.h"
 #include "terminal/window/TerminalClipboardPaste.h"
+#include "terminal/window/TerminalGroupLayout.h"
 #include "terminal/window/TerminalHeaderLayout.h"
 #include "terminal/window/TerminalPaneLayout.h"
 #include "terminal/window/TerminalTabPresentation.h"
@@ -381,9 +382,8 @@ struct CTerminalTool::Impl {
 	std::function<void()> agentPresenceSink;
 
 	// A terminal session belongs to exactly one group; only the selected group
-	// owns native viewport HWNDs at a time. The group keeps a recursive split
-	// tree so an orthogonal split affects only the focused pane, e.g. a full
-	// height left pane beside two stacked panes on the right.
+	// owns native viewport HWNDs at a time. The ordered groups and each group's
+	// recursive split tree live in groupLayout, the HWND-free model.
 	struct TerminalPane final {
 		std::uint64_t tabId{};
 		std::unique_ptr<CTerminalWnd> window;
@@ -391,16 +391,9 @@ struct CTerminalTool::Impl {
 		ULONGLONG synchronizedOutputSince{};
 	};
 
-	struct TerminalPaneGroup final {
-		std::vector<std::uint64_t> tabIds;
-		std::vector<TerminalPaneLayoutTreeNode> nodes;
-		std::size_t root{};
-	};
-
 	struct WorkspaceProjectionState final {
 		TerminalDetachedTabProjection tabs;
-		std::vector<TerminalPaneGroup> paneGroups;
-		std::optional<std::size_t> activePaneGroup;
+		TerminalGroupLayout groupLayout;
 		std::wstring workingDirectory;
 		bool terminalTabsFocused{};
 		std::size_t terminalTabsFirstVisible{};
@@ -415,8 +408,7 @@ struct CTerminalTool::Impl {
 		TerminalWorkspaceSwitchOutcome failureOutcome{ TerminalWorkspaceSwitchOutcome::AttachFailed };
 	};
 
-	std::vector<TerminalPaneGroup> paneGroups;
-	std::optional<std::size_t> activePaneGroup;
+	TerminalGroupLayout groupLayout;
 	std::vector<TerminalPane> panes;
 	TerminalPaneLayoutResult paneLayout;
 	bool destroyingPaneRenderers{};
@@ -453,183 +445,6 @@ struct CTerminalTool::Impl {
 	std::function<void(TerminalShortcutPreset)> shortcutPresetSink;
 	std::unordered_map<std::wstring, WorkspaceProjectionState> workspaceRegistry;
 	std::wstring currentWorkspaceIdentityKey;
-
-	TerminalPaneGroup* ActiveGroup() noexcept
-	{
-		if( !activePaneGroup || *activePaneGroup >= paneGroups.size() ) return nullptr;
-		return &paneGroups[*activePaneGroup];
-	}
-
-	const TerminalPaneGroup* ActiveGroup() const noexcept
-	{
-		if( !activePaneGroup || *activePaneGroup >= paneGroups.size() ) return nullptr;
-		return &paneGroups[*activePaneGroup];
-	}
-
-	std::optional<std::size_t> FindGroup( std::uint64_t tabId ) const noexcept
-	{
-		for( std::size_t index = 0; index < paneGroups.size(); ++index ) {
-			const auto& group = paneGroups[index];
-			if( std::find(group.tabIds.begin(), group.tabIds.end(), tabId) != group.tabIds.end() ) return index;
-		}
-		return std::nullopt;
-	}
-
-	static TerminalPaneLayoutTreeNode MakePaneLeaf( std::uint64_t tabId )
-	{
-		TerminalPaneLayoutTreeNode node;
-		node.leafId = tabId;
-		return node;
-	}
-
-	void CollectTabIds( const TerminalPaneGroup& group, std::size_t nodeIndex,
-		std::vector<std::uint64_t>& tabIds ) const
-	{
-		if( nodeIndex >= group.nodes.size() ) return;
-		const auto& node = group.nodes[nodeIndex];
-		if( node.children.empty() ) {
-			if( node.leafId != 0 ) tabIds.push_back(node.leafId);
-			return;
-		}
-		for( const auto child : node.children ) CollectTabIds(group, child, tabIds);
-	}
-
-	void NormalizeNode( TerminalPaneGroup& group, std::size_t nodeIndex ) noexcept
-	{
-		if( nodeIndex >= group.nodes.size() ) return;
-		auto& node = group.nodes[nodeIndex];
-		if( node.children.empty() ) {
-			node.weights.clear();
-			return;
-		}
-		const bool valid = node.children.size() >= 2
-			&& node.weights.size() == node.children.size()
-			&& std::all_of(node.weights.begin(), node.weights.end(), [](int weight) { return weight > 0; })
-			&& std::all_of(node.children.begin(), node.children.end(), [&group, nodeIndex](std::size_t child) {
-				return child < group.nodes.size() && child != nodeIndex;
-			});
-		if( !valid ) node.weights.assign(node.children.size(), 1000);
-		for( const auto child : node.children ) NormalizeNode(group, child);
-	}
-
-	void NormalizeGroup( TerminalPaneGroup& group )
-	{
-		if( group.nodes.empty() ) {
-			group.tabIds.clear();
-			group.root = 0;
-			return;
-		}
-		NormalizeNode(group, group.root);
-		group.tabIds.clear();
-		CollectTabIds(group, group.root, group.tabIds);
-	}
-
-	std::size_t EnsureGroupForTab( std::uint64_t tabId )
-	{
-		if( const auto existing = FindGroup(tabId) ) return *existing;
-		TerminalPaneGroup group;
-		group.tabIds.push_back(tabId);
-		group.nodes.push_back(MakePaneLeaf(tabId));
-		group.root = 0;
-		paneGroups.push_back(std::move(group));
-		activePaneGroup = paneGroups.size() - 1;
-		return *activePaneGroup;
-	}
-
-	struct PaneLocation final {
-		std::size_t nodeIndex{};
-		std::optional<std::size_t> parentIndex;
-		std::size_t childPosition{};
-	};
-
-	std::optional<PaneLocation> FindPaneLocation( const TerminalPaneGroup& group,
-		std::size_t nodeIndex, std::uint64_t tabId ) const noexcept
-	{
-		if( nodeIndex >= group.nodes.size() ) return std::nullopt;
-		const auto& node = group.nodes[nodeIndex];
-		if( node.children.empty() ) {
-			return node.leafId == tabId ? std::optional<PaneLocation>(PaneLocation{ nodeIndex, std::nullopt, 0 })
-				: std::nullopt;
-		}
-		for( std::size_t position = 0; position < node.children.size(); ++position ) {
-			auto location = FindPaneLocation(group, node.children[position], tabId);
-			if( !location ) continue;
-			if( !location->parentIndex ) {
-				location->parentIndex = nodeIndex;
-				location->childPosition = position;
-			}
-			return location;
-		}
-		return std::nullopt;
-	}
-
-	TerminalPaneOrientation PaneOrientationForTab( const TerminalPaneGroup& group,
-		std::uint64_t tabId ) const noexcept
-	{
-		if( const auto location = FindPaneLocation(group, group.root, tabId); location && location->parentIndex ) {
-			return group.nodes[*location->parentIndex].orientation;
-		}
-		return TerminalPaneOrientation::Horizontal;
-	}
-
-	struct RemovePaneResult final {
-		bool removed{};
-		std::optional<std::size_t> replacement;
-	};
-
-	RemovePaneResult RemovePaneFromNode( TerminalPaneGroup& group, std::size_t nodeIndex,
-		std::uint64_t tabId ) noexcept
-	{
-		if( nodeIndex >= group.nodes.size() ) return {};
-		auto& node = group.nodes[nodeIndex];
-		if( node.children.empty() ) return { node.leafId == tabId, std::nullopt };
-		for( std::size_t position = 0; position < node.children.size(); ++position ) {
-			const auto childIndex = node.children[position];
-			const auto childResult = RemovePaneFromNode(group, childIndex, tabId);
-			if( !childResult.removed ) continue;
-			if( childResult.replacement ) {
-				node.children[position] = *childResult.replacement;
-			} else {
-				node.children.erase(node.children.begin() + static_cast<std::ptrdiff_t>(position));
-				if( position < node.weights.size() ) {
-					node.weights.erase(node.weights.begin() + static_cast<std::ptrdiff_t>(position));
-				}
-			}
-			if( node.children.size() <= 1 ) {
-				return { true, node.children.empty() ? std::nullopt
-					: std::optional<std::size_t>(node.children.front()) };
-			}
-			if( node.weights.size() != node.children.size() ) node.weights.assign(node.children.size(), 1000);
-			return { true, nodeIndex };
-		}
-		return {};
-	}
-
-	void RemoveTabFromGroups( std::uint64_t tabId )
-	{
-		for( std::size_t index = 0; index < paneGroups.size(); ++index ) {
-			auto& group = paneGroups[index];
-			if( std::find(group.tabIds.begin(), group.tabIds.end(), tabId) == group.tabIds.end() ) continue;
-			const auto result = RemovePaneFromNode(group, group.root, tabId);
-			if( !result.removed ) return;
-			if( result.replacement ) group.root = *result.replacement;
-			else group.nodes.clear();
-			NormalizeGroup(group);
-			if( !group.tabIds.empty() ) return;
-
-			if( activePaneGroup ) {
-				if( *activePaneGroup == index ) {
-					if( index + 1 < paneGroups.size() ) *activePaneGroup = index;
-					else if( index > 0 ) *activePaneGroup = index - 1;
-					else activePaneGroup.reset();
-				} else if( *activePaneGroup > index ) {
-					--*activePaneGroup;
-				}
-			}
-			paneGroups.erase(paneGroups.begin() + index);
-			return;
-		}
-	}
 
 	TerminalPane* FindPane( std::uint64_t tabId ) noexcept
 	{
@@ -819,7 +634,7 @@ struct CTerminalTool::Impl {
 	bool RebuildPaneRenderers()
 	{
 		DestroyPaneRenderers();
-		const auto* group = ActiveGroup();
+		const auto* group = groupLayout.ActiveGroup();
 		if( !group ) return true;
 		for( const auto tabId : group->tabIds ) {
 			if( !CreatePaneRenderer(tabId) ) {
@@ -834,10 +649,10 @@ struct CTerminalTool::Impl {
 	bool EnsureTerminalWindow()
 	{
 		if( !window || !instance || closed ) return false;
-		if( !ActiveGroup() ) {
-			if( const auto activeId = manager->ActiveTabId() ) EnsureGroupForTab(*activeId);
+		if( !groupLayout.ActiveGroup() ) {
+			if( const auto activeId = manager->ActiveTabId() ) groupLayout.EnsureGroupForTab(*activeId);
 		}
-		const auto* group = ActiveGroup();
+		const auto* group = groupLayout.ActiveGroup();
 		if( !group ) {
 			if( !HasVisibleContentBounds() ) return true;
 			if( panes.size() == 1 && panes.front().tabId == 0 && panes.front().window ) return true;
@@ -876,16 +691,14 @@ struct CTerminalTool::Impl {
 	WorkspaceProjectionState DetachCurrentProjection() noexcept
 	{
 		WorkspaceProjectionState state;
-		state.paneGroups = std::move(paneGroups);
-		state.activePaneGroup = activePaneGroup;
+		state.groupLayout = std::move(groupLayout);
 		state.workingDirectory = workingDirectory;
 		state.terminalTabsFocused = terminalTabsFocused;
 		state.terminalTabsFirstVisible = terminalTabsFirstVisible;
 		state.renderersMaterialized = !panes.empty();
 		PrepareProjectionDetach();
 		state.tabs = manager->DetachTabs();
-		paneGroups.clear();
-		activePaneGroup.reset();
+		groupLayout.Clear();
 		terminalTabsFirstVisible = 0;
 		return state;
 	}
@@ -898,8 +711,7 @@ struct CTerminalTool::Impl {
 	{
 		WorkspaceProjectionApplyResult result;
 		PrepareProjectionDetach();
-		paneGroups.clear();
-		activePaneGroup.reset();
+		groupLayout.Clear();
 		terminalTabsFirstVisible = 0;
 		workingDirectory = nextWorkingDirectory.empty() ? std::move(state.workingDirectory)
 			: std::move(nextWorkingDirectory);
@@ -910,8 +722,7 @@ struct CTerminalTool::Impl {
 			return result;
 		}
 		result.attachedTabCount = attach.attachedTabCount;
-		paneGroups = std::move(state.paneGroups);
-		activePaneGroup = state.activePaneGroup;
+		groupLayout = std::move(state.groupLayout);
 		terminalTabsFocused = state.terminalTabsFocused;
 		terminalTabsFirstVisible = state.terminalTabsFirstVisible;
 
@@ -984,7 +795,7 @@ struct CTerminalTool::Impl {
 	//! every header layout, paint and hit test uses this one projection.
 	TerminalHeaderActionVisibility HeaderActionVisibility() const noexcept
 	{
-		const auto groupCount = paneGroups.size();
+		const auto groupCount = groupLayout.GroupCount();
 		const bool tabsNarrow = IsTerminalTabsNarrow();
 		return TerminalHeaderActionVisibility{
 			ShouldShowTerminalHeaderActiveTerminal(tabPresentationSettings, groupCount, tabsNarrow, HasTerminalSplit()),
@@ -1028,8 +839,9 @@ struct CTerminalTool::Impl {
 			const HWND paneWindow = pane.window->GetHwnd();
 			if( pane.tabId != 0 && (focused == paneWindow || (paneWindow && focused && ::IsChild(paneWindow, focused)) ) ) return pane.tabId;
 		}
-		if( const auto activeId = manager->ActiveTabId(); activeId && FindGroup(*activeId) == activePaneGroup ) return activeId;
-		if( const auto* group = ActiveGroup(); group && !group->tabIds.empty() ) return group->tabIds.front();
+		if( const auto activeId = manager->ActiveTabId(); activeId
+			&& groupLayout.FindGroup(*activeId) == groupLayout.ActiveGroupIndex() ) return activeId;
+		if( const auto* group = groupLayout.ActiveGroup(); group && !group->tabIds.empty() ) return group->tabIds.front();
 		return manager->ActiveTabId();
 	}
 
@@ -1145,19 +957,18 @@ struct CTerminalTool::Impl {
 
 	void SetPaneDividerFromMouse( std::size_t dividerIndex, int x, int y )
 	{
-		auto* group = ActiveGroup();
-		if( !group || dividerIndex >= paneLayout.paneDividerNodes.size()
+		const auto groupIndex = groupLayout.ActiveGroupIndex();
+		if( !groupIndex || dividerIndex >= paneLayout.paneDividerNodes.size()
 			|| dividerIndex >= paneLayout.paneDividerChildren.size()
 			|| dividerIndex >= paneLayout.paneDividerFirstPanes.size()
 			|| dividerIndex >= paneLayout.paneDividerSecondPanes.size() ) return;
 		const auto nodeIndex = paneLayout.paneDividerNodes[dividerIndex];
 		const auto childPosition = paneLayout.paneDividerChildren[dividerIndex];
-		if( nodeIndex >= group->nodes.size() ) return;
-		auto& node = group->nodes[nodeIndex];
-		if( childPosition + 1 >= node.children.size() ) return;
+		const auto orientation = groupLayout.NodeOrientation(*groupIndex, nodeIndex);
+		if( !orientation ) return;
 		const RECT& firstPane = paneLayout.paneDividerFirstPanes[dividerIndex];
 		const RECT& secondPane = paneLayout.paneDividerSecondPanes[dividerIndex];
-		const bool vertical = node.orientation == TerminalPaneOrientation::Vertical;
+		const bool vertical = *orientation == TerminalPaneOrientation::Vertical;
 		const LONG combined = vertical
 			? std::max<LONG>(1, secondPane.bottom - firstPane.top - (secondPane.top - firstPane.bottom))
 			: std::max<LONG>(1, secondPane.right - firstPane.left - (secondPane.left - firstPane.right));
@@ -1165,11 +976,8 @@ struct CTerminalTool::Impl {
 		const LONG firstExtent = vertical
 			? std::clamp<LONG>(y - firstPane.top, minimum, combined - minimum)
 			: std::clamp<LONG>(x - firstPane.left, minimum, combined - minimum);
-		if( node.weights.size() != node.children.size() ) node.weights.assign(node.children.size(), 1000);
-		const int combinedWeight = std::max(2, node.weights[childPosition] + node.weights[childPosition + 1]);
-		const int firstWeight = std::clamp(static_cast<int>((static_cast<long long>(combinedWeight) * firstExtent) / combined), 1, combinedWeight - 1);
-		node.weights[childPosition] = firstWeight;
-		node.weights[childPosition + 1] = combinedWeight - firstWeight;
+		if( !groupLayout.ApplyDividerResize(*groupIndex, nodeIndex, childPosition,
+			static_cast<int>(firstExtent), static_cast<int>(combined)) ) return;
 		LayoutChildren();
 	}
 
@@ -1178,7 +986,8 @@ struct CTerminalTool::Impl {
 		if( !window ) return;
 		paneLayout = {};
 		if( !EnsureTerminalWindow() ) return;
-		auto* group = ActiveGroup();
+		const auto groupIndex = groupLayout.ActiveGroupIndex();
+		const auto* group = groupLayout.ActiveGroup();
 		const RECT content = ContentRect();
 		if( !group ) {
 			if( panes.size() == 1 && panes.front().window ) {
@@ -1188,9 +997,9 @@ struct CTerminalTool::Impl {
 			return;
 		}
 		if( panes.empty() ) return;
-		NormalizeGroup(*group);
+		groupLayout.NormalizeGroup(*groupIndex);
 		const bool showTabs = ShouldShowTerminalTabs(tabPresentationSettings,
-			manager->TabCount(), paneGroups.size());
+			manager->TabCount(), groupLayout.GroupCount());
 		paneLayout = CalculateTerminalPaneTreeLayout({ content, dpi,
 			std::span<const TerminalPaneLayoutTreeNode>(group->nodes), group->root, showTabs,
 			tabPresentationSettings.location });
@@ -1407,8 +1216,9 @@ struct CTerminalTool::Impl {
 
 			RECT marker = row;
 			marker.right = std::min<LONG>(row.right, marker.left + markerWidth);
-			const auto group = FindGroup(tab.id);
-			const bool split = group && paneGroups[*group].tabIds.size() > 1;
+			const auto groupIndex = groupLayout.FindGroup(tab.id);
+			const auto* owner = groupIndex ? groupLayout.GroupAt(*groupIndex) : nullptr;
+			const bool split = owner && owner->tabIds.size() > 1;
 			FillSolidRect(dc, marker, (selected ? palette.accent : (split ? palette.secondaryText : palette.border)).ToColorRef());
 
 			RECT label = row;
@@ -1658,8 +1468,8 @@ struct CTerminalTool::Impl {
 		std::vector<std::uint64_t> remainingInGroup;
 		std::size_t removedIndex = 0;
 		if( activeBefore ) {
-			if( const auto owner = FindGroup(*activeBefore) ) {
-				remainingInGroup = paneGroups[*owner].tabIds;
+			if( const auto owner = groupLayout.FindGroup(*activeBefore) ) {
+				remainingInGroup = groupLayout.GroupAt(*owner)->tabIds;
 				const auto found = std::find(remainingInGroup.begin(), remainingInGroup.end(), *activeBefore);
 				removedIndex = static_cast<std::size_t>(found - remainingInGroup.begin());
 			}
@@ -1668,23 +1478,20 @@ struct CTerminalTool::Impl {
 		if( !change.Changed() ) return;
 		const bool hadFocus = PaneHasKeyboardFocus();
 		DestroyPaneRenderers();
-		for( const auto tabId : change.removed ) RemoveTabFromGroups(tabId);
+		for( const auto tabId : change.removed ) static_cast<void>(groupLayout.RemoveTab(tabId));
 		for( const auto& adoption : change.adopted ) {
 			if( adoption.splitOf ) {
-				if( const auto group = FindGroup(*adoption.splitOf);
-					group && InsertPaneSplit(paneGroups[*group], *adoption.splitOf, adoption.tabId, adoption.orientation) ) {
+				if( const auto group = groupLayout.FindGroup(*adoption.splitOf);
+					group && groupLayout.InsertPaneSplit(*group, *adoption.splitOf, adoption.tabId, adoption.orientation) ) {
 					continue;
 				}
 			}
-			TerminalPaneGroup groupState;
-			groupState.tabIds.push_back(adoption.tabId);
-			groupState.nodes.push_back(MakePaneLeaf(adoption.tabId));
-			paneGroups.push_back(std::move(groupState));
+			groupLayout.AppendGroup(adoption.tabId);
 		}
 
 		// Same successor rule as DeleteTerminal (VS Code TerminalGroup): the
 		// instance now at the removed one's index in its group, else the group
-		// RemoveTabFromGroups activated.
+		// TerminalGroupLayout::RemoveTab activated.
 		std::optional<std::uint64_t> target = change.selected;
 		const bool activeRemoved = activeBefore
 			&& std::find(change.removed.begin(), change.removed.end(), *activeBefore) != change.removed.end();
@@ -1694,17 +1501,16 @@ struct CTerminalTool::Impl {
 			});
 			if( !remainingInGroup.empty() ) {
 				target = remainingInGroup[(std::min)(removedIndex, remainingInGroup.size() - 1)];
-			} else if( activePaneGroup && *activePaneGroup < paneGroups.size()
-				&& !paneGroups[*activePaneGroup].tabIds.empty() ) {
-				target = paneGroups[*activePaneGroup].tabIds.front();
+			} else if( const auto* activeGroup = groupLayout.ActiveGroup();
+				activeGroup && !activeGroup->tabIds.empty() ) {
+				target = activeGroup->tabIds.front();
 			}
 		}
-		if( target && FindGroup(*target) ) static_cast<void>(manager->SelectTab(*target));
+		if( target && groupLayout.FindGroup(*target) ) static_cast<void>(manager->SelectTab(*target));
 		if( const auto activeId = manager->ActiveTabId() ) {
-			if( const auto group = FindGroup(*activeId) ) activePaneGroup = group;
+			if( const auto group = groupLayout.FindGroup(*activeId) ) groupLayout.SetActiveGroup(group);
 		}
-		if( activePaneGroup && *activePaneGroup >= paneGroups.size() ) activePaneGroup.reset();
-		if( !activePaneGroup && !paneGroups.empty() ) activePaneGroup = 0;
+		groupLayout.NormalizeActiveGroup();
 		if( window ) {
 			static_cast<void>(RebuildPaneRenderers());
 			LayoutChildren();
@@ -2077,10 +1883,12 @@ struct CTerminalTool::Impl {
 			if( HitTestPaneDivider(point.x, point.y) ) {
 				const auto divider = HitTestPaneDivider(point.x, point.y);
 				bool vertical = false;
-				if( divider && *divider < paneLayout.paneDividerNodes.size()
-					&& ActiveGroup() && paneLayout.paneDividerNodes[*divider] < ActiveGroup()->nodes.size() ) {
-					vertical = ActiveGroup()->nodes[paneLayout.paneDividerNodes[*divider]].orientation
-						== TerminalPaneOrientation::Vertical;
+				if( divider && *divider < paneLayout.paneDividerNodes.size() ) {
+					const auto activeIndex = groupLayout.ActiveGroupIndex();
+					const auto orientation = activeIndex
+						? groupLayout.NodeOrientation(*activeIndex, paneLayout.paneDividerNodes[*divider])
+						: std::nullopt;
+					if( orientation ) vertical = *orientation == TerminalPaneOrientation::Vertical;
 				}
 				::SetCursor(::LoadCursor(nullptr, vertical ? IDC_SIZENS : IDC_SIZEWE));
 				return TRUE;
@@ -2173,12 +1981,8 @@ struct CTerminalTool::Impl {
 		const auto id = manager->AddTab(CurrentSize(),
 			directory.empty() ? std::wstring_view(workingDirectory) : directory);
 		if( !id ) return std::nullopt;
-		TerminalPaneGroup groupState;
-		groupState.tabIds.push_back(*id);
-		groupState.nodes.push_back(MakePaneLeaf(*id));
-		paneGroups.push_back(std::move(groupState));
-		const auto group = paneGroups.size() - 1;
-		activePaneGroup = group;
+		const auto group = groupLayout.AppendGroup(*id);
+		groupLayout.SetActiveGroup(group);
 		if( window ) {
 			static_cast<void>(RebuildPaneRenderers());
 			LayoutChildren();
@@ -2194,8 +1998,8 @@ struct CTerminalTool::Impl {
 	{
 		const auto id = manager->Activate(CurrentSize(), workingDirectory);
 		if( !id ) return std::nullopt;
-		const auto group = EnsureGroupForTab(*id);
-		activePaneGroup = group;
+		const auto group = groupLayout.EnsureGroupForTab(*id);
+		groupLayout.SetActiveGroup(group);
 		if( window ) {
 			static_cast<void>(EnsureTerminalWindow());
 			LayoutChildren();
@@ -2208,11 +2012,11 @@ struct CTerminalTool::Impl {
 
 	bool SelectTerminal( std::uint64_t tabId, bool focus = true )
 	{
-		const auto group = FindGroup(tabId);
+		const auto group = groupLayout.FindGroup(tabId);
 		if( !group ) return false;
 		if( !manager->SelectTab(tabId) ) return false;
-		const bool groupChanged = activePaneGroup != group;
-		activePaneGroup = group;
+		const bool groupChanged = groupLayout.ActiveGroupIndex() != group;
+		groupLayout.SetActiveGroup(group);
 		if( window ) {
 			const bool rendered = groupChanged ? RebuildPaneRenderers() : EnsureTerminalWindow();
 			if( !rendered ) return false;
@@ -2252,8 +2056,8 @@ struct CTerminalTool::Impl {
 		const bool wasActive = manager->ActiveTabId() == tabId;
 		std::vector<std::uint64_t> remainingInGroup;
 		std::size_t removedIndex = 0;
-		if( const auto owner = FindGroup(tabId) ) {
-			remainingInGroup = paneGroups[*owner].tabIds;
+		if( const auto owner = groupLayout.FindGroup(tabId) ) {
+			remainingInGroup = groupLayout.GroupAt(*owner)->tabIds;
 			const auto found = std::find(remainingInGroup.begin(), remainingInGroup.end(), tabId);
 			removedIndex = static_cast<std::size_t>(found - remainingInGroup.begin());
 			if( found != remainingInGroup.end() ) remainingInGroup.erase(found);
@@ -2263,21 +2067,23 @@ struct CTerminalTool::Impl {
 			if( window ) static_cast<void>(RebuildPaneRenderers());
 			return false;
 		}
-		RemoveTabFromGroups(tabId);
+		static_cast<void>(groupLayout.RemoveTab(tabId));
 		// VS Code TerminalGroup: removing the active instance activates the one now
 		// at the same index in that group, or the last one when it was last. Only
-		// an emptied group hands selection to the group RemoveTabFromGroups chose.
+		// an emptied group hands selection to the group RemoveTab chose.
 		// The manager's successor follows global creation order and can belong to
 		// another group, so it is used only when no group-local choice exists.
 		std::optional<std::uint64_t> successor;
 		if( wasActive && !remainingInGroup.empty() ) {
 			successor = remainingInGroup[(std::min)(removedIndex, remainingInGroup.size() - 1)];
-		} else if( wasActive && activePaneGroup && *activePaneGroup < paneGroups.size()
-			&& !paneGroups[*activePaneGroup].tabIds.empty() ) {
-			successor = paneGroups[*activePaneGroup].tabIds.front();
+		} else if( wasActive ) {
+			if( const auto* activeGroup = groupLayout.ActiveGroup();
+				activeGroup && !activeGroup->tabIds.empty() ) {
+				successor = activeGroup->tabIds.front();
+			}
 		}
 		if( successor ) static_cast<void>(manager->SelectTab(*successor));
-		if( const auto activeId = manager->ActiveTabId() ) activePaneGroup = FindGroup(*activeId);
+		if( const auto activeId = manager->ActiveTabId() ) groupLayout.SetActiveGroup(groupLayout.FindGroup(*activeId));
 		if( window ) {
 			static_cast<void>(RebuildPaneRenderers());
 			LayoutChildren();
@@ -2351,7 +2157,7 @@ struct CTerminalTool::Impl {
 		}
 
 		auto failedTarget = DetachCurrentProjection();
-		if( !failedTarget.tabs.tabs.empty() || !failedTarget.paneGroups.empty() ) {
+		if( !failedTarget.tabs.tabs.empty() || failedTarget.groupLayout.GroupCount() != 0 ) {
 			StoreWorkspaceProjection(request.newWorkspaceIdentityKey, std::move(failedTarget));
 		}
 		const bool restoreRenderers = oldState.renderersMaterialized;
@@ -2372,8 +2178,7 @@ struct CTerminalTool::Impl {
 		workingDirectory = std::move(nextWorkingDirectory);
 
 		PrepareProjectionDetach();
-		paneGroups.clear();
-		activePaneGroup.reset();
+		groupLayout.Clear();
 		terminalTabsFocused = false;
 
 		const auto deadline = std::chrono::steady_clock::now()
@@ -2426,40 +2231,6 @@ struct CTerminalTool::Impl {
 		if( activeAttached.Succeeded() ) static_cast<void>(manager->ClearTabs(deadline));
 	}
 
-	bool InsertPaneSplit( TerminalPaneGroup& group, std::uint64_t primaryId,
-		std::uint64_t newId, TerminalPaneOrientation orientation )
-	{
-		NormalizeGroup(group);
-		const auto location = FindPaneLocation(group, group.root, primaryId);
-		if( !location ) return false;
-
-		const auto newLeafIndex = group.nodes.size();
-		group.nodes.push_back(MakePaneLeaf(newId));
-		if( location->parentIndex
-			&& group.nodes[*location->parentIndex].orientation == orientation ) {
-			auto& parent = group.nodes[*location->parentIndex];
-			parent.children.insert(parent.children.begin()
-				+ static_cast<std::ptrdiff_t>(location->childPosition + 1), newLeafIndex);
-			// Repeated splits on one axis are an equal distribution of that
-			// sibling row/column. An orthogonal split remains local to the leaf.
-			parent.weights.assign(parent.children.size(), 1000);
-		} else {
-			TerminalPaneLayoutTreeNode split;
-			split.children = { location->nodeIndex, newLeafIndex };
-			split.weights = { 1000, 1000 };
-			split.orientation = orientation;
-			const auto splitIndex = group.nodes.size();
-			group.nodes.push_back(std::move(split));
-			if( location->parentIndex ) {
-				group.nodes[*location->parentIndex].children[location->childPosition] = splitIndex;
-			} else {
-				group.root = splitIndex;
-			}
-		}
-		NormalizeGroup(group);
-		return true;
-	}
-
 	bool SplitTerminal( TerminalPaneOrientation orientation )
 	{
 		if( closed ) return false;
@@ -2468,22 +2239,21 @@ struct CTerminalTool::Impl {
 			primaryId = manager->Activate(CurrentSize(), workingDirectory);
 			if( !primaryId ) return false;
 		}
-		const auto groupIndex = EnsureGroupForTab(*primaryId);
-		activePaneGroup = groupIndex;
-		const auto originalActiveGroup = activePaneGroup;
+		const auto groupIndex = groupLayout.EnsureGroupForTab(*primaryId);
+		groupLayout.SetActiveGroup(groupIndex);
+		const auto originalActiveGroup = groupLayout.ActiveGroupIndex();
 		const auto originalActiveTab = manager->ActiveTabId();
-		auto* group = ActiveGroup();
+		const auto* group = groupLayout.ActiveGroup();
 		if( !group ) return false;
-		NormalizeGroup(*group);
+		groupLayout.NormalizeGroup(groupIndex);
 		const auto originalGroup = *group;
 		const auto newId = manager->AddTab(SizeForTab(*primaryId), workingDirectory);
 		if( !newId ) return false;
-		group = ActiveGroup();
-		if( !group ) {
+		if( !groupLayout.ActiveGroup() ) {
 			static_cast<void>(manager->DeleteTab(*newId));
 			return false;
 		}
-		if( !InsertPaneSplit(*group, *primaryId, *newId, orientation) ) {
+		if( !groupLayout.InsertPaneSplit(groupIndex, *primaryId, *newId, orientation) ) {
 			static_cast<void>(manager->DeleteTab(*newId));
 			return false;
 		}
@@ -2493,8 +2263,8 @@ struct CTerminalTool::Impl {
 				// session.  Restore the group before returning so a failed UI operation
 				// never leaves an unowned terminal or a phantom split in the model.
 				if( manager->DeleteTab(*newId) ) {
-					paneGroups[groupIndex] = originalGroup;
-					activePaneGroup = originalActiveGroup;
+					groupLayout.ReplaceGroup(groupIndex, originalGroup);
+					groupLayout.SetActiveGroup(originalActiveGroup);
 					if( originalActiveTab ) static_cast<void>(manager->SelectTab(*originalActiveTab));
 					static_cast<void>(RebuildPaneRenderers());
 					LayoutChildren();
@@ -2522,7 +2292,7 @@ struct CTerminalTool::Impl {
 
 	bool HasTerminalSplit() const noexcept
 	{
-		const auto* group = ActiveGroup();
+		const auto* group = groupLayout.ActiveGroup();
 		return group && group->tabIds.size() > 1;
 	}
 
@@ -2534,7 +2304,7 @@ struct CTerminalTool::Impl {
 
 	bool FocusRelativePane( int direction )
 	{
-		const auto* group = ActiveGroup();
+		const auto* group = groupLayout.ActiveGroup();
 		if( !group || group->tabIds.empty() ) return false;
 		const auto focused = FocusedTabId();
 		auto found = std::find(group->tabIds.begin(), group->tabIds.end(), focused.value_or(group->tabIds.front()));
@@ -2546,21 +2316,18 @@ struct CTerminalTool::Impl {
 
 	bool FocusRelativeGroup( int direction )
 	{
-		if( paneGroups.empty() ) return false;
-		const auto current = activePaneGroup.value_or(0);
-		const auto count = paneGroups.size();
-		const auto next = direction < 0 ? (current + count - 1) % count : (current + 1) % count;
-		const auto& group = paneGroups[next];
-		return !group.tabIds.empty() && SelectTerminal(group.tabIds.front(), true);
+		const auto next = groupLayout.RelativeGroupIndex(direction);
+		if( !next ) return false;
+		const auto* group = groupLayout.GroupAt(*next);
+		return group && !group->tabIds.empty() && SelectTerminal(group->tabIds.front(), true);
 	}
 
 	//! tmux windows and Screen windows are terminal groups here, not panes, so a
 	//! digit chord selects the group's first pane exactly as its list order shows.
 	bool SelectTerminalGroup( std::size_t index )
 	{
-		if( index >= paneGroups.size() ) return false;
-		const auto& group = paneGroups[index];
-		return !group.tabIds.empty() && SelectTerminal(group.tabIds.front(), true);
+		const auto* group = groupLayout.GroupAt(index);
+		return group && !group->tabIds.empty() && SelectTerminal(group->tabIds.front(), true);
 	}
 
 	void ApplyShortcutPreset( TerminalShortcutPreset preset, bool persist )
@@ -2804,8 +2571,7 @@ void CTerminalTool::Close()
 	if( m_impl->window ) ::KillTimer(m_impl->window, kProtocolInputRetryTimer);
 	m_impl->DetachNativeFrameRuntime();
 	m_impl->DestroyPaneRenderers();
-	m_impl->paneGroups.clear();
-	m_impl->activePaneGroup.reset();
+	m_impl->groupLayout.Clear();
 	m_impl->CloseAllWorkspaceProjections();
 	m_impl->manager->Close();
 	m_impl->closed = true;
@@ -3018,9 +2784,9 @@ bool CTerminalTool::HasTerminalSplit() const noexcept
 TerminalPaneOrientation CTerminalTool::ActivePaneOrientation() const noexcept
 {
 	if( m_impl->closed ) return TerminalPaneOrientation::Horizontal;
-	const auto* group = m_impl->ActiveGroup();
+	const auto* group = m_impl->groupLayout.ActiveGroup();
 	if( !group ) return TerminalPaneOrientation::Horizontal;
-	return m_impl->PaneOrientationForTab(*group,
+	return m_impl->groupLayout.PaneOrientationForTab(*m_impl->groupLayout.ActiveGroupIndex(),
 		m_impl->manager->ActiveTabId().value_or(group->tabIds.empty() ? 0 : group->tabIds.front()));
 }
 
@@ -3122,7 +2888,7 @@ void CTerminalTool::DiscardWorkspaceProjection( std::wstring_view workspaceIdent
 		|| workspaceIdentityKey == m_impl->currentWorkspaceIdentityKey ) return;
 	const auto found = m_impl->workspaceRegistry.find(std::wstring(workspaceIdentityKey));
 	if( found == m_impl->workspaceRegistry.end()
-		|| !found->second.tabs.tabs.empty() || !found->second.paneGroups.empty() ) return;
+		|| !found->second.tabs.tabs.empty() || found->second.groupLayout.GroupCount() != 0 ) return;
 	m_impl->workspaceRegistry.erase(found);
 }
 

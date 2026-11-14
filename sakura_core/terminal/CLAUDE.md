@@ -514,9 +514,15 @@ need a completion result.
 
 ## VS Code terminal groups and terminal list (Issue #174)
 
-`TerminalTabManager` owns the independent terminal sessions. `CTerminalTool`
-owns the selected terminal group as an ordered leaf projection of a recursive
-split tree and creates one native `CTerminalWnd` per leaf in that group. Do not
+`TerminalTabManager` owns the independent terminal sessions.
+`TerminalGroupLayout` (`window/TerminalGroupLayout.{h,cpp}`, #415 Phase 2) owns
+the ordered groups, each group's recursive split tree (orientation, weights,
+leaves as tab ids) and the active group. It is HWND-free and unit-tested by
+`TerminalGroupLayoutTest`; every tree query and mutation goes through it, and
+`CTerminalTool.cpp` holds none. `CTerminalTool` keeps the renderers, focus,
+painting and gestures: it projects the active group's leaves and creates one
+native `CTerminalWnd` per leaf in that group. The workspace projection registry
+moves one model per workspace. Do not
 reintroduce a primary/secondary terminal model or a pane-count cap. Splitting
 inserts a new session immediately after the focused pane, and closing a
 focused split removes only that pane until its final pane is gone.
@@ -996,7 +1002,7 @@ global creation order and can live in another group. It now follows VS Code's
 `TerminalGroup` removal rule: when the removed terminal was active, activate
 the one now at the same index in its group, or the last one when it was last.
 Only when the group is emptied does selection move to the group that
-`RemoveTabFromGroups` chose (same index, else the previous group); that group
+`TerminalGroupLayout::RemoveTab` chose (same index, else the previous group); that group
 has no per-group active-pane memory yet, so its first pane is selected. The
 manager successor remains the fallback when neither applies.
 

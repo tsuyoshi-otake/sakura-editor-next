@@ -2593,7 +2593,6 @@
       "files": {
         "sakura_core/terminal/runtime/TerminalInstance.cpp": "sha256:cea1bef02b5be931e037899e4e125d9c0658b2e87cbe8f3426817780c9de11e0",
         "sakura_core/terminal/runtime/TerminalRuntimeTypes.h": "sha256:fb4d482c07c21f73110425e26adf6c73898fc140ba9e7d82d0b0e7c19adb3cc7",
-        "sakura_core/terminal/window/CTerminalTool.cpp": "sha256:8bec6c37a8533b049e74d4a19c8d3be2d547295e0faa105a3100cccd26540f7a",
         "sakura_core/terminal/window/CTerminalTool.h": "sha256:1af47bde5d6aaf1dbf83b5fcd949d9d476e3c8879fabe1d4bfeff6b0414976ff",
         "sakura_core/terminal/window/CTerminalWnd.cpp": "sha256:e00795e95f2229ce6bae5fce6a9aae4291f0dc15b68c2920573605d1648e1907",
         "sakura_core/terminal/window/CTerminalWnd.h": "sha256:7bcceb26ac3fd085a053cba759d10c844afc7374d4a06f17c8c7f62a2af613d7",
@@ -2616,55 +2615,6 @@
           "line": 285,
           "column": 41,
           "evidence_sha256": "sha256:19acaa66b63bf38facce88ad852640a95cc834f9b3b24f43b219ac303fa46c9c"
-        },
-        {
-          "rule_id": "boundary.private_include",
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "line": 18,
-          "column": 11,
-          "evidence_sha256": "sha256:dcd0886304af13466473af33729faa056798a9e5b1fd8914c9d93ae180f276f5"
-        },
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "line": 109,
-          "column": 36,
-          "evidence_sha256": "sha256:acf746e7641f1cc28a987beb8e7dd09104454ee265b5c4515a2f4574a048e4dd"
-        },
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "line": 113,
-          "column": 64,
-          "evidence_sha256": "sha256:a90e6e9b9e74f095a28d0753ee84792325f7439c1fcf022c74e55121fdd6b1db"
-        },
-        {
-          "rule_id": "state.public_mutable_field",
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "line": 380,
-          "column": 31,
-          "evidence_sha256": "sha256:95c795d3434b5cbfcb5288ed30712943759065279e59837bcaedcef0d5818724"
-        },
-        {
-          "rule_id": "error.catch_all",
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "line": 1568,
-          "column": 5,
-          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c"
-        },
-        {
-          "rule_id": "boundary.win32_type",
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "line": 1639,
-          "column": 9,
-          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
-        },
-        {
-          "rule_id": "boundary.win32_type",
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "line": 1642,
-          "column": 10,
-          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f"
         },
         {
           "rule_id": "boundary.private_include",
@@ -2957,10 +2907,6 @@
           "baseline_finding_count": 97
         },
         {
-          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "baseline_finding_count": 64
-        },
-        {
           "path": "sakura_core/terminal/window/CTerminalTool.h",
           "baseline_finding_count": 16
         },
@@ -2985,6 +2931,142 @@
           "baseline_finding_count": 49
         }
       ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#415 Phase 2 moves the terminal panel's ordered groups and their recursive split trees out of CTerminalTool::Impl into the HWND-free TerminalGroupLayout model (TerminalGroupLayout.h/.cpp) without changing behavior, and adds TerminalGroupLayoutTest.cpp for the invariants. CTerminalTool.cpp now calls the model and holds no tree mutation. New in this change and reviewed: the boundary.private_include findings for terminal/window/TerminalGroupLayout.h and terminal/window/TerminalPaneLayout.h (CTerminalTool.cpp line 15, TerminalGroupLayout.cpp line 8, TerminalGroupLayout.h line 11, TerminalGroupLayoutTest.cpp line 2) match the scanner's '/window/' path segment, which here is the terminal subsystem's own window folder, not the legacy window/ frame subsystem, the same include form every sibling terminal/window source already uses; the state.public_mutable_field findings at TerminalGroupLayout.h lines 28 and 29 are the tab-id and node vectors of the TerminalPaneGroup value record, shaped like TerminalPaneLayoutTreeNode, and lines 103 and 109 are fields of the private PaneLocation and RemovePaneResult helper records, all moved verbatim from CTerminalTool::Impl; CTerminalTool.cpp lines 396 and 411 are the groupLayout members of WorkspaceProjectionState and Impl, which replace the four paneGroups/activePaneGroup baseline members. Every other CTerminalTool.cpp finding (lines 19, 110, 114, 381, 1378, 1449, 1452) is the item reviewed and recorded for #404-#415 Phase 1 by the previous record, carried over with lines shifted by the removed code; the file's former missing reduction is now satisfied by the removed members. Reducing that unrelated debt would widen this refactoring. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "tracking_issue": 389,
+      "created": "2026-11-14",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/terminal/window/CTerminalTool.cpp": "sha256:5217b1d0e56be9a07bc247c8387d1b9eb495f3d573d0b044e8cba17eecbd95de",
+        "sakura_core/terminal/window/TerminalGroupLayout.cpp": "sha256:7d29e716dcdf4bf18e0738991e9758e0d496c13bd37cf51a733a8389cc3190ac",
+        "sakura_core/terminal/window/TerminalGroupLayout.h": "sha256:5a7950c3e1960d3e451a0c2fd7d036fb70afdc2581f5271a902010cd2c665938",
+        "src/test/cpp/tests1/terminal/window/TerminalGroupLayoutTest.cpp": "sha256:44c83227349702ef690f4b50b753e8aa97ddacc532bd59dda4fd6f275fe8503c"
+      },
+      "new_findings": [
+        {
+          "column": 11,
+          "evidence_sha256": "sha256:250be77c104132641591ed48b17b50c7b1adb40d952d17b5fed933b44d99ff09",
+          "line": 15,
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "rule_id": "boundary.private_include"
+        },
+        {
+          "column": 11,
+          "evidence_sha256": "sha256:dcd0886304af13466473af33729faa056798a9e5b1fd8914c9d93ae180f276f5",
+          "line": 19,
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "rule_id": "boundary.private_include"
+        },
+        {
+          "column": 11,
+          "evidence_sha256": "sha256:250be77c104132641591ed48b17b50c7b1adb40d952d17b5fed933b44d99ff09",
+          "line": 8,
+          "path": "sakura_core/terminal/window/TerminalGroupLayout.cpp",
+          "rule_id": "boundary.private_include"
+        },
+        {
+          "column": 11,
+          "evidence_sha256": "sha256:0d74740a1b03177a566a65b78690d933c6b8732687349808a81fc362bfed86e6",
+          "line": 11,
+          "path": "sakura_core/terminal/window/TerminalGroupLayout.h",
+          "rule_id": "boundary.private_include"
+        },
+        {
+          "column": 11,
+          "evidence_sha256": "sha256:250be77c104132641591ed48b17b50c7b1adb40d952d17b5fed933b44d99ff09",
+          "line": 2,
+          "path": "src/test/cpp/tests1/terminal/window/TerminalGroupLayoutTest.cpp",
+          "rule_id": "boundary.private_include"
+        },
+        {
+          "column": 9,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+          "line": 1449,
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "rule_id": "boundary.win32_type"
+        },
+        {
+          "column": 10,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+          "line": 1452,
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "rule_id": "boundary.win32_type"
+        },
+        {
+          "column": 5,
+          "evidence_sha256": "sha256:e367699682104a11434267c1cfa5915146597b5d4df8e67257e7cc66399cf08c",
+          "line": 1378,
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "rule_id": "error.catch_all"
+        },
+        {
+          "column": 36,
+          "evidence_sha256": "sha256:acf746e7641f1cc28a987beb8e7dd09104454ee265b5c4515a2f4574a048e4dd",
+          "line": 110,
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 64,
+          "evidence_sha256": "sha256:a90e6e9b9e74f095a28d0753ee84792325f7439c1fcf022c74e55121fdd6b1db",
+          "line": 114,
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 31,
+          "evidence_sha256": "sha256:95c795d3434b5cbfcb5288ed30712943759065279e59837bcaedcef0d5818724",
+          "line": 381,
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 23,
+          "evidence_sha256": "sha256:547a50616c8c553353608ab7805c1c0d1927fa115fbe0d09ddf6b113571668c8",
+          "line": 396,
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 22,
+          "evidence_sha256": "sha256:547a50616c8c553353608ab7805c1c0d1927fa115fbe0d09ddf6b113571668c8",
+          "line": 411,
+          "path": "sakura_core/terminal/window/CTerminalTool.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 29,
+          "evidence_sha256": "sha256:e31896434c0c95b223fd76288b84b81d4334e91ee34cb4c4da17b4c44767b99b",
+          "line": 28,
+          "path": "sakura_core/terminal/window/TerminalGroupLayout.h",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 42,
+          "evidence_sha256": "sha256:3ec5ec44d8ca81f3c808a3133314df45cf78fc674528f3ac5776266fa358fc54",
+          "line": 29,
+          "path": "sakura_core/terminal/window/TerminalGroupLayout.h",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 30,
+          "evidence_sha256": "sha256:f3bff6cee966e2a587f1d99eae614cd12e42e8b920223cad97935590bbcf7bec",
+          "line": 103,
+          "path": "sakura_core/terminal/window/TerminalGroupLayout.h",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 30,
+          "evidence_sha256": "sha256:2c4bf4db39b79785b6ba2469fc0ada9b091d39c5725d0755b86d5a79212f0c0e",
+          "line": 109,
+          "path": "sakura_core/terminal/window/TerminalGroupLayout.h",
+          "rule_id": "state.public_mutable_field"
+        }
+      ],
+      "missing_touched_reductions": []
     }
   ]
 }
