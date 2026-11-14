@@ -2257,4 +2257,189 @@ TEST(TerminalTool, TmuxPresetClosePaneClosesALonePane)
 	tool.Close();
 }
 
+TEST(TerminalTool, RestoredGroupInstallsItsTreeAndReusesTheUntouchedDefaultShell)
+{
+	// #415 Phase 3: one recorded group of two agents side by side with a
+	// shell below the right one restores the same tree; the untouched
+	// default shell runs the first agent leaf, and nothing extra exists.
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetWorkingDirectory(L"C:\\project");
+	tool.Activate();
+	ASSERT_EQ(1u, tool.TabCount());
+	ASSERT_EQ(1u, harness.backends.size());
+	const auto defaultShell = tool.ActiveTerminalId();
+	ASSERT_TRUE(defaultShell.has_value());
+
+	terminal::TerminalRestoreGroup group;
+	group.leaves = {
+		{ .workingDirectory = L"C:\\project", .input = "claude --resume one\r",
+			.reuseFirstPrompt = true },
+		{ .workingDirectory = L"C:\\project", .input = "codex resume two\r" },
+		{ .workingDirectory = L"C:\\project\\sub" },
+	};
+	// root(horizontal): agent0 | split(vertical): agent1 / shell.
+	group.nodes = {
+		{ .leaf = 0 },
+		{ .leaf = 1 },
+		{ .leaf = 2 },
+		{ .orientation = terminal::TerminalPaneOrientation::Vertical,
+			.children = { 1, 2 }, .weights = { 700, 300 } },
+		{ .orientation = terminal::TerminalPaneOrientation::Horizontal,
+			.children = { 0, 3 }, .weights = { 600, 400 } },
+	};
+	group.root = 4;
+
+	const auto result = tool.RestoreTerminalGroupLayout({ std::move(group) },
+		std::pair{ std::size_t{ 0 }, std::size_t{ 0 } });
+	ASSERT_EQ(1u, result.leafTabIds.size());
+	ASSERT_EQ(3u, result.leafTabIds[0].size());
+	for( const auto& tabId : result.leafTabIds[0] ) EXPECT_TRUE(tabId.has_value());
+
+	// The default shell took the first agent leaf; the other leaves created
+	// their own terminals. Nothing extra exists: three tabs in one group.
+	EXPECT_EQ(*defaultShell, *result.leafTabIds[0][0]);
+	EXPECT_EQ(3u, tool.TabCount());
+	EXPECT_EQ(3u, harness.backends.size());
+	EXPECT_TRUE(tool.Tabs().front().interactiveInputAccepted);
+	EXPECT_EQ(L"C:\\project\\sub", harness.backends[2]->workingDirectory);
+	EXPECT_EQ(*defaultShell, tool.ActiveTerminalId());
+
+	// The restored tree is the recorded one, with the reused shell as leaf 0.
+	const auto snapshot = tool.GroupLayoutSnapshot();
+	ASSERT_EQ(1u, snapshot.groups.size());
+	const auto& restored = snapshot.groups[0];
+	EXPECT_EQ((std::vector<std::uint64_t>{ *result.leafTabIds[0][0],
+		*result.leafTabIds[0][1], *result.leafTabIds[0][2] }), restored.tabIds);
+	ASSERT_EQ(5u, restored.nodes.size());
+	EXPECT_EQ(*result.leafTabIds[0][0], restored.nodes[0].leafId);
+	EXPECT_EQ(*result.leafTabIds[0][1], restored.nodes[1].leafId);
+	EXPECT_EQ(*result.leafTabIds[0][2], restored.nodes[2].leafId);
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Vertical, restored.nodes[3].orientation);
+	EXPECT_EQ((std::vector<std::size_t>{ 1, 2 }), restored.nodes[3].children);
+	EXPECT_EQ((std::vector<int>{ 700, 300 }), restored.nodes[3].weights);
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Horizontal, restored.nodes[4].orientation);
+	EXPECT_EQ((std::vector<std::size_t>{ 0, 3 }), restored.nodes[4].children);
+	EXPECT_EQ((std::vector<int>{ 600, 400 }), restored.nodes[4].weights);
+	EXPECT_EQ(4u, restored.root);
+	EXPECT_EQ(*defaultShell, snapshot.activeTabId);
+	tool.Close();
+}
+
+TEST(TerminalTool, RestoredGroupCollapsesADroppedLeafAndKeepsTheSurvivor)
+{
+	// A leaf that never gets a terminal collapses its split like a missing
+	// session: the surviving neighbour takes its place and the group still
+	// installs.
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetWorkingDirectory(L"C:\\project");
+	tool.Activate();
+	ASSERT_EQ(1u, tool.TabCount());
+
+	terminal::TerminalRestoreGroup group;
+	group.leaves = {
+		{ .workingDirectory = L"C:\\project", .input = "claude --resume one\r" },
+		// The caller dropped this leaf after its command could not be built.
+		{ .drop = true },
+	};
+	group.nodes = {
+		{ .leaf = 0 },
+		{ .leaf = 1 },
+		{ .orientation = terminal::TerminalPaneOrientation::Horizontal,
+			.children = { 0, 1 }, .weights = { 600, 400 } },
+	};
+	group.root = 2;
+
+	const auto result = tool.RestoreTerminalGroupLayout({ std::move(group) },
+		std::pair{ std::size_t{ 0 }, std::size_t{ 0 } });
+	ASSERT_EQ(1u, result.leafTabIds.size());
+	EXPECT_TRUE(result.leafTabIds[0][0].has_value());
+	EXPECT_FALSE(result.leafTabIds[0][1].has_value());
+	// No leaf asked to reuse the first-prompt shell, so the default shell
+	// keeps its own group and the restored group is appended after it. The
+	// split collapsed: the restored tree is the surviving leaf alone.
+	const auto snapshot = tool.GroupLayoutSnapshot();
+	ASSERT_EQ(2u, snapshot.groups.size());
+	const auto& restored = snapshot.groups[1];
+	EXPECT_EQ((std::vector<std::uint64_t>{ *result.leafTabIds[0][0] }), restored.tabIds);
+	ASSERT_EQ(1u, restored.nodes.size());
+	EXPECT_TRUE(restored.nodes[0].children.empty());
+	tool.Close();
+}
+
+TEST(TerminalTool, RestoredGroupInstallsNothingWhenEveryTerminalFails)
+{
+	// Leaves whose sessions never start are counted and the install ends
+	// without a half-built group.
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetWorkingDirectory(L"C:\\project");
+	tool.Activate();
+	ASSERT_EQ(1u, tool.TabCount());
+
+	terminal::TerminalRestoreGroup group;
+	group.leaves = {
+		{ .workingDirectory = L"C:\\project", .input = "claude --resume one\r" },
+		{ .workingDirectory = L"C:\\project", .input = "codex resume two\r" },
+	};
+	group.nodes = {
+		{ .leaf = 0 },
+		{ .leaf = 1 },
+		{ .orientation = terminal::TerminalPaneOrientation::Horizontal,
+			.children = { 0, 1 }, .weights = { 600, 400 } },
+	};
+	group.root = 2;
+
+	// Fail every backend start after the default shell's.
+	harness.failStart = true;
+	const auto result = tool.RestoreTerminalGroupLayout({ std::move(group) }, std::nullopt);
+	ASSERT_EQ(1u, result.leafTabIds.size());
+	EXPECT_FALSE(result.leafTabIds[0][0].has_value());
+	EXPECT_FALSE(result.leafTabIds[0][1].has_value());
+	EXPECT_EQ(1u, tool.TabCount());
+	EXPECT_EQ(1u, tool.GroupLayoutSnapshot().groups.size());
+	tool.Close();
+}
+
+TEST(TerminalTool, RestoredGroupLeavesNoStrayShellWhenTheActiveLeafIsAShell)
+{
+	// The untouched default shell is reused only for the FIRST session leaf:
+	// when the plan's first leaf is a shell, no reuse happens and the default
+	// shell keeps its own group.
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetWorkingDirectory(L"C:\\project");
+	tool.Activate();
+	ASSERT_EQ(1u, tool.TabCount());
+	const auto defaultShell = tool.ActiveTerminalId();
+	ASSERT_TRUE(defaultShell.has_value());
+
+	terminal::TerminalRestoreGroup group;
+	group.leaves = {
+		{ .workingDirectory = L"C:\\project\\sub" },
+		{ .workingDirectory = L"C:\\project", .input = "claude --resume one\r" },
+	};
+	group.nodes = {
+		{ .leaf = 0 },
+		{ .leaf = 1 },
+		{ .orientation = terminal::TerminalPaneOrientation::Horizontal,
+			.children = { 0, 1 }, .weights = { 600, 400 } },
+	};
+	group.root = 2;
+	const auto result = tool.RestoreTerminalGroupLayout({ std::move(group) },
+		std::pair{ std::size_t{ 0 }, std::size_t{ 1 } });
+	ASSERT_EQ(1u, result.leafTabIds.size());
+	// The default shell was not consumed: three terminals, its own group
+	// still holds it, the restored group appended after it.
+	EXPECT_EQ(3u, tool.TabCount());
+	EXPECT_NE(*defaultShell, *result.leafTabIds[0][1]);
+	const auto snapshot = tool.GroupLayoutSnapshot();
+	ASSERT_EQ(2u, snapshot.groups.size());
+	EXPECT_EQ((std::vector<std::uint64_t>{ *defaultShell }), snapshot.groups[0].tabIds);
+	EXPECT_EQ(2u, snapshot.groups[1].tabIds.size());
+	EXPECT_EQ(*result.leafTabIds[0][1], snapshot.activeTabId);
+	tool.Close();
+}
+
 } // namespace

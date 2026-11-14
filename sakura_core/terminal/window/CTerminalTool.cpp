@@ -2094,6 +2094,176 @@ struct CTerminalTool::Impl {
 		return true;
 	}
 
+	//! The current projection's groups as plain data for the recorder
+	//! (#415 Phase 3). The focused pane names the active leaf, falling back to
+	//! the manager's active tab; a tab that belongs to no group is never
+	//! reported.
+	[[nodiscard]] TerminalGroupLayoutSnapshot GroupLayoutSnapshot() const
+	{
+		TerminalGroupLayoutSnapshot snapshot;
+		snapshot.groups = groupLayout.Groups();
+		if( const auto focused = FocusedTabId(); focused && groupLayout.FindGroup(*focused) ) {
+			snapshot.activeTabId = *focused;
+		}
+		return snapshot;
+	}
+
+	//! Installs the planned restore groups as one transaction (#415 Phase 3):
+	//! every leaf gets a terminal first (the leaf marked `reuseFirstPrompt`
+	//! may take a shell still at its first prompt, which leaves its old group
+	//! for its place in the restored tree), each surviving tree is appended
+	//! through TerminalGroupLayout::InstallGroup, and the renderers are
+	//! rebuilt once. A leaf whose terminal fails collapses out of its tree;
+	//! the rest still installs.
+	[[nodiscard]] TerminalRestoreResult RestoreTerminalGroupLayout(
+		std::vector<TerminalRestoreGroup> groups,
+		std::optional<std::pair<std::size_t, std::size_t>> activeLeaf )
+	{
+		TerminalRestoreResult result;
+		result.leafTabIds.resize(groups.size());
+		for( std::size_t groupIndex = 0; groupIndex < groups.size(); ++groupIndex ) {
+			result.leafTabIds[groupIndex].resize(groups[groupIndex].leaves.size());
+		}
+		if( closed || groups.empty() ) return result;
+		// The first-prompt eligibility check needs fresh job data; like
+		// AgentPresence(true) the caller is not notified of what it finds.
+		static_cast<void>(ReconcileAgentPresence(true));
+
+		// Pass 1: one terminal per leaf. Only the first leaf marked
+		// `reuseFirstPrompt` may consume an existing first-prompt shell.
+		std::optional<std::uint64_t> reusedTabId;
+		for( std::size_t groupIndex = 0; groupIndex < groups.size(); ++groupIndex ) {
+			const auto& spec = groups[groupIndex];
+			for( std::size_t leafIndex = 0; leafIndex < spec.leaves.size(); ++leafIndex ) {
+				const auto& leaf = spec.leaves[leafIndex];
+				if( leaf.drop ) continue;
+				const auto bytes = std::span(
+					reinterpret_cast<const std::uint8_t*>(leaf.input.data()), leaf.input.size());
+				std::optional<std::uint64_t> placed;
+				if( leaf.reuseFirstPrompt && !leaf.input.empty() && !reusedTabId ) {
+					auto tabs = manager->Snapshot();
+					std::stable_partition(tabs.begin(), tabs.end(),
+						[](const TerminalTabSnapshot& tab) { return tab.active; });
+					for( const auto& tab : tabs ) {
+						if( !IsTerminalAtFirstPrompt(tab, leaf.workingDirectory)
+							|| agentPresence.Presence(tab.id) ) continue;
+						if( manager->QueueInput(tab.id, bytes) != TerminalQueueInputResult::Accepted ) {
+							continue;
+						}
+						// The reused shell leaves its own group for the
+						// restored tree; an emptied group is erased, so no
+						// stray single-pane group is left behind.
+						static_cast<void>(groupLayout.RemoveTab(tab.id));
+						reusedTabId = tab.id;
+						placed = tab.id;
+						break;
+					}
+				}
+				if( !placed ) {
+					const auto id = manager->AddTab(CurrentSize(), leaf.workingDirectory);
+					if( !id ) continue;
+					if( !leaf.input.empty()
+						&& manager->QueueInput(*id, bytes) != TerminalQueueInputResult::Accepted ) {
+						// The typed-ahead shell could not take the command: the
+						// terminal is deleted rather than left ungrouped.
+						static_cast<void>(manager->DeleteTab(*id));
+						continue;
+					}
+					placed = id;
+				}
+				result.leafTabIds[groupIndex][leafIndex] = *placed;
+			}
+		}
+
+		// Pass 2: emit each tree minus its unplaced leaves and install it.
+		// A split left with one child collapses and the surviving neighbours
+		// keep their weights.
+		for( std::size_t groupIndex = 0; groupIndex < groups.size(); ++groupIndex ) {
+			const auto& spec = groups[groupIndex];
+			TerminalPaneGroup group;
+			std::unordered_set<std::size_t> visited;
+			const std::function<std::optional<std::size_t>(std::size_t)> emit =
+				[&](const std::size_t nodeIndex) -> std::optional<std::size_t> {
+				if( nodeIndex >= spec.nodes.size() || !visited.insert(nodeIndex).second ) {
+					return std::nullopt;
+				}
+				const auto& node = spec.nodes[nodeIndex];
+				if( node.leaf ) {
+					if( !node.children.empty() || *node.leaf >= result.leafTabIds[groupIndex].size()
+						|| !result.leafTabIds[groupIndex][*node.leaf] ) return std::nullopt;
+					const auto tabId = *result.leafTabIds[groupIndex][*node.leaf];
+					group.tabIds.push_back(tabId);
+					group.nodes.push_back(TerminalPaneLayoutTreeNode{ .leafId = tabId });
+					return group.nodes.size() - 1;
+				}
+				std::vector<std::size_t> children;
+				std::vector<int> weights;
+				for( std::size_t childIndex = 0; childIndex < node.children.size(); ++childIndex ) {
+					const auto emitted = emit(node.children[childIndex]);
+					if( !emitted ) continue;
+					children.push_back(*emitted);
+					weights.push_back(childIndex < node.weights.size() && node.weights[childIndex] > 0
+						? node.weights[childIndex] : 1000);
+				}
+				if( children.empty() ) return std::nullopt;
+				if( children.size() == 1 ) return children.front();
+				group.nodes.push_back(TerminalPaneLayoutTreeNode{
+					.leafId = 0,
+					.children = std::move(children),
+					.weights = std::move(weights),
+					.orientation = node.orientation,
+				});
+				return group.nodes.size() - 1;
+			};
+			const auto root = spec.root < spec.nodes.size() ? emit(spec.root) : std::nullopt;
+			if( !root ) continue;	// every leaf failed or was dropped: nothing to install
+			group.root = *root;
+			if( groupLayout.InstallGroup(std::move(group)) ) continue;
+			// The model rejected the tree: roll its terminals back so no
+			// half-built state remains. The reused shell returns to a group
+			// of its own; created terminals are deleted.
+			for( std::size_t leafIndex = 0; leafIndex < result.leafTabIds[groupIndex].size();
+				++leafIndex ) {
+				auto& placed = result.leafTabIds[groupIndex][leafIndex];
+				if( !placed ) continue;
+				if( *placed == reusedTabId ) {
+					groupLayout.AppendGroup(*placed);
+				} else {
+					static_cast<void>(manager->DeleteTab(*placed));
+					placed.reset();
+				}
+			}
+		}
+
+		// Pass 3: select the planned active leaf (or the first placed one)
+		// and rebuild the renderers once for the new active group.
+		std::optional<std::uint64_t> target;
+		if( activeLeaf && activeLeaf->first < result.leafTabIds.size()
+			&& activeLeaf->second < result.leafTabIds[activeLeaf->first].size() ) {
+			target = result.leafTabIds[activeLeaf->first][activeLeaf->second];
+		}
+		if( !target ) {
+			for( const auto& leafIds : result.leafTabIds ) {
+				for( const auto& tabId : leafIds ) {
+					if( tabId ) { target = *tabId; break; }
+				}
+				if( target ) break;
+			}
+		}
+		if( target ) {
+			static_cast<void>(SelectTerminal(*target, active));
+		} else if( reusedTabId && window ) {
+			// Nothing installed, but a shell moved out of its group: rebuild
+			// the stale renderers of whatever group stays active.
+			static_cast<void>(RebuildPaneRenderers());
+			LayoutChildren();
+		}
+		InvalidateTabs();
+		InvalidateTerminalTabs();
+		if( ReconcileAgentPresence(false) ) NotifyAgentPresence();
+		return result;
+	}
+
 	TerminalWorkspaceSwitchResult SwitchWorkspace( TerminalWorkspaceSwitchRequest request )
 	{
 		TerminalWorkspaceSwitchResult result;
@@ -2699,6 +2869,18 @@ std::optional<TerminalInputTarget> CTerminalTool::RunInFirstPromptTerminalOrAdd(
 	const auto id = AddTerminalWithInput(directory, input);
 	if( !id ) return std::nullopt;
 	return TerminalInputTarget{ *id, false };
+}
+
+TerminalGroupLayoutSnapshot CTerminalTool::GroupLayoutSnapshot() const
+{
+	return m_impl->GroupLayoutSnapshot();
+}
+
+TerminalRestoreResult CTerminalTool::RestoreTerminalGroupLayout(
+	std::vector<TerminalRestoreGroup> groups,
+	std::optional<std::pair<std::size_t, std::size_t>> activeLeaf )
+{
+	return m_impl->RestoreTerminalGroupLayout(std::move(groups), activeLeaf);
 }
 
 void CTerminalTool::SetShortcutPreset( TerminalShortcutPreset preset )

@@ -49,6 +49,9 @@ public:
 
 	[[nodiscard]] std::size_t GroupCount() const noexcept;
 	[[nodiscard]] const TerminalPaneGroup* GroupAt( std::size_t index ) const noexcept;
+	//! The ordered groups, for projections that export the layout as plain
+	//! data (#415 Phase 3). The reference is invalidated by any mutation.
+	[[nodiscard]] const std::vector<TerminalPaneGroup>& Groups() const noexcept;
 	[[nodiscard]] std::optional<std::size_t> ActiveGroupIndex() const noexcept;
 	[[nodiscard]] const TerminalPaneGroup* ActiveGroup() const noexcept;
 	[[nodiscard]] std::optional<std::size_t> FindGroup( std::uint64_t tabId ) const noexcept;
@@ -90,6 +93,15 @@ public:
 	//! weight. Returns false when the node or child position is invalid.
 	[[nodiscard]] bool ApplyDividerResize( std::size_t groupIndex, std::size_t nodeIndex,
 		std::size_t childPosition, int firstExtent, int combinedExtent );
+	//! Validates `group` and appends it (#415 Phase 3 restore): the tree must
+	//! be non-empty, `root` in range, every reachable leaf id non-zero, used
+	//! once within the tree and not already in another group, every reachable
+	//! split must own at least two children with a matching positive weight
+	//! each, child indices must stay in range and acyclic, and `tabIds` must
+	//! equal the depth-first leaf order. Unreachable nodes are dead data and
+	//! ignored. Returns the new group's index; a rejected group changes
+	//! nothing and returns nullopt.
+	[[nodiscard]] std::optional<std::size_t> InstallGroup( TerminalPaneGroup group );
 	//! Repairs `groupIndex`'s tree in place: malformed weight lists are reset
 	//! to equal 1000 weights and `tabIds` is rebuilt in depth-first order.
 	void NormalizeGroup( std::size_t groupIndex );
@@ -112,6 +124,7 @@ private:
 	static TerminalPaneLayoutTreeNode MakePaneLeaf( std::uint64_t tabId );
 	static void CollectTabIds( const TerminalPaneGroup& group, std::size_t nodeIndex,
 		std::vector<std::uint64_t>& tabIds );
+	[[nodiscard]] static bool ValidateGroupTree( const TerminalPaneGroup& group );
 	static void NormalizeNode( TerminalPaneGroup& group, std::size_t nodeIndex ) noexcept;
 	static void NormalizeGroupTree( TerminalPaneGroup& group );
 	static std::optional<PaneLocation> FindPaneLocation( const TerminalPaneGroup& group,

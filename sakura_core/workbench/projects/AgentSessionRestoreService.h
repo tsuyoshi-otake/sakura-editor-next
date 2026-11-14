@@ -26,8 +26,9 @@ public:
 	virtual void Load() = 0;
 	//! The state last loaded or updated; empty before the first Load.
 	[[nodiscard]] virtual AgentSessionRestoreState Snapshot() const = 0;
-	//! The recorded session identities for `folder`; empty when none.
-	[[nodiscard]] virtual std::vector<std::wstring> RecordedSessions(
+	//! `folder`'s whole record, layout included (#415 Phase 3); nullopt when
+	//! none is stored.
+	[[nodiscard]] virtual std::optional<AgentSessionRestoreEntry> RecordedEntry(
 		std::wstring_view folder) const = 0;
 	//! Applies `change`, which returns whether it changed the state, and saves
 	//! the result. Returns whether the state changed. When another window
@@ -45,7 +46,7 @@ public:
 
 	void Load() override;
 	[[nodiscard]] AgentSessionRestoreState Snapshot() const override { return m_state; }
-	[[nodiscard]] std::vector<std::wstring> RecordedSessions(
+	[[nodiscard]] std::optional<AgentSessionRestoreEntry> RecordedEntry(
 		std::wstring_view folder) const override;
 	bool Update(const std::function<bool(AgentSessionRestoreState&)>& change) override;
 

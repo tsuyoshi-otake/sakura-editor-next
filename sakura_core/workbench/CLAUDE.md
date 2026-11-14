@@ -325,10 +325,10 @@ and lifecycle rules as the rest of the native workbench.
   agent sessions were live there, and the next open of that Project resumes
   them in terminals through the same path a Sessions row's double-click uses.
   - Ownership: `AgentSessionRestore` is the pure model — recording
-    (`RecordLiveAgentSessions`), the persisted record
+    (`RecordLiveAgentSessionsByTab`), the persisted record
     (`AgentSessionRestoreState`), its codec, and the per-open plan
     (`PlanAgentSessionRestore` / `DispatchAgentSessionRestore`, which takes
-    the resume operation as a seam). `AgentSessionRestoreService` is the
+    the install operation as a seam). `AgentSessionRestoreService` is the
     profile-scoped owner behind `IWorkbenchRuntime::AgentSessionRestore()`,
     with the same `IProjectCatalogStore` contract as the catalog and the
     view state: coherent load-before-save, a conflict reloads and applies
@@ -371,6 +371,57 @@ and lifecycle rules as the rest of the native workbench.
     debug-reported, never retried; the result caps at
     `kMaximumAgentSessionRestoreSessions` (8) per Project and
     `kMaximumAgentSessionRestoreProjects` (64) folders per record.
+  - Layout restore (#415 Phase 3). The record grew to schema version 2:
+    `PersistLiveAgentSessions` now pairs each claim with its tab
+    (`RecordLiveAgentSessionsByTab`, which replaced Phase 2's
+    identity-only recorder with the same arbitration) and writes the
+    terminal projection's groups
+    beside `sessions`. Per folder the record is
+    `{"folder":..,"sessions":[..],"layout":{"leaves":[{"session":"<provider>:<id>"}
+    |{"shell":"<start directory>"}],"groups":[{"nodes":[{"leaf":N}|{"split":
+    "horizontal"|"vertical","children":[..],"weights":[..]}],"root":N}],
+    "active":N}}`. `sessions` stays the leaf-order identity list discovery
+    needs; `layout.groups` holds the split trees in panel order and
+    `layout.active` indexes the leaf that was the active terminal. A live
+    agent whose session cannot be identified is recorded as a shell leaf,
+    never guessed. Bounds: 8 sessions and 8 shell leaves per folder, 32
+    nodes per group tree, 64 folders, and the 64 KiB encoded record: a write
+    that would exceed it evicts the least recently written folders first,
+    and an entry too large on its own keeps its sessions without its
+    layout, so the record never silently stops saving. Decode accepts
+    version 1 (no layout: each session becomes its own single-leaf group in
+    record order and the last surviving one is active, which is Phase 2's
+    result) and 2 (a `layout` member absent at version 2
+    decodes the same way); every other version is still rejected, and a
+    malformed tree — child index out of range, a cycle, a split with fewer
+    than two children, a non-positive weight, a leaf used twice, a node
+    unreachable from its root, an unknown orientation, a leaf member of the
+    wrong type, a leaf order inconsistent with `sessions` — is
+    rejected too; the service keeps an undecodable record, never
+    overwrites it.
+  - Planning walks the recorded layout: a session leaf whose session no
+    longer exists collapses its split (the surviving neighbours keep
+    their weights), a group left holding shells alone is dropped (open
+    decision 1: a shell-only group is never recreated), the recorded
+    active leaf is kept when it survives and otherwise falls back to the
+    first session leaf of the first group, and the 8-session cap applies
+    to session leaves in leaf order.
+  - `PollAgentSessionRestore` installs the plan as one transaction through
+    `CEditWnd::InstallAgentSessionRestorePlan` +
+    `CTerminalTool::RestoreTerminalGroupLayout` instead of dispatching
+    each session separately. Each session leaf opens in the folder with
+    the exact command `ResumeAgentSessionInTerminal` builds; only the
+    first session leaf may reuse the untouched first-prompt shell; a
+    shell leaf opens a new terminal in its recorded start directory when
+    it still exists (else the Project folder) with no input — Sakura
+    resumes agents and spawns new shells where VS Code revives
+    processes. Each group's tree goes through
+    `TerminalGroupLayout::InstallGroup`, which validates and appends
+    without partial mutation; renderers are rebuilt once and the planned
+    active leaf is selected. A leaf whose terminal cannot be created or
+    refuses its input collapses out and is counted; the rest still
+    installs. `m_resumedAgentSessions` is set for every resumed tab, and
+    the Sessions-view path `ResumeAgentSessionInTerminal` is unchanged.
   - Setting: `sakura.projects.restoreAgentSessions` (default true) turns
     the whole feature off. It is Application/Profile scoped like `http.*`
     and `update.*`, so a repository cannot re-enable process spawning on
@@ -378,9 +429,12 @@ and lifecycle rules as the rest of the native workbench.
     While it is off nothing is recorded either, so re-enabling cannot fire
     a stale record.
   - Tests: `AgentSessionRestoreTest.cpp` covers the record model (known,
-    inferred, uninferable), the entry model and cap, the codec, the plan's
-    every branch, dispatch through the resume seam, the service's
-    load/save/conflict/fail-closed paths, and the presence anchor.
+    inferred, uninferable), tab-mapped claims, the entry model and cap,
+    the version-1/2 codec including every malformed-tree rejection and
+    bound, the plan's every branch (collapse, shell-only drop, weights,
+    active fallback, cap), dispatch through the install seam, the
+    service's load/save/conflict/fail-closed paths, and the presence
+    anchor.
 - **Session management menu (#408, fork extension).** A right click on a
   Sessions row selects it and opens its menu; Shift+F10 opens the focused
   row's. Each entry acts on the session the menu was opened for, even when

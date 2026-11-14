@@ -10,6 +10,7 @@
 #include "terminal/window/TerminalNativeFrameBridge.h"
 #include "TerminalTabPresentation.h"
 #include "terminal/window/TerminalAgentPresence.h"
+#include "terminal/window/TerminalGroupLayout.h"
 #include "workbench/IWorkbenchTool.h"
 #include "theme/CThemeService.h"
 #include "terminal/window/TerminalPaneLayout.h"
@@ -115,6 +116,55 @@ struct TerminalInputTarget final {
 	bool reused{};
 };
 
+//! The current projection's group layout as plain data (#415 Phase 3):
+//! `groups` in panel order with tab-id trees, plus the focused/active
+//! terminal's tab id (absent when no tab is part of a group).
+struct TerminalGroupLayoutSnapshot final {
+	std::vector<TerminalPaneGroup> groups;
+	std::optional<std::uint64_t> activeTabId;
+};
+
+//! One terminal a layout restore installs. `input` queued after the session
+//! starts is what `ResumeAgentSessionInTerminal` builds (the resume command
+//! plus CR); an empty `input` makes it a plain shell. `reuseFirstPrompt`
+//! applies the Phase-1 rule: a terminal still at its first prompt in
+//! `workingDirectory` with no agent runs `input` instead of a new terminal
+//! being opened. `drop` leaves never get a terminal and never count as
+//! failures; the caller drops and accounts for them itself.
+struct TerminalRestoreLeaf final {
+	std::wstring workingDirectory;
+	std::string input;
+	bool reuseFirstPrompt{};
+	bool drop{};
+};
+
+//! One node of a group tree a restore installs: a leaf (`leaf` indexes the
+//! group's `leaves`) or a split (`children` node indices with matching
+//! `weights`, `orientation`).
+struct TerminalRestoreNode final {
+	std::optional<std::size_t> leaf;
+	TerminalPaneOrientation orientation{ TerminalPaneOrientation::Horizontal };
+	std::vector<std::size_t> children;
+	std::vector<int> weights;
+};
+
+//! One group a restore installs, in panel order.
+struct TerminalRestoreGroup final {
+	std::vector<TerminalRestoreLeaf> leaves;
+	std::vector<TerminalRestoreNode> nodes;
+	std::size_t root{};
+};
+
+//! What RestoreTerminalGroupLayout did. `leafTabIds` is parallel to each
+//! group's `leaves`: the placed tab id, or none when the leaf got no
+//! terminal -- it was dropped, its terminal could not be created or refused
+//! its input, or its group's tree was rejected and rolled back (a reused
+//! first-prompt tab returns to a single-pane group, created ones are
+//! deleted).
+struct TerminalRestoreResult final {
+	std::vector<std::vector<std::optional<std::uint64_t>>> leafTabIds;
+};
+
 //! Bottom-panel terminal tool with recursive split groups and a right-side
 //! terminal instance list. Pane count is unbounded.
 class CTerminalTool final : public workbench::IWorkbenchTool {
@@ -212,6 +262,20 @@ public:
 	[[nodiscard]] bool HasTerminalSplit() const noexcept;
 	[[nodiscard]] TerminalPaneOrientation ActivePaneOrientation() const noexcept;
 	[[nodiscard]] std::vector<TerminalTabSnapshot> Tabs() const;
+	//! The current projection's groups, split trees, and active tab as plain
+	//! data (#415 Phase 3): what PersistLiveAgentSessions records.
+	[[nodiscard]] TerminalGroupLayoutSnapshot GroupLayoutSnapshot() const;
+	//! Installs planned terminal groups in one transaction (#415 Phase 3):
+	//! one terminal per leaf (a `reuseFirstPrompt` session leaf may take the
+	//! untouched default shell, which then leaves its old group for its place
+	//! in the restored tree), each group's tree appended after the
+	//! projection's existing groups through TerminalGroupLayout::InstallGroup,
+	//! renderers rebuilt once, and `activeLeaf` (group, leaf index) -- or the
+	//! first placed leaf -- selected. A leaf that fails to create collapses
+	//! out of its tree; the rest still installs.
+	[[nodiscard]] TerminalRestoreResult RestoreTerminalGroupLayout(
+		std::vector<TerminalRestoreGroup> groups,
+		std::optional<std::pair<std::size_t, std::size_t>> activeLeaf );
 	//! Terminals of the current projection that host an agent, in tab order.
 	//! `refresh` re-observes every terminal's job first (bounded by the tab
 	//! count) and does not call the sink for what it finds; false returns the

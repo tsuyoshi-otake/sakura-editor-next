@@ -8,6 +8,7 @@
 #include "terminal/window/TerminalGroupLayout.h"
 
 #include <algorithm>
+#include <unordered_set>
 
 namespace terminal {
 
@@ -19,6 +20,11 @@ std::size_t TerminalGroupLayout::GroupCount() const noexcept
 const TerminalPaneGroup* TerminalGroupLayout::GroupAt( std::size_t index ) const noexcept
 {
 	return index < m_groups.size() ? &m_groups[index] : nullptr;
+}
+
+const std::vector<TerminalPaneGroup>& TerminalGroupLayout::Groups() const noexcept
+{
+	return m_groups;
 }
 
 TerminalPaneGroup* TerminalGroupLayout::MutableGroupAt( std::size_t index ) noexcept
@@ -282,6 +288,44 @@ bool TerminalGroupLayout::ApplyDividerResize( std::size_t groupIndex, std::size_
 	node.weights[childPosition] = firstWeight;
 	node.weights[childPosition + 1] = combinedWeight - firstWeight;
 	return true;
+}
+
+bool TerminalGroupLayout::ValidateGroupTree( const TerminalPaneGroup& group )
+{
+	if( group.nodes.empty() || group.root >= group.nodes.size() ) return false;
+	std::unordered_set<std::size_t> visited;
+	std::unordered_set<std::uint64_t> leaves;
+	std::vector<std::uint64_t> collected;
+	const std::function<bool(std::size_t)> walk = [&]( std::size_t nodeIndex ) -> bool {
+		// A second visit means a cycle or a node used as a child twice.
+		if( nodeIndex >= group.nodes.size() || !visited.insert(nodeIndex).second ) return false;
+		const auto& node = group.nodes[nodeIndex];
+		if( node.children.empty() ) {
+			if( node.leafId == 0 || !leaves.insert(node.leafId).second ) return false;
+			collected.push_back(node.leafId);
+			return true;
+		}
+		if( node.children.size() < 2 || node.weights.size() != node.children.size() ) return false;
+		for( const auto weight : node.weights ) {
+			if( weight <= 0 ) return false;
+		}
+		for( const auto child : node.children ) {
+			if( child == nodeIndex || !walk(child) ) return false;
+		}
+		return true;
+	};
+	if( !walk(group.root) ) return false;
+	return collected == group.tabIds;
+}
+
+std::optional<std::size_t> TerminalGroupLayout::InstallGroup( TerminalPaneGroup group )
+{
+	if( !ValidateGroupTree(group) ) return std::nullopt;
+	for( const auto tabId : group.tabIds ) {
+		if( FindGroup(tabId) ) return std::nullopt;
+	}
+	m_groups.push_back(std::move(group));
+	return m_groups.size() - 1;
 }
 
 void TerminalGroupLayout::ReplaceGroup( std::size_t index, TerminalPaneGroup group )

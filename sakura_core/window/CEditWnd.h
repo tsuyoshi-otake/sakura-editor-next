@@ -71,6 +71,7 @@
 #include "config/WorkspaceContextTypes.h"
 #include "workbench/recent/RecentlyOpenedWorkspaceMenuProjection.h"
 #include "workbench/projects/AgentSessionHistory.h"
+#include "workbench/projects/AgentSessionRestore.h"
 #include "workbench/output/IOutputService.h"
 #include "workbench/problems/MarkerNavigationModel.h"
 #include "workbench/problems/MarkerService.h"
@@ -1506,6 +1507,11 @@ private:
 	//! notification for the same workspace identity is a no-op.
 	void BeginAgentSessionRestore() noexcept;
 	void PollAgentSessionRestore() noexcept;
+	//! #415 Phase 3: installs a planned restore -- groups, split trees, the
+	//! first session leaf's first-prompt reuse -- in one terminal transaction.
+	[[nodiscard]] workbench::projects::AgentSessionRestoreInstallResult
+		InstallAgentSessionRestorePlan(
+			const workbench::projects::AgentSessionRestorePlan& plan, std::wstring_view folder);
 	//! Signals and joins the in-flight restore discovery. The attempt ends
 	//! without resuming anything and is never retried.
 	void CancelAgentSessionRestore() noexcept;
@@ -1519,7 +1525,9 @@ private:
 	std::future<std::optional<std::vector<workbench::projects::AgentSessionRecord>>> m_agentSessionRestore;
 	HANDLE m_agentSessionRestoreStop = nullptr;
 	std::wstring m_agentSessionRestoreFolder;
-	std::vector<std::wstring> m_agentSessionRestoreRecorded;
+	//! The stored record for the open in flight: identities plus the recorded
+	//! terminal layout (#415 Phase 3).
+	workbench::projects::AgentSessionRestoreEntry m_agentSessionRestoreRecorded;
 	workbench::panel::CBottomPanelTool* m_bottomPanelTool = nullptr;
 	std::unique_ptr<markdown::CMarkdownPreviewWnd> m_markdownPreview;
 	markdown::MarkdownPreviewCommandState m_markdownPreviewCommandState;

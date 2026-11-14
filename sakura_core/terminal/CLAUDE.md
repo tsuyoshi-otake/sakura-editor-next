@@ -529,6 +529,23 @@ focused split removes only that pane until its final pane is gone.
 `Alt+Left` / `Alt+Right` (and `Alt+Up` / `Alt+Down`) move focus between adjacent
 panes; `Ctrl+PageUp` and `Ctrl+PageDown` move between terminal groups.
 
+Restoring a Project's layout (#415 Phase 3) is a model-first transaction:
+`TerminalGroupLayout::InstallGroup` validates a whole group (every tab once,
+no empty group, splits with at least two children and matching positive
+weights, `tabIds` equal to the depth-first leaf order) and appends it
+without partial mutation; `CTerminalTool::GroupLayoutSnapshot` exports the
+current projection's groups as plain data for the record, and
+`CTerminalTool::RestoreTerminalGroupLayout` installs planned groups —
+one terminal per leaf, each tree through `InstallGroup`, renderers rebuilt
+once, the planned active leaf selected. A leaf whose terminal cannot be
+created collapses out of its tree and is counted; a rejected group's
+terminals are rolled back (a reused shell returns to a single-pane group,
+created ones are deleted) so no half-built layout remains. A restored
+shell leaf is a *new* shell started in its recorded directory (or the
+Project folder when that directory is gone) — Sakura spawns it fresh where
+VS Code revives processes — and a group that held only shells is never
+recreated.
+
 The active group is a recursive split layout. Upstream VS Code keeps bottom-
 Panel splits on one axis (side-by-side); nested panes and vertical splits are
 an explicit Sakura multiplexer extension. A split on the same axis as the
@@ -1147,6 +1164,17 @@ A terminal qualifies when all of these hold:
 The active terminal is tried first, then list order. A terminal that refuses
 the input is skipped. Restoring several sessions therefore puts the first one in
 the default shell and opens new terminals for the rest.
+
+For the Phase 3 batch restore this rule narrows to the first session leaf
+only. `CEditWnd::InstallAgentSessionRestorePlan` sets `reuseFirstPrompt` on
+the first session leaf alone, and `RestoreTerminalGroupLayout` consumes at
+most one first-prompt shell however many leaves carry the flag; every other
+leaf gets a new terminal. The reused shell
+leaves its own group and takes the leaf's place in the restored tree —
+`TerminalGroupLayout::RemoveTab` erases an emptied group, so no stray
+single-pane group is left behind. A pane tmux created (open decision 2) is
+recorded like any other leaf and restored as a plain shell unless the pane
+hosted a resumable session of its own.
 
 "Untouched" is decided from input, never from screen content. A profile banner
 or a prompt theme changes what the first screen shows; whether anything was

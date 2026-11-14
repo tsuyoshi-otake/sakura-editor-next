@@ -41,11 +41,11 @@ void CAgentSessionRestoreService::Load()
 	}
 }
 
-std::vector<std::wstring> CAgentSessionRestoreService::RecordedSessions(
+std::optional<AgentSessionRestoreEntry> CAgentSessionRestoreService::RecordedEntry(
 	const std::wstring_view folder) const
 {
-	const auto recorded = FindAgentSessionRestoreEntry(m_state, folder);
-	return { recorded.begin(), recorded.end() };
+	const auto* const recorded = FindAgentSessionRestoreEntry(m_state, folder);
+	return recorded == nullptr ? std::nullopt : std::optional<AgentSessionRestoreEntry>(*recorded);
 }
 
 EProjectCatalogStoreSaveStatus CAgentSessionRestoreService::Save()

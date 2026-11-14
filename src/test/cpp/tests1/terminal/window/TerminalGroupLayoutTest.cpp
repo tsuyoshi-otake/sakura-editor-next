@@ -413,4 +413,128 @@ TEST(TerminalGroupLayout, ClearDropsEveryGroupAndTheActiveIndex)
 	EXPECT_FALSE(layout.ActiveGroupIndex().has_value());
 }
 
+//! A hand-built two-leaf split group (leaf 1 beside leaf 2) used by the
+//! InstallGroup cases below.
+terminal::TerminalPaneGroup SplitPairGroup( std::uint64_t first, std::uint64_t second,
+	terminal::TerminalPaneOrientation orientation = terminal::TerminalPaneOrientation::Horizontal,
+	std::vector<int> weights = { 600, 400 } )
+{
+	terminal::TerminalPaneGroup group;
+	group.nodes.resize(3);
+	group.nodes[0].leafId = first;
+	group.nodes[1].leafId = second;
+	group.nodes[2].children = { 0, 1 };
+	group.nodes[2].weights = std::move(weights);
+	group.nodes[2].orientation = orientation;
+	group.root = 2;
+	group.tabIds = { first, second };
+	return group;
+}
+
+TEST(TerminalGroupLayout, InstallGroupAppendsAValidTreeWithoutActivatingIt)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	EXPECT_EQ(0u, layout.ActiveGroupIndex());
+	const auto installed = layout.InstallGroup(SplitPairGroup(2, 3,
+		terminal::TerminalPaneOrientation::Vertical));
+	ASSERT_TRUE(installed.has_value());
+	EXPECT_EQ(1u, *installed);
+	ExpectModelInvariants(layout);
+	// Install never steals the active selection.
+	EXPECT_EQ(0u, layout.ActiveGroupIndex());
+	const auto* group = layout.GroupAt(1);
+	ASSERT_TRUE(group != nullptr);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 2, 3 }), group->tabIds);
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Vertical,
+		group->nodes[group->root].orientation);
+	EXPECT_EQ((std::vector<int>{ 600, 400 }), group->nodes[group->root].weights);
+	EXPECT_EQ(1u, layout.FindGroup(2));
+	EXPECT_EQ(1u, layout.FindGroup(3));
+	// Groups() exposes the ordered projection for the layout snapshot.
+	EXPECT_EQ(2u, layout.Groups().size());
+}
+
+TEST(TerminalGroupLayout, InstallGroupRejectsMalformedTreesWithoutMutating)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	const auto baseline = *layout.GroupAt(0);
+
+	// An empty group, a root out of range, a child index out of range.
+	{
+		auto attempt = layout;
+		EXPECT_FALSE(attempt.InstallGroup(terminal::TerminalPaneGroup{}));
+		auto outOfRange = SplitPairGroup(2, 3);
+		outOfRange.root = 7;
+		EXPECT_FALSE(attempt.InstallGroup(std::move(outOfRange)));
+		auto badChild = SplitPairGroup(2, 3);
+		badChild.nodes[2].children = { 0, 9 };
+		EXPECT_FALSE(attempt.InstallGroup(std::move(badChild)));
+		EXPECT_EQ(1u, attempt.GroupCount());
+		EXPECT_EQ(baseline.tabIds, attempt.GroupAt(0)->tabIds);
+	}
+
+	// A cycle (the root splits into itself), a split with fewer than two
+	// children, a non-positive weight, and a weight list that does not match
+	// the children.
+	{
+		auto attempt = layout;
+		auto cyclic = SplitPairGroup(2, 3);
+		cyclic.nodes[2].children = { 2, 1 };
+		EXPECT_FALSE(attempt.InstallGroup(std::move(cyclic)));
+		auto tooSmall = SplitPairGroup(2, 3);
+		tooSmall.nodes[2].children = { 0 };
+		tooSmall.nodes[2].weights = { 600 };
+		EXPECT_FALSE(attempt.InstallGroup(std::move(tooSmall)));
+		auto deadWeight = SplitPairGroup(2, 3);
+		deadWeight.nodes[2].weights = { 600, 0 };
+		EXPECT_FALSE(attempt.InstallGroup(std::move(deadWeight)));
+		auto shortWeights = SplitPairGroup(2, 3);
+		shortWeights.nodes[2].weights = { 600 };
+		EXPECT_FALSE(attempt.InstallGroup(std::move(shortWeights)));
+		EXPECT_EQ(1u, attempt.GroupCount());
+		EXPECT_EQ(baseline.tabIds, attempt.GroupAt(0)->tabIds);
+	}
+
+	// A leaf used twice, a tab already grouped elsewhere, and a tabIds list
+	// that disagrees with the depth-first leaf order.
+	{
+		auto attempt = layout;
+		auto reusedLeaf = SplitPairGroup(2, 3);
+		reusedLeaf.nodes[2].children = { 0, 0 };
+		EXPECT_FALSE(attempt.InstallGroup(std::move(reusedLeaf)));
+		EXPECT_FALSE(attempt.InstallGroup(SplitPairGroup(1, 4)));
+		auto wrongOrder = SplitPairGroup(2, 3);
+		wrongOrder.tabIds = { 3, 2 };
+		EXPECT_FALSE(attempt.InstallGroup(std::move(wrongOrder)));
+		auto extraTab = SplitPairGroup(2, 3);
+		extraTab.tabIds = { 2, 3, 4 };
+		EXPECT_FALSE(attempt.InstallGroup(std::move(extraTab)));
+		// Nothing installed, nothing changed.
+		EXPECT_EQ(1u, attempt.GroupCount());
+		EXPECT_EQ(baseline.tabIds, attempt.GroupAt(0)->tabIds);
+		EXPECT_EQ(0u, attempt.ActiveGroupIndex());
+	}
+	ExpectModelInvariants(layout);
+}
+
+TEST(TerminalGroupLayout, InstallGroupIgnoresUnreachableDeadNodes)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	auto group = SplitPairGroup(2, 3);
+	// Dead data left over from a collapse is carried along, never validated.
+	terminal::TerminalPaneLayoutTreeNode dead;
+	dead.leafId = 42;
+	group.nodes.insert(group.nodes.begin(), dead);
+	// Shift every index by one for the inserted node.
+	group.nodes[3].children = { 1, 2 };
+	group.root = 3;
+	EXPECT_TRUE(layout.InstallGroup(std::move(group)).has_value());
+	ExpectModelInvariants(layout);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 2, 3 }),
+		layout.GroupAt(1)->tabIds);
+}
+
 } // namespace
