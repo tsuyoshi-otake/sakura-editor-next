@@ -30,6 +30,9 @@ struct TerminalPaneGroup final {
 	std::size_t root{};
 };
 
+//! Whether a layout operation committed a change.
+enum class TerminalLayoutEdit : std::uint8_t { Unchanged, Changed };
+
 //! Where a terminal sits inside its group's leaf order (#415 Phase 4). The
 //! terminal list paints the matching tree glyph inside the row label, as
 //! upstream terminalTabsList.ts composes it: U+250C for the first leaf,
@@ -113,6 +116,14 @@ public:
 	//! with a single child. An emptied group is erased and the active index
 	//! adjusted. Returns false when no group contained the tab.
 	[[nodiscard]] bool RemoveTab( std::uint64_t tabId );
+	//! Moves a split leaf to a new last group without activating that group.
+	[[nodiscard]] TerminalLayoutEdit Unsplit( std::uint64_t tabId );
+	//! Joins known distinct tabs atomically and activates the first one's group.
+	[[nodiscard]] TerminalLayoutEdit Join( const std::vector<std::uint64_t>& tabIds );
+	//! Exchanges leaf identities without changing positions or their weights.
+	[[nodiscard]] TerminalLayoutEdit Swap( std::uint64_t first, std::uint64_t second );
+	//! Previous or next leaf in this group, wrapping; absent for a lone leaf.
+	[[nodiscard]] std::optional<std::uint64_t> RelativeLeaf( std::uint64_t tabId, int direction ) const;
 	//! Splits `primaryId`'s leaf in `groupIndex`'s tree on `orientation`.
 	//! When the leaf's parent already splits on that axis the new leaf is
 	//! inserted beside it and the row/column is equalized; otherwise the leaf

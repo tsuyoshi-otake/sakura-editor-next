@@ -714,7 +714,7 @@ WorkbenchCommandDescriptor MakeUpdateMenuDescriptor(
 //! Terminal-menu slot reuses the palette title - the same recorded
 //! simplification as the Explorer palette retitle.
 //!
-WorkbenchCommandDescriptor MakeTaskCommandDescriptor(
+WorkbenchCommandDescriptor MakeTerminalTargetCommandDescriptor(
 	std::string id, std::string title, bool terminalMenu, bool keybinding)
 {
 	std::vector<WorkbenchCommandSurfaceBinding> bindings;
@@ -1132,14 +1132,27 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterTaskCommand
 	// Palette; only `build` binds `Ctrl+Shift+B`, carried here as the integer
 	// compatibility alias the native keybinding table dispatches.
 	std::vector<Entry> commands{
-		Entry{ MakeTaskCommandDescriptor(std::string(kTasksRunTaskCommandId), "Tasks: Run Task", true, false),
+		Entry{ MakeTerminalTargetCommandDescriptor(std::string(kTasksRunTaskCommandId), "Tasks: Run Task", true, false),
 			std::move(executors.runTask), {} },
-		Entry{ MakeTaskCommandDescriptor(std::string(kTasksBuildCommandId), "Tasks: Run Build Task", true, true),
+		Entry{ MakeTerminalTargetCommandDescriptor(std::string(kTasksBuildCommandId), "Tasks: Run Build Task", true, true),
 			std::move(executors.build), {} },
-		Entry{ MakeTaskCommandDescriptor(std::string(kTasksTestCommandId), "Tasks: Run Test Task", false, false),
+		Entry{ MakeTerminalTargetCommandDescriptor(std::string(kTasksTestCommandId), "Tasks: Run Test Task", false, false),
 			std::move(executors.test), {} },
-		Entry{ MakeTaskCommandDescriptor(std::string(kTasksShowLogCommandId), "Tasks: Show Task Log", false, false),
+		Entry{ MakeTerminalTargetCommandDescriptor(std::string(kTasksShowLogCommandId), "Tasks: Show Task Log", false, false),
 			std::move(executors.showLog), {} },
+	};
+	return RegisterAtomicBatch(std::move(commands));
+}
+
+WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterTerminalCommands(
+	WorkbenchTerminalCommandExecutors executors)
+{
+	// Upstream terminalActions.ts registers both actions in the Terminal category.
+	std::vector<Entry> commands{
+		Entry{ MakeTerminalTargetCommandDescriptor(std::string(kTerminalUnsplitCommandId), "Terminal: Unsplit Terminal", false, false),
+			std::move(executors.unsplit), {} },
+		Entry{ MakeTerminalTargetCommandDescriptor(std::string(kTerminalJoinCommandId), "Terminal: Join Terminals...", false, false),
+			std::move(executors.join), {} },
 	};
 	return RegisterAtomicBatch(std::move(commands));
 }

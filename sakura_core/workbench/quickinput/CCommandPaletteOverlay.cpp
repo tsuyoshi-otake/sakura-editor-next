@@ -475,7 +475,7 @@ void CCommandPaletteOverlay::RefreshStrings() noexcept
 	if (m_stringsCallback) {
 		try {
 			const auto localized = m_stringsCallback();
-			if (!localized.placeholder.empty()) strings.placeholder = localized.placeholder;
+			if (localized.allowEmptyPlaceholder || !localized.placeholder.empty()) strings.placeholder = localized.placeholder;
 			if (!localized.noResults.empty()) strings.noResults = localized.noResults;
 		}
 		catch (...) {

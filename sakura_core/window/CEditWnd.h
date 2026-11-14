@@ -1121,6 +1121,8 @@ private:
 	[[nodiscard]] bool SelectOutputChannelById(const std::string& channelId);
 	//! `workbench.action.showOutputChannels`: the grouped extension/core quick pick.
 	[[nodiscard]] bool ShowOutputChannelQuickPick();
+	//! `workbench.action.terminal.join`: pick a single-terminal group to join.
+	[[nodiscard]] bool ShowTerminalJoinQuickPick(const std::vector<std::uint64_t>& candidates);
 	//! `workbench.action.saveActiveLogOutputAs`: a real save dialog plus a UTF-8
 	//! write of the active channel's projected text. Cancel is `Succeeded`.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult SaveActiveOutputAs();

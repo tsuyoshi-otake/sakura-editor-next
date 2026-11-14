@@ -38,6 +38,8 @@ struct CommandPaletteItem {
 struct QuickInputStrings {
 	std::wstring placeholder;
 	std::wstring noResults;
+	//! Distinguishes a deliberately empty placeholder from an unavailable string.
+	bool allowEmptyPlaceholder = false;
 };
 
 //! The pixel geometry contract shared by the native Quick Input projection and

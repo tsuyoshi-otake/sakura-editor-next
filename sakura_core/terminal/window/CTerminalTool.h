@@ -270,6 +270,12 @@ public:
 	[[nodiscard]] bool SplitTerminalRight();
 	[[nodiscard]] bool SplitTerminalDown();
 	[[nodiscard]] bool CloseTerminalSplit();
+	//! Moves a split terminal to a new last group, leaving its old group active.
+	[[nodiscard]] bool UnsplitTerminal( std::optional<std::uint64_t> tabId = std::nullopt );
+	//! Alone, non-active terminals in the terminal list's order.
+	[[nodiscard]] std::vector<std::uint64_t> JoinCandidates() const;
+	//! Joins the picked terminal and the active terminal, selecting the picked one.
+	[[nodiscard]] bool JoinTerminals( std::uint64_t pickedTabId );
 	[[nodiscard]] bool HasTerminalSplit() const noexcept;
 	[[nodiscard]] TerminalPaneOrientation ActivePaneOrientation() const noexcept;
 	[[nodiscard]] std::vector<TerminalTabSnapshot> Tabs() const;

@@ -153,4 +153,21 @@ TEST(TerminalShortcutPreset, IdentifiersRoundTripAndRejectUnknownValues)
 	EXPECT_FALSE(terminal::ParseTerminalShortcutPreset(L"").has_value());
 }
 
+//! tmux binds swap-pane and break-pane; Screen has no corresponding defaults.
+TEST(TerminalShortcutPreset, TmuxSwapAndBreakChordsDoNotChangeScreen)
+{
+	const struct { std::uint32_t key; TerminalPresetAction action; } cases[]{
+		{ VK_OEM_4, TerminalPresetAction::SwapPanePrevious },
+		{ VK_OEM_6, TerminalPresetAction::SwapPaneNext },
+		{ '1', TerminalPresetAction::BreakPane },
+	};
+	for( const auto& testCase : cases ) {
+		EXPECT_EQ(testCase.action, ResolveTerminalPresetKey(TerminalShortcutPreset::Tmux, true, Key(testCase.key, true)).action);
+		EXPECT_EQ(TerminalPresetAction::None, ResolveTerminalPresetKey(TerminalShortcutPreset::Screen, true, Key(testCase.key, true)).action);
+	}
+	const auto digit = ResolveTerminalPresetKey(TerminalShortcutPreset::Tmux, true, Key('1'));
+	EXPECT_EQ(TerminalPresetAction::SelectTerminal, digit.action);
+	EXPECT_EQ(1u, digit.terminalIndex);
+}
+
 } // namespace

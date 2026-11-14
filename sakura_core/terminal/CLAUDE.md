@@ -560,6 +560,60 @@ Sessions submenu all read the one ordered projection
 `CTerminalTool::TerminalListRows`); a tab not yet installed in a group sorts
 after the grouped ones in creation order.
 
+Unsplit, Join and Swap (#415 Phase 5) are `TerminalGroupLayout` operations,
+each one transaction that reports `TerminalLayoutEdit::Unchanged` when it would
+change nothing (the tool then rebuilds nothing):
+
+- `Unsplit(tab)` is upstream `TerminalGroupService.unsplitInstance`: a leaf of a
+  group with two or more leaves moves to a new group appended at the end, and
+  the old group stays active. When the moved terminal was the active one, the
+  old group's successor becomes active (DeleteTerminal's rule, upstream
+  `TerminalGroup.removeInstance`).
+- `Join(tabs)` is upstream `joinInstances`: the candidate is the group of the
+  first listed terminal that is alone in its group, else a new group appended
+  at the end; every other terminal leaves its group and is inserted right after
+  the candidate's original leaf on the horizontal axis (upstream `addInstance`
+  splices at `activeIndex + 1` without moving the active index, so later
+  terminals land before earlier ones). The first listed terminal becomes active.
+- `Swap(a, b)` exchanges two leaves' places; the weights stay with the places,
+  as tmux `swap-pane` keeps the cells' sizes. `RelativeLeaf` gives the previous
+  or next leaf of a group, wrapping.
+- `CTerminalTool::CommitLayoutEdit` installs an edited copy and rebuilds the
+  renderers once; a failed rebuild restores the previous layout and selection.
+
+Surfaces:
+
+- `workbench.action.terminal.unsplit` ("Terminal: Unsplit Terminal") and
+  `workbench.action.terminal.join` ("Terminal: Join Terminals...") are
+  registered by `RegisterTerminalCommands` (see
+  `sakura_core/workbench/commands/CLAUDE.md`). Join offers every terminal that is
+  not active and is alone in its group (`CTerminalTool::JoinCandidates`, list
+  order) and joins the pick with the active terminal, the pick first, as
+  upstream. `workbench.action.terminal.joinActiveTab` acts on the list's
+  multi-selection, which this list does not have, so it is not registered.
+- The terminal tool's own context menu offers "Unsplit Terminal" only for a
+  terminal in a split, as upstream `terminalMenus.ts` hides it otherwise. It acts
+  on the right-clicked list row, else the focused terminal, and calls the tool
+  directly like the menu's other entries. Upstream has no menu entry for Join,
+  so none is added.
+- tmux preset (upstream tmux defaults): `{` is `swap-pane -U` and `}` is
+  `swap-pane -D`, swapping the active pane with the previous or next pane of its
+  group, wrapping, focus following the moved pane; `!` is `break-pane`, which
+  unsplits the active terminal and selects it in its new last group. A lone pane
+  makes all three a no-op. GNU Screen binds no swap or break by default, so the
+  screen preset gains nothing.
+- Divergence: upstream Join warns through its notification service
+  ("Insufficient terminals for the join action", "All terminals are joined
+  already"). This fork has none, so the two texts are the command's
+  `NotApplicable` detail.
+- The panel layout stays a view. Moving a terminal never changes its runtime
+  pane id, so `select-pane`, `kill-pane`, `kill-window` and a later
+  `split-window -t` keep acting on the right tabs wherever the panel shows them
+  (`TerminalTool.TmuxPaneIdentitySurvivesUnsplitAndWindowClose`). A local panel
+  selection now also records the runtime's current pane
+  (`TerminalTabManager::SelectTab`), so a later external `select-pane` back to
+  the previously current pane is still seen as a change.
+
 The active group is a recursive split layout. Upstream VS Code keeps bottom-
 Panel splits on one axis (side-by-side); nested panes and vertical splits are
 an explicit Sakura multiplexer extension. A split on the same axis as the
@@ -778,8 +832,8 @@ VS Code capability.
   `(preset, prefix-armed, key)` onto a `TerminalPresetAction`. It is unit-tested
   in `src/test/cpp/tests1/terminal/TerminalShortcutPresetTest.cpp`.
 - Every action maps onto a capability the panel already owns (new terminal,
-  split right/down, close pane, close terminal, focus pane/group, select group,
-  focus the terminal list). A preset must never invent a capability, and must
+  split right/down, close pane, close terminal, swap/break pane, focus pane/group,
+  select group, focus the terminal list). A preset must never invent a capability, and must
   never approximate a missing one with unrelated state.
 - Close pane (tmux `x`, Screen `X`) closes the focused pane even when it is the
   group's last one, so that terminal closes. It used to require a split and did

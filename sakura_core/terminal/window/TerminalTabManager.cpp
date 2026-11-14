@@ -400,6 +400,10 @@ bool TerminalTabManager::SelectTab( std::uint64_t tabId ) noexcept
 		const auto selected = m_impl->runtimeService->SelectPane(request);
 		if( selected.code != TerminalRuntimeOperationCode::Succeeded
 			&& selected.code != TerminalRuntimeOperationCode::TargetMissing) return false;
+		// The coalesced runtime wake may also contain a later external selection.
+		// Record this local selection now so that later selection is not mistaken
+		// for the last runtime pane reconciled before the local change.
+		if( selected.code == TerminalRuntimeOperationCode::Succeeded ) m_impl->lastRuntimeCurrentPane = tab->paneId;
 	}
 	m_impl->activeTabId = tabId;
 	return true;

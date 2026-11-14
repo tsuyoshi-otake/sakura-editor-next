@@ -336,6 +336,11 @@ struct WorkbenchTaskCommandExecutors {
 	WorkbenchCommandExecutor showLog;
 };
 
+struct WorkbenchTerminalCommandExecutors {
+	WorkbenchCommandExecutor unsplit;
+	WorkbenchCommandExecutor join;
+};
+
 /*!
 	@brief Executors for the Problems view's `problems.action.*` family and its
 	view-scoped `workbench.actions.*` commands.
@@ -441,6 +446,10 @@ inline constexpr std::string_view kTasksBuildCommandId = "workbench.action.tasks
 inline constexpr std::string_view kTasksTestCommandId = "workbench.action.tasks.test";
 inline constexpr std::string_view kTasksShowLogCommandId = "workbench.action.tasks.showLog";
 
+//! Terminal command IDs from upstream terminalActions.ts.
+inline constexpr std::string_view kTerminalUnsplitCommandId = "workbench.action.terminal.unsplit";
+inline constexpr std::string_view kTerminalJoinCommandId = "workbench.action.terminal.join";
+
 //! The states in which upstream's title-bar entry is visible
 //! (`updateTitleBarEntry.ts`'s `ACTIONABLE_STATES`), as one `when` clause.
 inline constexpr std::string_view kUpdateIndicatorWhenClause =
@@ -540,6 +549,8 @@ public:
 	//! while only `build` carries a keybinding binding.
 	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterTaskCommands(
 		WorkbenchTaskCommandExecutors executors = {});
+	//! Registers the Terminal Unsplit and Join palette commands as one atomic batch.
+	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterTerminalCommands(WorkbenchTerminalCommandExecutors executors = {});
 	//! Registers the Problems view command family as one atomic batch, using
 	//! upstream's own stable IDs from `markers.ts`/`markers.contribution.ts`:
 	//! the `problems.action.*` marker/filter commands, the

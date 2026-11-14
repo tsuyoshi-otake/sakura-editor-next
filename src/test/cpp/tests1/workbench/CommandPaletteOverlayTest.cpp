@@ -202,6 +202,29 @@ protected:
 	workbench::quickinput::CCommandPaletteOverlay m_overlay;
 };
 
+//! #415 Phase 5: upstream's Join Terminals pick passes no placeholder, so a
+//! caller can ask for an empty cue banner on purpose, while an empty
+//! placeholder without the flag still falls back to the default cue.
+TEST_F(CommandPaletteOverlayTest, EmptyPlaceholderIsExplicitAndDefaultFallbackIsPreserved)
+{
+	using workbench::quickinput::QuickInputStrings;
+	m_overlay.SetStringsCallback([] { return QuickInputStrings{}; });
+	ASSERT_TRUE(m_overlay.Show({ { .id = L"terminal", .label = L"Terminal" } }));
+	const HWND input = InputWindow();
+	ASSERT_NE(nullptr, input);
+	wchar_t cue[256]{};
+	static_cast<void>(::SendMessageW(input, EM_GETCUEBANNER, reinterpret_cast<WPARAM>(cue), _countof(cue)));
+	EXPECT_NE(L'\0', cue[0]);
+
+	m_overlay.SetStringsCallback([] {
+		return QuickInputStrings{ .placeholder = L"", .allowEmptyPlaceholder = true };
+	});
+	cue[0] = L'X';
+	cue[1] = L'\0';
+	static_cast<void>(::SendMessageW(input, EM_GETCUEBANNER, reinterpret_cast<WPARAM>(cue), _countof(cue)));
+	EXPECT_EQ(L'\0', cue[0]);
+}
+
 TEST_F(CommandPaletteOverlayTest, PreviewsInitialKeyboardMouseAndFilteredSelections)
 {
 	std::vector<std::wstring> selected;

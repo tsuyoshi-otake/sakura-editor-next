@@ -92,6 +92,17 @@ file-operation commands (`explorer.newFile`, `explorer.newFolder`,
   accepting-and-ignoring; the Explorer surface divergence record lives with
   the Explorer UI's own guidance.
 
+## Terminal Commands
+
+`RegisterTerminalCommands` atomically registers `workbench.action.terminal.unsplit`
+("Terminal: Unsplit Terminal") and `workbench.action.terminal.join`
+("Terminal: Join Terminals...") with Command Palette surfaces only. Upstream's
+`registerTerminalAction` defaults to `f1 = true` and the Terminal category;
+Join has no menu entry, while Unsplit's tab-menu entry is the terminal tool's
+native menu. The two Join warnings surface as the command's `NotApplicable`
+detail because this fork has no notification service. `joinActiveTab` remains
+absent until the terminal list supports multi-selection.
+
 ## Stateful Operations
 
 `workbench.action.toggleMaximizedPanel` follows VS Code's

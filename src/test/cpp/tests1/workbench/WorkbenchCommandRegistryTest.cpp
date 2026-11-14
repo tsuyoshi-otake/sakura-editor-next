@@ -910,6 +910,70 @@ TEST(WorkbenchCommandRegistry, ManageExecutorsReachOnlyTheirBoundStableCommands)
 	EXPECT_EQ(1, colorThemeCalls);
 }
 
+TEST(WorkbenchCommandRegistry, TerminalCommandsRegisterPaletteOnlyAndDispatchTheirExecutors)
+{
+	WorkbenchCommandRegistry registry;
+	std::array<int, 2> calls{};
+	const auto registered = registry.RegisterTerminalCommands({
+		.unsplit = [&calls] {
+			++calls[0];
+			return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+		.join = [&calls] {
+			++calls[1];
+			return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+	});
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registered.status);
+	const std::array<std::pair<std::string_view, std::string_view>, 2> commands = {
+		std::pair{ "workbench.action.terminal.unsplit", "Terminal: Unsplit Terminal" },
+		std::pair{ "workbench.action.terminal.join", "Terminal: Join Terminals..." },
+	};
+	for (const auto& [id, title] : commands) {
+		const auto descriptor = registry.Find(id);
+		ASSERT_TRUE(descriptor.has_value());
+		EXPECT_EQ(title, descriptor->title);
+		EXPECT_EQ("workbenchReady", descriptor->whenClause);
+		EXPECT_EQ("workbenchReady", descriptor->enablementClause);
+		EXPECT_EQ(EWorkbenchCommandExecutorTarget::Terminal, descriptor->executorTarget);
+		ASSERT_EQ(1u, descriptor->surfaceBindings.size());
+		EXPECT_EQ(EWorkbenchCommandSurface::CommandPalette, descriptor->surfaceBindings[0].surface);
+		EXPECT_EQ(std::string(id) + ".palette", descriptor->surfaceBindings[0].slotId);
+		EXPECT_FALSE(descriptor->surfaceBindings[0].legacyFunctionCode.has_value());
+		const auto palette = registry.ResolveSurface(EWorkbenchCommandSurface::CommandPalette,
+			std::string(id) + ".palette");
+		ASSERT_TRUE(palette.has_value());
+		EXPECT_EQ(id, palette->commandId);
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded, registry.Execute(id, EnabledContext()).status);
+	}
+	EXPECT_EQ((std::array<int, 2>{ 1, 1 }), calls);
+	EXPECT_FALSE(registry.Find("workbench.action.terminal.joinActiveTab").has_value());
+
+	const auto revision = registry.Revision();
+	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::Conflict, registry.RegisterTerminalCommands().status);
+	EXPECT_EQ(revision, registry.Revision());
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute(workbench::commands::kTerminalJoinCommandId, EnabledContext()).status);
+	EXPECT_EQ(2, calls[1]);
+}
+
+TEST(WorkbenchCommandRegistry, TerminalCommandBatchDoesNotPartiallyRegisterOnConflict)
+{
+	WorkbenchCommandRegistry registry;
+	auto existing = SampleDescriptor(std::string(workbench::commands::kTerminalJoinCommandId));
+	existing.surfaceBindings[0].slotId = "existing.terminal.join.palette";
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.Register(std::move(existing)).status);
+	const auto revision = registry.Revision();
+	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::Conflict, registry.RegisterTerminalCommands().status);
+	EXPECT_EQ(revision, registry.Revision());
+	EXPECT_FALSE(registry.Find(workbench::commands::kTerminalUnsplitCommandId).has_value());
+	const auto join = registry.Find(workbench::commands::kTerminalJoinCommandId);
+	ASSERT_TRUE(join.has_value());
+	EXPECT_EQ("Contributor Run", join->title);
+	EXPECT_FALSE(registry.ResolveSurface(EWorkbenchCommandSurface::CommandPalette,
+		"workbench.action.terminal.unsplit.palette").has_value());
+}
+
 TEST(WorkbenchCommandRegistry, DuplicateAndExactOwnerGenerationDisposalAreTerminal)
 {
 	WorkbenchCommandRegistry registry;

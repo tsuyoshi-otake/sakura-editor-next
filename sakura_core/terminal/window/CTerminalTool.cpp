@@ -59,6 +59,7 @@ constexpr UINT kCommandCloseSplit = 6;
 constexpr UINT kCommandSplitTerminalDown = 7;
 constexpr UINT kCommandRunTask = 8;
 constexpr UINT kCommandRunBuildTask = 9;
+constexpr UINT kCommandUnsplitTerminal = 10;
 constexpr UINT kCommandProfileFirst = 1000;
 constexpr UINT kCommandTabFirst = 2000;
 constexpr UINT kCommandShortcutPresetFirst = 3000;
@@ -1572,12 +1573,16 @@ struct CTerminalTool::Impl {
 		if( ReconcileAgentPresence(false) ) NotifyAgentPresence();
 	}
 
-	void ShowContextMenu( int x, int y, HWND owner = nullptr )
+	void ShowContextMenu( int x, int y, HWND owner = nullptr, bool terminalContext = true )
 	{
 		const HMENU menu = ::CreatePopupMenu();
 		if( !menu ) return;
 		const HWND menuOwner = owner ? owner : window;
 		const auto focusedId = FocusedTabId();
+		POINT clientPoint{ x, y };
+		if( window ) ::ScreenToClient(window, &clientPoint);
+		const auto rowId = window ? TerminalTabAtPoint(clientPoint) : std::nullopt;
+		const auto contextId = rowId ? rowId : focusedId;
 		const auto tabs = OrderedListTabs();
 		const HMENU sessionsMenu = ::CreatePopupMenu();
 		tabCommandIds.clear();
@@ -1608,6 +1613,9 @@ struct CTerminalTool::Impl {
 		::AppendMenuW(menu, MF_STRING | (focusedId ? 0 : MF_GRAYED), kCommandSplitTerminal, LS(STR_TERMINAL_SPLIT));
 		::AppendMenuW(menu, MF_STRING | (focusedId ? 0 : MF_GRAYED), kCommandSplitTerminalDown, LS(STR_TERMINAL_SPLIT_DOWN));
 		::AppendMenuW(menu, MF_STRING | (HasTerminalSplit() ? 0 : MF_GRAYED), kCommandCloseSplit, LS(STR_TERMINAL_CLOSE_SPLIT));
+		if( terminalContext && contextId && groupLayout.SplitPositionOf(*contextId) != TerminalSplitPosition::None ) {
+			::AppendMenuW(menu, MF_STRING, kCommandUnsplitTerminal, LS(STR_TERMINAL_UNSPLIT));
+		}
 		if( const HMENU shortcutsMenu = ::CreatePopupMenu() ) {
 			for( std::size_t index = 0; index < kShortcutPresets.size(); ++index ) {
 				const auto preset = kShortcutPresets[index];
@@ -1647,10 +1655,10 @@ struct CTerminalTool::Impl {
 		const UINT command = static_cast<UINT>(::TrackPopupMenu(menu,
 			TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY, x, y, 0, menuOwner, nullptr));
 		::DestroyMenu(menu);
-		if( command != 0 ) ExecuteContextMenuCommand(command);
+		if( command != 0 ) ExecuteContextMenuCommand(command, contextId);
 	}
 
-	void ExecuteContextMenuCommand( UINT command )
+	void ExecuteContextMenuCommand( UINT command, std::optional<std::uint64_t> contextId )
 	{
 		if( closed ) return;
 		if( command >= kCommandProfileFirst && command < kCommandProfileFirst + profileCommandPaths.size() ) {
@@ -1681,6 +1689,7 @@ struct CTerminalTool::Impl {
 		case kCommandSplitTerminal: static_cast<void>(SplitTerminalRight()); break;
 		case kCommandSplitTerminalDown: static_cast<void>(SplitTerminalDown()); break;
 		case kCommandCloseSplit: CloseTerminalSplit(); break;
+		case kCommandUnsplitTerminal: if( contextId ) static_cast<void>(UnsplitTerminal(contextId)); break;
 		default: break;
 		}
 	}
@@ -1696,7 +1705,7 @@ struct CTerminalTool::Impl {
 		const RECT action = layout.RectFor(target);
 		POINT point{ action.left, action.bottom };
 		::ClientToScreen(source, &point);
-		ShowContextMenu(point.x, point.y, source);
+		ShowContextMenu(point.x, point.y, source, false);
 	}
 
 	void ExecuteHeaderTarget( TerminalHeaderTarget target, HWND owner = nullptr,
@@ -1813,7 +1822,7 @@ struct CTerminalTool::Impl {
 			{
 				POINT screenPoint = point;
 				::ClientToScreen(headerHost, &screenPoint);
-				ShowContextMenu(screenPoint.x, screenPoint.y, headerHost);
+				ShowContextMenu(screenPoint.x, screenPoint.y, headerHost, false);
 			}
 			return true;
 		default:
@@ -2516,6 +2525,101 @@ struct CTerminalTool::Impl {
 		return HasTerminalSplit() && focused && DeleteTerminal(*focused);
 	}
 
+	//! Commits one layout transaction (#415 Phase 5): selects `selectId` when
+	//! given, installs `updated` and rebuilds the renderers once. A renderer
+	//! rebuild that fails restores the previous layout and selection, as
+	//! SplitTerminal does, so a failed UI step never leaves a layout without its
+	//! panes. Keyboard focus follows only when it was already in a pane.
+	bool CommitLayoutEdit( TerminalGroupLayout updated, std::optional<std::uint64_t> selectId )
+	{
+		const bool hadFocus = PaneHasKeyboardFocus();
+		const auto previousActive = manager->ActiveTabId();
+		if( selectId && selectId != previousActive && !manager->SelectTab(*selectId) ) return false;
+		auto previous = std::exchange(groupLayout, std::move(updated));
+		if( window ) {
+			if( !RebuildPaneRenderers() ) {
+				groupLayout = std::move(previous);
+				if( previousActive && manager->ActiveTabId() != previousActive ) {
+					static_cast<void>(manager->SelectTab(*previousActive));
+				}
+				static_cast<void>(RebuildPaneRenderers());
+				LayoutChildren();
+				return false;
+			}
+			LayoutChildren();
+		}
+		if( const auto id = manager->ActiveTabId() ) {
+			EnsureTerminalTabVisible(*id);
+			if( hadFocus ) {
+				terminalTabsFocused = false;
+				if( auto* pane = FindPane(*id); pane && pane->window ) pane->window->Focus();
+			}
+		}
+		InvalidateTabs();
+		InvalidateTerminalTabs();
+		NotifyAgentPresence();
+		return true;
+	}
+
+	//! VS Code unsplit keeps the old group; tmux break selects the moved pane.
+	bool UnsplitTerminal( std::optional<std::uint64_t> tabId, bool selectMoved = false )
+	{
+		const auto id = tabId ? tabId : manager->ActiveTabId();
+		if( !id ) return false;
+		const auto group = groupLayout.FindGroup(*id);
+		if( !group || groupLayout.GroupAt(*group)->tabIds.size() < 2 ) return false;
+		auto remaining = groupLayout.GroupAt(*group)->tabIds;
+		const auto found = std::find(remaining.begin(), remaining.end(), *id);
+		const auto index = static_cast<std::size_t>(found - remaining.begin());
+		remaining.erase(found);
+		const bool wasActive = manager->ActiveTabId() == id;
+		auto updated = groupLayout;
+		if( updated.Unsplit(*id) != TerminalLayoutEdit::Changed ) return false;
+		std::optional<std::uint64_t> select;
+		if( selectMoved ) {
+			select = *id;
+		} else if( wasActive ) {
+			select = remaining[(std::min)(index, remaining.size() - 1)];
+		}
+		if( select ) updated.SetActiveGroup(updated.FindGroup(*select));
+		return CommitLayoutEdit(std::move(updated), select);
+	}
+
+	[[nodiscard]] std::vector<std::uint64_t> JoinCandidates() const
+	{
+		std::vector<std::uint64_t> result;
+		const auto activeId = manager->ActiveTabId();
+		for( const auto& tab : OrderedListTabs() ) {
+			const auto group = groupLayout.FindGroup(tab.id);
+			if( tab.id != activeId && group && groupLayout.GroupAt(*group)->tabIds.size() == 1 ) {
+				result.push_back(tab.id);
+			}
+		}
+		return result;
+	}
+
+	bool JoinTerminals( std::uint64_t pickedTabId )
+	{
+		const auto activeId = manager->ActiveTabId();
+		const auto candidates = JoinCandidates();
+		if( !activeId || std::find(candidates.begin(), candidates.end(), pickedTabId) == candidates.end() ) return false;
+		auto updated = groupLayout;
+		if( updated.Join({ pickedTabId, *activeId }) != TerminalLayoutEdit::Changed ) return false;
+		return CommitLayoutEdit(std::move(updated), pickedTabId);
+	}
+
+	//! tmux swap-pane moves identities, not screen-position weights.
+	bool SwapPane( int direction )
+	{
+		const auto id = manager->ActiveTabId();
+		if( !id ) return false;
+		const auto other = groupLayout.RelativeLeaf(*id, direction);
+		if( !other ) return false;
+		auto updated = groupLayout;
+		if( updated.Swap(*id, *other) != TerminalLayoutEdit::Changed ) return false;
+		return CommitLayoutEdit(std::move(updated), std::nullopt);
+	}
+
 	bool FocusRelativePane( int direction )
 	{
 		const auto* group = groupLayout.ActiveGroup();
@@ -2570,6 +2674,9 @@ struct CTerminalTool::Impl {
 		}
 		case TerminalPresetAction::NextPane: return FocusRelativePane(1);
 		case TerminalPresetAction::PreviousPane: return FocusRelativePane(-1);
+		case TerminalPresetAction::SwapPanePrevious: return SwapPane(-1);
+		case TerminalPresetAction::SwapPaneNext: return SwapPane(1);
+		case TerminalPresetAction::BreakPane: return UnsplitTerminal(manager->ActiveTabId(), true);
 		case TerminalPresetAction::NextTerminal: return FocusRelativeGroup(1);
 		case TerminalPresetAction::PreviousTerminal: return FocusRelativeGroup(-1);
 		case TerminalPresetAction::SelectTerminal: return SelectTerminalGroup(resolution.terminalIndex);
@@ -3000,6 +3107,21 @@ bool CTerminalTool::SplitTerminalDown()
 bool CTerminalTool::CloseTerminalSplit()
 {
 	return !m_impl->closed && m_impl->CloseTerminalSplit();
+}
+
+bool CTerminalTool::UnsplitTerminal( std::optional<std::uint64_t> tabId )
+{
+	return !m_impl->closed && m_impl->UnsplitTerminal(tabId);
+}
+
+std::vector<std::uint64_t> CTerminalTool::JoinCandidates() const
+{
+	return m_impl->closed ? std::vector<std::uint64_t>{} : m_impl->JoinCandidates();
+}
+
+bool CTerminalTool::JoinTerminals( std::uint64_t pickedTabId )
+{
+	return !m_impl->closed && m_impl->JoinTerminals(pickedTabId);
 }
 
 bool CTerminalTool::HasTerminalSplit() const noexcept

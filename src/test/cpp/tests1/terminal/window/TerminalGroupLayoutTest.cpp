@@ -603,4 +603,132 @@ TEST(TerminalGroupLayout, SplitPositionPrefixesMatchTheTreeGlyphs)
 	EXPECT_STREQ(L"\u2514 ", terminal::TerminalSplitPrefix(terminal::TerminalSplitPosition::Last));
 }
 
+//! VS Code unsplit appends the removed leaf and leaves its original group active.
+TEST(TerminalGroupLayout, UnsplitAppendsAndPreservesTheOldGroup)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 2, 3, terminal::TerminalPaneOrientation::Horizontal));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.Unsplit(2));
+	ExpectModelInvariants(layout);
+	ASSERT_EQ(2u, layout.GroupCount());
+	EXPECT_EQ((std::vector<std::uint64_t>{ 1, 3 }), layout.GroupAt(0)->tabIds);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 2 }), layout.GroupAt(1)->tabIds);
+	EXPECT_EQ(0u, layout.ActiveGroupIndex());
+	const auto before = layout;
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged, layout.Unsplit(2));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged, layout.Unsplit(99));
+	ExpectModelInvariants(layout);
+	EXPECT_EQ(before.InstancesInOrder(), layout.InstancesInOrder());
+	EXPECT_EQ(before.ActiveGroupIndex(), layout.ActiveGroupIndex());
+	ASSERT_EQ(before.GroupCount(), layout.GroupCount());
+	for( std::size_t i = 0; i < before.GroupCount(); ++i ) {
+		const auto& left = *before.GroupAt(i);
+		const auto& right = *layout.GroupAt(i);
+		EXPECT_EQ(left.root, right.root);
+		EXPECT_EQ(left.tabIds, right.tabIds);
+		ASSERT_EQ(left.nodes.size(), right.nodes.size());
+		for( std::size_t j = 0; j < left.nodes.size(); ++j ) {
+			EXPECT_EQ(left.nodes[j].leafId, right.nodes[j].leafId);
+			EXPECT_EQ(left.nodes[j].children, right.nodes[j].children);
+			EXPECT_EQ(left.nodes[j].weights, right.nodes[j].weights);
+			EXPECT_EQ(left.nodes[j].orientation, right.nodes[j].orientation);
+		}
+	}
+}
+
+//! VS Code join chooses the first single group and normalizes the source group.
+TEST(TerminalGroupLayout, JoinUsesTheFirstSingletonCandidate)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	layout.AppendGroup(2);
+	layout.AppendGroup(3);
+	ASSERT_TRUE(layout.InsertPaneSplit(2, 3, 4, terminal::TerminalPaneOrientation::Horizontal));
+	const auto unchanged = layout;
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged, layout.Join({ 3, 4 }));
+	EXPECT_EQ(unchanged.InstancesInOrder(), layout.InstancesInOrder());
+	EXPECT_EQ(unchanged.ActiveGroupIndex(), layout.ActiveGroupIndex());
+	ExpectModelInvariants(layout);
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.Join({ 2, 3 }));
+	ExpectModelInvariants(layout);
+	ASSERT_EQ(3u, layout.GroupCount());
+	EXPECT_EQ((std::vector<std::uint64_t>{ 2, 3 }), layout.GroupAt(1)->tabIds);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 4 }), layout.GroupAt(2)->tabIds);
+	EXPECT_EQ(1u, layout.ActiveGroupIndex());
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged, layout.Join({ 99, 2, 2 }));
+	ExpectModelInvariants(layout);
+}
+
+//! VS Code join creates a last group when no selected instance is alone.
+TEST(TerminalGroupLayout, JoinWithoutSingletonAppendsANewGroup)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	layout.AppendGroup(3);
+	ASSERT_TRUE(layout.InsertPaneSplit(1, 3, 4, terminal::TerminalPaneOrientation::Horizontal));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.Join({ 1, 3 }));
+	ExpectModelInvariants(layout);
+	ASSERT_EQ(3u, layout.GroupCount());
+	EXPECT_EQ((std::vector<std::uint64_t>{ 2 }), layout.GroupAt(0)->tabIds);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 4 }), layout.GroupAt(1)->tabIds);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 1, 3 }), layout.GroupAt(2)->tabIds);
+	EXPECT_EQ(2u, layout.ActiveGroupIndex());
+}
+
+//! VS Code addInstance repeatedly inserts immediately after the candidate's active leaf.
+TEST(TerminalGroupLayout, JoinInsertsEachAddedLeafAfterTheAnchor)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(5);
+	layout.AppendGroup(6);
+	layout.AppendGroup(7);
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.Join({ 5, 6, 7 }));
+	ExpectModelInvariants(layout);
+	ASSERT_EQ(1u, layout.GroupCount());
+	EXPECT_EQ((std::vector<std::uint64_t>{ 5, 7, 6 }), layout.GroupAt(0)->tabIds);
+}
+
+//! tmux swap-pane exchanges identities while sizes remain attached to positions.
+TEST(TerminalGroupLayout, SwapKeepsWeightsAndSupportsCrossGroupLeaves)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	const auto root = layout.GroupAt(0)->root;
+	ASSERT_TRUE(layout.ApplyDividerResize(0, root, 0, 250, 1000));
+	const auto weights = layout.GroupAt(0)->nodes[root].weights;
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.Swap(1, 2));
+	ExpectModelInvariants(layout);
+	EXPECT_EQ(weights, layout.GroupAt(0)->nodes[root].weights);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 2, 1 }), layout.GroupAt(0)->tabIds);
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged, layout.Swap(1, 1));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged, layout.Swap(1, 99));
+	ExpectModelInvariants(layout);
+	layout.AppendGroup(3);
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.Swap(1, 3));
+	ExpectModelInvariants(layout);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 2, 3 }), layout.GroupAt(0)->tabIds);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 1 }), layout.GroupAt(1)->tabIds);
+	EXPECT_EQ(weights, layout.GroupAt(0)->nodes[root].weights);
+}
+
+//! tmux swap-pane relative targets wrap and a lone pane has no target.
+TEST(TerminalGroupLayout, RelativeLeafWrapsAndRejectsLoneOrUnknownLeaves)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	EXPECT_FALSE(layout.RelativeLeaf(1, 1));
+	EXPECT_FALSE(layout.RelativeLeaf(99, -1));
+	ExpectModelInvariants(layout);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 2, 3, terminal::TerminalPaneOrientation::Horizontal));
+	EXPECT_EQ(3u, layout.RelativeLeaf(1, -1));
+	EXPECT_EQ(1u, layout.RelativeLeaf(3, 1));
+	EXPECT_EQ(2u, layout.RelativeLeaf(1, 1));
+	ExpectModelInvariants(layout);
+}
+
 } // namespace

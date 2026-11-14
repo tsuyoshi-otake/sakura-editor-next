@@ -69,6 +69,9 @@ std::optional<std::size_t> DigitIndex( const TerminalPresetKey& key ) noexcept
 TerminalPresetResolution ResolveTmux( const TerminalPresetKey& key ) noexcept
 {
 	if( const auto index = DigitIndex(key) ) return Action(TerminalPresetAction::SelectTerminal, *index);
+	if( key.shift && key.virtualKey == VK_OEM_4 ) return Action(TerminalPresetAction::SwapPanePrevious);
+	if( key.shift && key.virtualKey == VK_OEM_6 ) return Action(TerminalPresetAction::SwapPaneNext);
+	if( key.shift && key.virtualKey == '1' ) return Action(TerminalPresetAction::BreakPane);
 	if( key.shift && key.virtualKey == '5' ) return Action(TerminalPresetAction::SplitRight);
 	if( IsDoubleQuote(key) ) return Action(TerminalPresetAction::SplitDown);
 	if( key.shift && key.virtualKey == '7' ) return Action(TerminalPresetAction::CloseTerminal);

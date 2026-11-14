@@ -4639,6 +4639,7 @@ BEGIN
     STR_TERMINAL_CLOSE "Kill Terminal"
     STR_TERMINAL_SPLIT "Split Terminal"
     STR_TERMINAL_CLOSE_SPLIT "Close Split Terminal"
+    STR_TERMINAL_UNSPLIT "Unsplit Terminal"
     STR_TERMINAL_NO_POWERSHELL_PROFILE "No PowerShell profile found"
     STR_TERMINAL_REDETECT_POWERSHELL "Redetect PowerShell"
     STR_TERMINAL_POWERSHELL_PROFILE "PowerShell Profile"

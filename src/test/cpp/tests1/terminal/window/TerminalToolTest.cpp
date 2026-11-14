@@ -2289,6 +2289,133 @@ TEST(TerminalTool, TmuxWindowCommandsFromThePanelTerminalMoveThePanel)
 	::DestroyWindow(parent);
 }
 
+//! VS Code unsplit appends the active leaf and selects its old-group successor.
+TEST(TerminalTool, UnsplitSelectsTheOldGroupSuccessor)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.Activate();
+	const auto first = tool.ActiveTerminalId();
+	ASSERT_TRUE(first);
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	const auto second = tool.ActiveTerminalId();
+	ASSERT_TRUE(second);
+	ASSERT_TRUE(tool.SelectTerminal(*first));
+	EXPECT_TRUE(tool.UnsplitTerminal());
+	const auto rows = tool.TerminalListRows();
+	ASSERT_EQ(2u, rows.size());
+	EXPECT_EQ(*second, rows[0].tab.id);
+	EXPECT_EQ(*first, rows[1].tab.id);
+	EXPECT_EQ(second, tool.ActiveTerminalId());
+	EXPECT_FALSE(tool.UnsplitTerminal());
+	tool.Close();
+}
+
+//! VS Code join offers other singletons and activates the picked terminal.
+TEST(TerminalTool, JoinCandidatesAndSelectionFollowTerminalListOrder)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.Activate();
+	const auto first = tool.ActiveTerminalId();
+	const auto second = tool.AddTerminal();
+	const auto third = tool.AddTerminal();
+	ASSERT_TRUE(first && second && third);
+	ASSERT_TRUE(tool.SelectTerminal(*first));
+	EXPECT_EQ((std::vector<std::uint64_t>{ *second, *third }), tool.JoinCandidates());
+	ASSERT_TRUE(tool.JoinTerminals(*third));
+	const auto layout = tool.GroupLayoutSnapshot();
+	ASSERT_EQ(2u, layout.groups.size());
+	EXPECT_EQ((std::vector<std::uint64_t>{ *third, *first }), layout.groups[1].tabIds);
+	EXPECT_EQ(third, tool.ActiveTerminalId());
+	tool.Close();
+}
+
+//! tmux swap follows the active pane; break selects its newly appended window.
+TEST(TerminalTool, TmuxSwapAndBreakKeepTheActiveTerminal)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetShortcutPreset(terminal::TerminalShortcutPreset::Tmux);
+	tool.Activate();
+	const auto first = tool.ActiveTerminalId();
+	ASSERT_TRUE(first);
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	const auto second = tool.ActiveTerminalId();
+	ASSERT_TRUE(second);
+	const terminal::TerminalPresetKey prefix{ 'B', false, true, false };
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(prefix));
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey({ VK_OEM_4, true, false, false }));
+	auto layout = tool.GroupLayoutSnapshot();
+	ASSERT_EQ(1u, layout.groups.size());
+	EXPECT_EQ((std::vector<std::uint64_t>{ *second, *first }), layout.groups[0].tabIds);
+	EXPECT_EQ(second, tool.ActiveTerminalId());
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(prefix));
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey({ '1', true, false, false }));
+	layout = tool.GroupLayoutSnapshot();
+	ASSERT_EQ(2u, layout.groups.size());
+	EXPECT_EQ((std::vector<std::uint64_t>{ *first }), layout.groups[0].tabIds);
+	EXPECT_EQ((std::vector<std::uint64_t>{ *second }), layout.groups[1].tabIds);
+	EXPECT_EQ(second, tool.ActiveTerminalId());
+	tool.Close();
+}
+
+//! Runtime tmux pane and window identities survive panel-only unsplit moves.
+TEST(TerminalTool, TmuxPaneIdentitySurvivesUnsplitAndWindowClose)
+{
+	ToolHarness harness;
+	const auto runtime = SharedRuntime(harness);
+	auto dependencies = harness.Dependencies();
+	dependencies.runtimeService = runtime;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(std::move(dependencies));
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 900, 320 }, 96);
+	tool.Activate();
+	PumpToolMessages(tool.GetHwnd());
+	const auto original = tool.TerminalProjectionSnapshot().front();
+	terminal::tmux::TmuxWaitChannelService waits;
+	auto adapter = terminal::tmux::TmuxRuntimeAdapter::ForConcrete(*runtime, waits);
+	terminal::tmux::TmuxCallerContext caller;
+	caller.paneId = original.paneId;
+	const auto tmux = [&]( const std::vector<std::string>& argv ) {
+		auto result = terminal::tmux::TmuxCli::Run(argv, adapter, {}, {}, caller);
+		PumpToolMessages(tool.GetHwnd());
+		return result;
+	};
+	const auto firstLine = []( const std::string& text ) { return text.substr(0, text.find(char(10))); };
+	const auto window = tmux({ "display-message", "-p", "#{window_id}" });
+	ASSERT_TRUE(window.Succeeded()) << window.stderrText;
+	const auto split = tmux({ "split-window", "-h", "-P" });
+	ASSERT_TRUE(split.Succeeded()) << split.stderrText;
+	const auto pane = firstLine(split.stdoutText);
+	const auto moved = tool.ActiveTerminalId();
+	ASSERT_TRUE(moved);
+	ASSERT_TRUE(tool.UnsplitTerminal(*moved));
+	const auto select = tmux({ "select-pane", "-t", pane });
+	ASSERT_TRUE(select.Succeeded()) << select.stderrText;
+	EXPECT_EQ(moved, tool.ActiveTerminalId());
+	const auto extra = tmux({ "split-window", "-h", "-t", pane, "-P" });
+	ASSERT_TRUE(extra.Succeeded()) << extra.stderrText;
+	const auto layout = tool.GroupLayoutSnapshot();
+	ASSERT_EQ(2u, layout.groups.size());
+	EXPECT_EQ(2u, layout.groups.back().tabIds.size());
+	const auto kill = tmux({ "kill-pane", "-t", pane });
+	ASSERT_TRUE(kill.Succeeded()) << kill.stderrText;
+	EXPECT_EQ(2u, tool.TabCount());
+	for( const auto& tab : tool.Tabs() ) EXPECT_NE(*moved, tab.id);
+	const auto killedWindow = tmux({ "kill-window", "-t", firstLine(window.stdoutText) });
+	ASSERT_TRUE(killedWindow.Succeeded()) << killedWindow.stderrText;
+	EXPECT_EQ(0u, tool.TabCount());
+	adapter.BeginShutdown();
+	tool.Close();
+	runtime->BeginClose();
+	EXPECT_NE(terminal::TerminalRuntimeCloseWaitStatus::InProgress,
+		runtime->WaitForClose(std::chrono::steady_clock::now() + 5s).status);
+	::DestroyWindow(parent);
+}
+
 TEST(TerminalTool, TmuxPresetClosePaneClosesALonePane)
 {
 	ToolHarness harness;

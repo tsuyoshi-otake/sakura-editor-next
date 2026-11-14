@@ -4571,6 +4571,7 @@ BEGIN
     STR_TERMINAL_CLOSE "ターミナルを終了"
     STR_TERMINAL_SPLIT "ターミナルを分割"
     STR_TERMINAL_CLOSE_SPLIT "分割ターミナルを閉じる"
+    STR_TERMINAL_UNSPLIT "ターミナルの分割解除"
     STR_TERMINAL_NO_POWERSHELL_PROFILE "PowerShell プロファイルが見つかりません"
     STR_TERMINAL_REDETECT_POWERSHELL "PowerShell を再検出"
     STR_TERMINAL_POWERSHELL_PROFILE "PowerShell プロファイル"

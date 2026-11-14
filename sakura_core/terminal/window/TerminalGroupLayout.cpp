@@ -264,6 +264,83 @@ bool TerminalGroupLayout::RemoveTab( std::uint64_t tabId )
 	return false;
 }
 
+TerminalLayoutEdit TerminalGroupLayout::Unsplit( std::uint64_t tabId )
+{
+	const auto group = FindGroup(tabId);
+	if( !group || m_groups[*group].tabIds.size() < 2 ) return TerminalLayoutEdit::Unchanged;
+	auto updated = *this;
+	if( !updated.RemoveTab(tabId) ) return TerminalLayoutEdit::Unchanged;
+	updated.AppendGroup(tabId);
+	*this = std::move(updated);
+	return TerminalLayoutEdit::Changed;
+}
+
+TerminalLayoutEdit TerminalGroupLayout::Join( const std::vector<std::uint64_t>& tabIds )
+{
+	std::vector<std::uint64_t> known;
+	for( const auto id : tabIds ) {
+		if( FindGroup(id) && std::find(known.begin(), known.end(), id) == known.end() ) known.push_back(id);
+	}
+	if( known.size() < 2 ) return TerminalLayoutEdit::Unchanged;
+	const auto firstGroup = *FindGroup(known.front());
+	if( m_groups[firstGroup].tabIds.size() == known.size()
+		&& std::all_of(known.begin(), known.end(), [this, firstGroup](std::uint64_t id) {
+			return FindGroup(id) == firstGroup;
+		}) ) return TerminalLayoutEdit::Unchanged;
+
+	auto updated = *this;
+	std::optional<std::uint64_t> anchor;
+	for( const auto id : known ) {
+		const auto group = updated.FindGroup(id);
+		if( group && updated.m_groups[*group].tabIds.size() == 1 ) {
+			anchor = id;
+			break;
+		}
+	}
+	for( const auto id : known ) {
+		if( anchor && updated.FindGroup(id) == updated.FindGroup(*anchor) ) continue;
+		if( !updated.RemoveTab(id) ) return TerminalLayoutEdit::Unchanged;
+		if( !anchor ) {
+			updated.AppendGroup(id);
+			anchor = id;
+		} else {
+			const auto group = updated.FindGroup(*anchor);
+			if( !group || !updated.InsertPaneSplit(*group, *anchor, id, TerminalPaneOrientation::Horizontal) ) {
+				return TerminalLayoutEdit::Unchanged;
+			}
+		}
+	}
+	updated.SetActiveGroup(updated.FindGroup(known.front()));
+	*this = std::move(updated);
+	return TerminalLayoutEdit::Changed;
+}
+
+TerminalLayoutEdit TerminalGroupLayout::Swap( std::uint64_t first, std::uint64_t second )
+{
+	const auto firstGroup = FindGroup(first);
+	const auto secondGroup = FindGroup(second);
+	if( first == second || !firstGroup || !secondGroup ) return TerminalLayoutEdit::Unchanged;
+	auto& left = m_groups[*firstGroup];
+	auto& right = m_groups[*secondGroup];
+	const auto leftLeaf = FindPaneLocation(left, left.root, first);
+	const auto rightLeaf = FindPaneLocation(right, right.root, second);
+	if( !leftLeaf || !rightLeaf ) return TerminalLayoutEdit::Unchanged;
+	std::swap(left.nodes[leftLeaf->nodeIndex].leafId, right.nodes[rightLeaf->nodeIndex].leafId);
+	NormalizeGroupTree(left);
+	if( firstGroup != secondGroup ) NormalizeGroupTree(right);
+	return TerminalLayoutEdit::Changed;
+}
+
+std::optional<std::uint64_t> TerminalGroupLayout::RelativeLeaf( std::uint64_t tabId, int direction ) const
+{
+	const auto group = FindGroup(tabId);
+	if( !group ) return std::nullopt;
+	const auto& ids = m_groups[*group].tabIds;
+	if( ids.size() < 2 ) return std::nullopt;
+	const auto index = static_cast<std::size_t>(std::find(ids.begin(), ids.end(), tabId) - ids.begin());
+	return ids[direction < 0 ? (index + ids.size() - 1) % ids.size() : (index + 1) % ids.size()];
+}
+
 bool TerminalGroupLayout::InsertPaneSplit( std::size_t groupIndex, std::uint64_t primaryId,
 	std::uint64_t newId, TerminalPaneOrientation orientation )
 {

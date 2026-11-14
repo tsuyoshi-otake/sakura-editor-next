@@ -179,6 +179,7 @@
 #include <functional>
 #include <limits>
 #include <mutex>
+#include <unordered_set>
 #include <utility>
 
 namespace
@@ -4133,6 +4134,37 @@ bool CEditWnd::InitializeWorkbench()
 			.showLog = [this]() { return ExecuteTaskShowLogCommand(); },
 		});
 		if (!tasksRegistration.Succeeded()) {
+			CloseWorkbench();
+			return false;
+		}
+		const auto terminalRegistration = m_workbenchCommandRegistry->RegisterTerminalCommands({
+			.unsplit = [this]() -> workbench::commands::WorkbenchCommandExecutionResult {
+				using Status = workbench::commands::EWorkbenchCommandExecutionStatus;
+				if (m_terminalTool == nullptr || !m_terminalTool->ActiveTerminalId()) {
+					return { Status::NotApplicable, "no active terminal" };
+				}
+				(void)m_terminalTool->UnsplitTerminal();
+				return { Status::Succeeded, {} };
+			},
+			.join = [this]() -> workbench::commands::WorkbenchCommandExecutionResult {
+				using Status = workbench::commands::EWorkbenchCommandExecutionStatus;
+				if (m_terminalTool == nullptr || m_terminalTool->TabCount() <= 1) {
+					return { Status::NotApplicable, "Insufficient terminals for the join action" };
+				}
+				if (!m_terminalTool->ActiveTerminalId()) {
+					return { Status::NotApplicable, "no active terminal" };
+				}
+				const auto candidates = m_terminalTool->JoinCandidates();
+				if (candidates.empty()) {
+					return { Status::NotApplicable, "All terminals are joined already" };
+				}
+				return ShowTerminalJoinQuickPick(candidates)
+					? workbench::commands::WorkbenchCommandExecutionResult{ Status::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						Status::Failed, "terminal join picker could not be shown" };
+			},
+		});
+		if (!terminalRegistration.Succeeded()) {
 			CloseWorkbench();
 			return false;
 		}
@@ -9399,6 +9431,63 @@ bool CEditWnd::ShowOutputChannelQuickPick()
 		const bool selected = std::ranges::find(*ids, panel.activeChannelId.value_or(std::string{}))
 			!= ids->end();
 		return m_commandPaletteOverlay->Show(items, selected ? initiallySelected : std::wstring{});
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::ShowTerminalJoinQuickPick(const std::vector<std::uint64_t>& candidates)
+{
+	if (m_terminalTool == nullptr || GetHwnd() == nullptr || !EnsureQuickInputOverlay()) return false;
+	try {
+		const std::unordered_set<std::uint64_t> candidateIds(candidates.begin(), candidates.end());
+		std::vector<std::uint64_t> ids;
+		std::vector<workbench::quickinput::CommandPaletteItem> items;
+		ids.reserve(candidates.size());
+		items.reserve(candidates.size());
+		for (const auto& row : m_terminalTool->TerminalListRows()) {
+			if (!candidateIds.contains(row.tab.id)) continue;
+			// JoinCandidates contains only singleton groups, whose resolved row
+			// title has no split-tree prefix.
+			ids.push_back(row.tab.id);
+			items.push_back({
+				.id = L"terminal-join:" + std::to_wstring(row.tab.id),
+				.label = row.label,
+			});
+		}
+		if (items.empty()) return false;
+		m_commandPaletteOverlay->SetStringsCallback([] {
+			return workbench::quickinput::QuickInputStrings{
+				.placeholder = L"",
+				.noResults = LocalizedWorkbenchString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS),
+				.allowEmptyPlaceholder = true,
+			};
+		});
+		m_commandPaletteOverlay->SetSearchCallback([items](std::wstring_view query) {
+			if (query.empty()) return items;
+			std::wstring lowered(query);
+			for (auto& character : lowered) character = static_cast<wchar_t>(std::towlower(character));
+			std::vector<workbench::quickinput::CommandPaletteItem> filtered;
+			for (const auto& item : items) {
+				std::wstring label = item.label;
+				for (auto& character : label) character = static_cast<wchar_t>(std::towlower(character));
+				if (label.find(lowered) != std::wstring::npos) filtered.push_back(item);
+			}
+			return filtered;
+		});
+		m_commandPaletteOverlay->SetSelectionCallback({});
+		m_commandPaletteOverlay->SetAcceptCallback([this, ids](std::wstring acceptedId) {
+			if (m_terminalTool == nullptr) return;
+			for (const auto id : ids) {
+				if (acceptedId == L"terminal-join:" + std::to_wstring(id)) {
+					(void)m_terminalTool->JoinTerminals(id);
+					return;
+				}
+			}
+		});
+		m_commandPaletteOverlay->SetCancelCallback({});
+		return m_commandPaletteOverlay->Show(items);
 	}
 	catch (...) {
 		return false;
