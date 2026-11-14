@@ -219,6 +219,9 @@ struct TerminalInstanceSnapshot final {
 	std::size_t scrollbackLimit{};
 	bool alternateScreen{};
 	std::optional<TerminalInstanceOutcome> outcome;
+	//! True once any Interactive input (keys, paste, send-keys, sendText) was
+	//! accepted. Protocol replies the terminal sends by itself do not count.
+	bool interactiveInputAccepted{};
 };
 
 enum class TerminalInstanceStartStatus : std::uint8_t {

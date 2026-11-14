@@ -59,7 +59,18 @@ struct TerminalTabSnapshot {
 	TerminalSessionState state{ TerminalSessionState::Idle };
 	std::uint32_t errorCode{};
 	bool active{};
+	//! TerminalInstanceSnapshot::interactiveInputAccepted of the tab's instance.
+	bool interactiveInputAccepted{};
 };
+
+//! #415: whether `tab` is still at its first prompt and may run a command
+//! instead of a new terminal being opened for it: its session is Running, it
+//! has accepted no interactive input since it started, and it started in
+//! `workingDirectory` (same Windows path, case-insensitive, trailing
+//! separators ignored). An empty directory never matches. Agent presence is
+//! the caller's check; this snapshot does not carry it.
+[[nodiscard]] bool IsTerminalAtFirstPrompt(
+	const TerminalTabSnapshot& tab, std::wstring_view workingDirectory ) noexcept;
 
 struct TerminalTabProjectionRecord final {
 	std::uint64_t tabId{};
@@ -224,7 +235,9 @@ public:
 	void Close() noexcept;
 
 	[[nodiscard]] TerminalDrainResult DrainOutput( std::uint64_t tabId );
-	[[nodiscard]] TerminalQueueInputResult QueueInput( std::uint64_t tabId, std::span<const std::uint8_t> bytes );
+	//! Protocol marks bytes the terminal sends by itself (replies, focus
+	//! reports); only Interactive input makes a tab leave its first prompt.
+	[[nodiscard]] TerminalQueueInputResult QueueInput( std::uint64_t tabId, std::span<const std::uint8_t> bytes, TerminalInputSource source = TerminalInputSource::Interactive );
 	[[nodiscard]] TerminalQueueInputResult QueueActiveInput( std::span<const std::uint8_t> bytes );
 	//! Retries terminal protocol replies (DSR/DA/etc.) which were deferred only
 	//! because the bounded session input queue was full.

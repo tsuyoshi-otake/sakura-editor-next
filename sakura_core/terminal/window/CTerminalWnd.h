@@ -62,6 +62,12 @@ public:
 	void SetModel( TerminalModel* model );
 	void SetInputAdapter( SakuraTerminalInputAdapter* inputAdapter );
 	void SetInputSink( InputSink sink );
+	//! Receives the reports this viewport generates by itself rather than on the
+	//! user's behalf: the focus-in/focus-out reports (DECSET 1004) that ConPTY
+	//! requests at startup and consumes without forwarding to the shell. They
+	//! must not count as typing at the prompt (#415). Without a report sink they
+	//! take the ordinary input sink.
+	void SetReportSink( InputSink sink );
 	void SetResizeSink( ResizeSink sink );
 	void SetFocusSink( FocusSink sink );
 	void SetLinkOpener( LinkOpener opener );

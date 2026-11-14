@@ -756,13 +756,14 @@ TerminalQueueInputResult TerminalTabManager::QueueActiveInput( std::span<const s
 	return QueueInput(*m_impl->activeTabId, bytes);
 }
 
-TerminalQueueInputResult TerminalTabManager::QueueInput( std::uint64_t tabId, std::span<const std::uint8_t> bytes )
+TerminalQueueInputResult TerminalTabManager::QueueInput( std::uint64_t tabId, std::span<const std::uint8_t> bytes,
+	TerminalInputSource source )
 {
 	if( m_impl->closed ) return TerminalQueueInputResult::NotRunning;
 	auto* tab = m_impl->Find(tabId);
 	if( !tab || !m_impl->runtimeService ) return TerminalQueueInputResult::NotRunning;
 	auto* instance = m_impl->runtimeService->Instance(tab->instanceId);
-	return instance ? instance->QueueInput(bytes)
+	return instance ? instance->QueueInput(bytes, source)
 		: TerminalQueueInputResult::NotRunning;
 }
 
@@ -863,9 +864,25 @@ std::vector<TerminalTabSnapshot> TerminalTabManager::Snapshot() const
 		const auto snapshot = instance->Snapshot();
 		result.push_back({ tab->id, snapshot.processName, snapshot.profileLabel, snapshot.sequenceTitle,
 			snapshot.initialWorkingDirectory, snapshot.sessionState, snapshot.errorCode,
-			m_impl->activeTabId == tab->id });
+			m_impl->activeTabId == tab->id, snapshot.interactiveInputAccepted });
 	}
 	return result;
+}
+
+bool IsTerminalAtFirstPrompt( const TerminalTabSnapshot& tab, std::wstring_view workingDirectory ) noexcept
+{
+	if( tab.state != TerminalSessionState::Running || tab.interactiveInputAccepted ) return false;
+	const auto trim = []( std::wstring_view path ) noexcept {
+		while( path.size() > 1 && (path.back() == L'\\' || path.back() == L'/') ) path.remove_suffix(1);
+		return path;
+	};
+	const auto left = trim(tab.initialWorkingDirectory);
+	const auto right = trim(workingDirectory);
+	if( left.empty() || right.empty() ) return false;
+	constexpr auto kMaximumLength = static_cast<std::size_t>((std::numeric_limits<int>::max)());
+	if( left.size() > kMaximumLength || right.size() > kMaximumLength ) return false;
+	return ::CompareStringOrdinal(left.data(), static_cast<int>(left.size()),
+		right.data(), static_cast<int>(right.size()), TRUE) == CSTR_EQUAL;
 }
 
 std::vector<TerminalTabProjectionRecord> TerminalTabManager::ProjectionSnapshot() const

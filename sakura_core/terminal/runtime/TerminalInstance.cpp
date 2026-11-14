@@ -655,6 +655,7 @@ struct TerminalInstance::Impl {
 			result.sequenceTitle = sequenceTitle;
 			result.initialWorkingDirectory = initialWorkingDirectory;
 			result.outcome = outcome;
+			result.interactiveInputAccepted = interactiveInputAccepted;
 		}
 		{
 			const std::lock_guard lock(modelMutex);
@@ -810,6 +811,9 @@ struct TerminalInstance::Impl {
 	bool startInProgress{};
 	bool closeRequested{};
 	bool outcomePublished{};
+	//! Set once an Interactive write was accepted (keys, paste, send-keys,
+	//! sendText). Protocol replies never set it (#415).
+	bool interactiveInputAccepted{};
 };
 
 TerminalInstance::TerminalInstance(
@@ -994,7 +998,13 @@ TerminalQueueInputResult TerminalInstance::QueueInput(
 		if (!m_impl->session || m_impl->outcomePublished) return TerminalQueueInputResult::NotRunning;
 		session = m_impl->session.get();
 	}
-	return session->QueueInput(bytes, source);
+	const auto result = session->QueueInput(bytes, source);
+	if (result == TerminalQueueInputResult::Accepted && !bytes.empty()
+		&& source == TerminalInputSource::Interactive) {
+		const std::lock_guard lock(m_impl->stateMutex);
+		m_impl->interactiveInputAccepted = true;
+	}
+	return result;
 }
 
 TerminalQueueInputResult TerminalInstance::FlushPendingProtocolInput()

@@ -37,6 +37,7 @@ struct BackendState {
 	std::atomic<bool> blockWrites{};
 	std::atomic<bool> failWrites{};
 	std::atomic<bool> writeEntered{};
+	std::atomic<std::size_t> writtenBytes{};
 	std::atomic<std::size_t> outputOffset{};
 	// Fixed at creation; the reader worker reads it without a lock.
 	const std::string scriptedOutput;
@@ -105,6 +106,7 @@ public:
 		m_state->writeEntered.store(true);
 		while( m_state->blockWrites.load() && !m_state->closed.load() ) std::this_thread::sleep_for(1ms);
 		if( m_state->failWrites.load() ) return { terminal::TerminalBackendWriteStatus::Failed, 0, ERROR_BROKEN_PIPE };
+		m_state->writtenBytes.fetch_add(source.size());
 		return { terminal::TerminalBackendWriteStatus::Completed, source.size(), 0 };
 	}
 
@@ -1585,6 +1587,212 @@ TEST(TerminalTool, NewSessionsUseNewWorkspaceButExistingSessionsKeepOriginalCwd)
 	EXPECT_EQ(L"C:\\first", harness.backends[0]->workingDirectory);
 	EXPECT_EQ(L"C:\\second", harness.backends[1]->workingDirectory);
 	tool.Close();
+}
+
+TEST(TerminalTool, FirstPromptRequiresARunningUntouchedTerminalInTheSameFolder)
+{
+	terminal::TerminalTabSnapshot tab;
+	tab.state = terminal::TerminalSessionState::Running;
+	tab.initialWorkingDirectory = L"C:\\Work\\Project";
+	EXPECT_TRUE(terminal::IsTerminalAtFirstPrompt(tab, L"C:\\Work\\Project"));
+	EXPECT_TRUE(terminal::IsTerminalAtFirstPrompt(tab, L"c:\\work\\project\\")) << "case and a trailing separator do not matter";
+	EXPECT_FALSE(terminal::IsTerminalAtFirstPrompt(tab, L"C:\\Work\\Other"));
+	EXPECT_FALSE(terminal::IsTerminalAtFirstPrompt(tab, L"C:\\Work"));
+	EXPECT_FALSE(terminal::IsTerminalAtFirstPrompt(tab, L"")) << "an empty folder never matches";
+
+	auto touched = tab;
+	touched.interactiveInputAccepted = true;
+	EXPECT_FALSE(terminal::IsTerminalAtFirstPrompt(touched, L"C:\\Work\\Project"));
+	for( const auto state : { terminal::TerminalSessionState::Idle, terminal::TerminalSessionState::Starting,
+		terminal::TerminalSessionState::Closing, terminal::TerminalSessionState::Exited,
+		terminal::TerminalSessionState::Failed } ) {
+		auto stopped = tab;
+		stopped.state = state;
+		EXPECT_FALSE(terminal::IsTerminalAtFirstPrompt(stopped, L"C:\\Work\\Project"));
+	}
+	auto noDirectory = tab;
+	noDirectory.initialWorkingDirectory.clear();
+	EXPECT_FALSE(terminal::IsTerminalAtFirstPrompt(noDirectory, L"C:\\Work\\Project"));
+}
+
+TEST(TerminalTool, ProtocolRepliesDoNotCountAsInteractiveInput)
+{
+	ToolHarness harness;
+	harness.scriptedOutput = "\x1b[6n";
+	std::atomic<int> outputNotifications{};
+	terminal::TerminalTabManager manager(harness.Dependencies(), [&outputNotifications](const terminal::TerminalTabEvent& event) {
+		if( event.kind == terminal::TerminalTabEventKind::OutputAvailable ) ++outputNotifications;
+	});
+	const auto id = manager.Activate({ 80, 24 }, L"C:\\workspace");
+	ASSERT_TRUE(id.has_value());
+	ASSERT_EQ(1u, harness.backends.size());
+	ASSERT_TRUE(WaitUntil([&] { return outputNotifications.load() > 0; }));
+	// The cursor-position report is the terminal's own reply, sent as Protocol.
+	static_cast<void>(manager.DrainOutput(*id));
+	ASSERT_TRUE(WaitUntil([&] { return harness.backends[0]->writtenBytes.load() > 0; }))
+		<< "the reply must really reach the backend for this test to mean anything";
+	EXPECT_FALSE(manager.Snapshot().front().interactiveInputAccepted);
+
+	const std::uint8_t key[] = { 'a' };
+	ASSERT_EQ(terminal::TerminalQueueInputResult::Accepted, manager.QueueInput(*id, key));
+	EXPECT_TRUE(manager.Snapshot().front().interactiveInputAccepted);
+	manager.Close();
+}
+
+TEST(TerminalTool, ResumeInputRunsInTheUntouchedDefaultShellInsteadOfANewTerminal)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetWorkingDirectory(L"C:\\project");
+	tool.Activate();
+	ASSERT_EQ(1u, tool.TabCount());
+	ASSERT_EQ(1u, harness.backends.size());
+	const auto defaultShell = tool.ActiveTerminalId();
+	ASSERT_TRUE(defaultShell.has_value());
+
+	// The default shell has received nothing yet, so it runs the first command.
+	const auto first = tool.RunInFirstPromptTerminalOrAdd(L"C:\\project", "claude --resume one\r");
+	ASSERT_TRUE(first.has_value());
+	EXPECT_TRUE(first->reused);
+	EXPECT_EQ(*defaultShell, first->tabId);
+	EXPECT_EQ(1u, tool.TabCount());
+	EXPECT_EQ(1u, harness.backends.size());
+	EXPECT_TRUE(tool.Tabs().front().interactiveInputAccepted);
+
+	// It is no longer at its first prompt: the next command opens a terminal.
+	const auto second = tool.RunInFirstPromptTerminalOrAdd(L"C:\\project", "codex resume two\r");
+	ASSERT_TRUE(second.has_value());
+	EXPECT_FALSE(second->reused);
+	EXPECT_NE(*defaultShell, second->tabId);
+	EXPECT_EQ(2u, tool.TabCount());
+	ASSERT_EQ(2u, harness.backends.size());
+	EXPECT_EQ(L"C:\\project", harness.backends[1]->workingDirectory);
+	tool.Close();
+}
+
+TEST(TerminalTool, ResumeInputOpensANewTerminalWhenNoShellIsAtItsFirstPrompt)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout({ 0, 0, 480, 240 }, 96);
+
+	// No terminal at all: a new one is opened, as AddTerminalWithInput does.
+	const auto opened = tool.RunInFirstPromptTerminalOrAdd(L"C:\\project", "claude --resume one\r");
+	ASSERT_TRUE(opened.has_value());
+	EXPECT_FALSE(opened->reused);
+	ASSERT_EQ(1u, harness.backends.size());
+
+	// An untouched shell in another folder is not this session's folder.
+	tool.SetWorkingDirectory(L"C:\\elsewhere");
+	ASSERT_TRUE(tool.AddTerminal().has_value());
+	ASSERT_EQ(2u, harness.backends.size());
+	const auto otherFolder = tool.RunInFirstPromptTerminalOrAdd(L"C:\\project", "claude --resume two\r");
+	ASSERT_TRUE(otherFolder.has_value());
+	EXPECT_FALSE(otherFolder->reused);
+	ASSERT_EQ(3u, harness.backends.size());
+
+	// An untouched shell that already hosts an agent (a program started it, not
+	// typed input) is never handed a second session.
+	tool.SetWorkingDirectory(L"C:\\project");
+	const auto hosting = tool.AddTerminal();
+	ASSERT_TRUE(hosting.has_value());
+	ASSERT_EQ(4u, harness.backends.size());
+	harness.backends[3]->SetJobProcesses({ { 10, 100, L"pwsh.exe" }, { 20, 200, L"claude.exe" } });
+	const auto busy = tool.RunInFirstPromptTerminalOrAdd(L"C:\\project", "claude --resume three\r");
+	ASSERT_TRUE(busy.has_value());
+	EXPECT_FALSE(busy->reused);
+	EXPECT_NE(*hosting, busy->tabId);
+	EXPECT_EQ(5u, harness.backends.size());
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, FocusReportsTakeTheReportSinkAndQueueBehindBackpressuredInput)
+{
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalWnd renderer;
+	ASSERT_TRUE(renderer.Create(parent, ::GetModuleHandleW(nullptr)));
+	terminal::SakuraTerminalInputAdapter inputAdapter;
+	// ConPTY requests focus events (DECSET 1004) in its first output.
+	inputAdapter.SetMode(1004, true);
+	renderer.SetInputAdapter(&inputAdapter);
+	std::string typed;
+	std::string reported;
+	bool inputFull = false;
+	renderer.SetInputSink([&](std::span<const std::uint8_t> bytes) {
+		if( inputFull ) return terminal::TerminalQueueInputResult::QueueFull;
+		typed.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+		return terminal::TerminalQueueInputResult::Accepted;
+	});
+	renderer.SetReportSink([&reported](std::span<const std::uint8_t> bytes) {
+		reported.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+		return terminal::TerminalQueueInputResult::Accepted;
+	});
+
+	::SendMessageW(renderer.GetHwnd(), WM_SETFOCUS, 0, 0);
+	::SendMessageW(renderer.GetHwnd(), WM_KILLFOCUS, 0, 0);
+	EXPECT_EQ("\x1b[I\x1b[O", reported);
+	EXPECT_TRUE(typed.empty()) << "a focus change is not typing at the prompt";
+
+	// Behind backpressured keys a report keeps its byte order instead of
+	// overtaking them through the report sink.
+	reported.clear();
+	inputFull = true;
+	::SendMessageW(renderer.GetHwnd(), WM_CHAR, L'x', 1);
+	::SendMessageW(renderer.GetHwnd(), WM_SETFOCUS, 0, 0);
+	EXPECT_TRUE(reported.empty());
+	inputFull = false;
+	::SendMessageW(renderer.GetHwnd(), WM_TIMER, 0x5345, 0);
+	EXPECT_EQ("x\x1b[I", typed);
+
+	// Without a report sink the report keeps the ordinary input path.
+	typed.clear();
+	renderer.SetReportSink({});
+	::SendMessageW(renderer.GetHwnd(), WM_KILLFOCUS, 0, 0);
+	EXPECT_EQ("\x1b[O", typed);
+
+	renderer.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, AFocusedDefaultShellIsStillAtItsFirstPrompt)
+{
+	ToolHarness harness;
+	harness.scriptedOutput = "\x1b[?9001h\x1b[?1004h";
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout({ 0, 0, 480, 240 }, 96);
+	tool.SetWorkingDirectory(L"C:\\project");
+	tool.Activate();
+	ASSERT_EQ(1u, harness.backends.size());
+	const auto defaultShell = tool.ActiveTerminalId();
+	ASSERT_TRUE(defaultShell.has_value());
+	const HWND viewport = ::FindWindowExW(tool.GetHwnd(), nullptr, L"SakuraNativeTerminalWindow", nullptr);
+	ASSERT_NE(nullptr, viewport);
+
+	// Once the parser has applied DECSET 1004, focusing and leaving the
+	// terminal really sends focus reports to the backend.
+	ASSERT_TRUE(WaitUntil([&] {
+		PumpToolMessages(tool.GetHwnd());
+		::SendMessageW(viewport, WM_SETFOCUS, 0, 0);
+		::SendMessageW(viewport, WM_KILLFOCUS, 0, 0);
+		return harness.backends[0]->writtenBytes.load() > 0;
+	}, 2s));
+	EXPECT_FALSE(tool.Tabs().front().interactiveInputAccepted);
+
+	const auto resumed = tool.RunInFirstPromptTerminalOrAdd(L"C:\\project", "claude --resume one\r");
+	ASSERT_TRUE(resumed.has_value());
+	EXPECT_TRUE(resumed->reused);
+	EXPECT_EQ(*defaultShell, resumed->tabId);
+	EXPECT_EQ(1u, harness.backends.size());
+	tool.Close();
+	::DestroyWindow(parent);
 }
 
 TEST(TerminalTool, WorkspaceSwitchPreservesLiveSessionsAndRecursiveGroupStateAcrossABA)

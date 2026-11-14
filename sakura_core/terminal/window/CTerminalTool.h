@@ -107,6 +107,14 @@ struct TerminalAgentPresenceRecord final {
 	std::int64_t startedUnixSeconds{};
 };
 
+//! Where CTerminalTool::RunInFirstPromptTerminalOrAdd queued its input.
+struct TerminalInputTarget final {
+	std::uint64_t tabId{};
+	//! True when an existing terminal at its first prompt received the input;
+	//! false when a new terminal was opened for it.
+	bool reused{};
+};
+
 //! Bottom-panel terminal tool with recursive split groups and a right-side
 //! terminal instance list. Pane count is unbounded.
 class CTerminalTool final : public workbench::IWorkbenchTool {
@@ -166,6 +174,15 @@ public:
 	//! session did not accept the input; like AddTerminal, a tab whose session
 	//! failed to start stays visible so the failure can be seen and restarted.
 	[[nodiscard]] std::optional<std::uint64_t> AddTerminalWithInput(
+		std::wstring_view workingDirectory, std::string_view input );
+	//! #415: AddTerminalWithInput, except that a terminal of this projection
+	//! still at its first prompt receives `input` instead of a new terminal
+	//! being opened beside it. A terminal qualifies when IsTerminalAtFirstPrompt
+	//! holds for `workingDirectory` (the default directory when empty) and it
+	//! hosts no agent; the active terminal is tried first, then list order. A
+	//! terminal that refuses the input is skipped. Selection and focus are left
+	//! to the caller, as with AddTerminalWithInput.
+	[[nodiscard]] std::optional<TerminalInputTarget> RunInFirstPromptTerminalOrAdd(
 		std::wstring_view workingDirectory, std::string_view input );
 	void RedetectPowerShell();
 	//! Selects the multiplexer keybinding preset without persisting it. Used when

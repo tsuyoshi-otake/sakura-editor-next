@@ -37,9 +37,13 @@ workbench::projects::EProjectsActivationStatus CEditWnd::ResumeAgentSessionInTer
 	for (const wchar_t character : *command) input.push_back(static_cast<char>(character));
 	input.push_back('\r');
 	// Create the terminal before revealing the view, so revealing an
-	// empty Terminal does not start a second, default terminal.
-	const auto terminalId = m_terminalTool->AddTerminalWithInput(folder, input);
-	if (!terminalId) return EProjectsActivationStatus::Failed;
+	// empty Terminal does not start a second, default terminal. A terminal
+	// still at its first prompt in this folder -- normally the default shell
+	// the Project opened with -- runs the command instead of being left
+	// unused beside a new one (#415).
+	const auto target = m_terminalTool->RunInFirstPromptTerminalOrAdd(folder, input);
+	if (!target) return EProjectsActivationStatus::Failed;
+	const auto terminalId = std::optional<std::uint64_t>(target->tabId);
 	// The command was accepted: even if the reveal below fails, this terminal
 	// carries a session whose identity is known rather than inferred.
 	m_resumedAgentSessions[*terminalId] = workbench::projects::AgentSessionIdentity(session);

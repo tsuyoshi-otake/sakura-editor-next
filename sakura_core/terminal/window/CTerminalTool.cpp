@@ -792,6 +792,12 @@ struct CTerminalTool::Impl {
 		candidate->SetInputSink([this, tabId](std::span<const std::uint8_t> bytes) {
 			return tabId == 0 ? TerminalQueueInputResult::NotRunning : manager->QueueInput(tabId, bytes);
 		});
+		// Focus reports reach ConPTY, never the prompt: a shell that was only
+		// focused is still at its first prompt (#415).
+		candidate->SetReportSink([this, tabId](std::span<const std::uint8_t> bytes) {
+			return tabId == 0 ? TerminalQueueInputResult::NotRunning
+				: manager->QueueInput(tabId, bytes, TerminalInputSource::Protocol);
+		});
 		auto* const renderer = candidate.get();
 		candidate->SetResizeSink([this, tabId, renderer](TerminalSize size) {
 			if( tabId == 0 || !manager->ResizeTab(tabId, size) ) return;
@@ -2904,6 +2910,29 @@ std::optional<std::uint64_t> CTerminalTool::AddTerminalWithInput(
 	const auto bytes = std::span(reinterpret_cast<const std::uint8_t*>(input.data()), input.size());
 	if( m_impl->manager->QueueInput(*id, bytes) != TerminalQueueInputResult::Accepted ) return std::nullopt;
 	return id;
+}
+
+std::optional<TerminalInputTarget> CTerminalTool::RunInFirstPromptTerminalOrAdd(
+	std::wstring_view workingDirectory, std::string_view input )
+{
+	if( m_impl->closed ) return std::nullopt;
+	const std::wstring directory = workingDirectory.empty()
+		? m_impl->workingDirectory : std::wstring(workingDirectory);
+	// A job observation is bounded by the tab count. Like AgentPresence(true),
+	// the caller is not notified of what the refresh finds.
+	static_cast<void>(m_impl->ReconcileAgentPresence(true));
+	auto tabs = m_impl->manager->Snapshot();
+	std::stable_partition(tabs.begin(), tabs.end(), [](const TerminalTabSnapshot& tab) { return tab.active; });
+	const auto bytes = std::span(reinterpret_cast<const std::uint8_t*>(input.data()), input.size());
+	for( const auto& tab : tabs ) {
+		if( !IsTerminalAtFirstPrompt(tab, directory) || m_impl->agentPresence.Presence(tab.id) ) continue;
+		if( m_impl->manager->QueueInput(tab.id, bytes) == TerminalQueueInputResult::Accepted ) {
+			return TerminalInputTarget{ tab.id, true };
+		}
+	}
+	const auto id = AddTerminalWithInput(directory, input);
+	if( !id ) return std::nullopt;
+	return TerminalInputTarget{ *id, false };
 }
 
 void CTerminalTool::SetShortcutPreset( TerminalShortcutPreset preset )

@@ -1110,3 +1110,95 @@ back into it. Each re-observation is bounded by the tab count.
   recognized.
 - More than 64 job processes reports `truncated`. The observed prefix still
   decides presence.
+
+## A resumed session runs in the shell still at its first prompt (2026-11-14, #415 Phase 1)
+
+Reported: opening a Project with recorded agent sessions left one unused
+default pwsh beside the restored terminals. Resuming from a Sessions row did
+the same.
+
+Root cause: the default terminal starts while the initial layout runs (or right
+after an in-place switch commits). The #406 restore runs later, after
+asynchronous discovery, and `AddTerminalWithInput` always opened a new terminal.
+
+**Rule (owner decision, 2026-11-14).** `CTerminalTool::RunInFirstPromptTerminalOrAdd`
+queues the resume command into a terminal that is still at its first prompt.
+Only when no terminal qualifies does it open a new one.
+`CEditWnd::ResumeAgentSessionInTerminal` uses it, so both the restore on open
+and a Sessions-row resume take this path.
+
+A terminal qualifies when all of these hold:
+
+- `IsTerminalAtFirstPrompt` (pure, `TerminalTabManager.h`):
+  - its session is `Running`;
+  - it has accepted no interactive input since it started;
+  - its start directory equals the session's folder. The comparison is
+    case-insensitive and ignores trailing separators, and an empty directory
+    never matches.
+- It hosts no agent. Job membership is re-observed first, bounded by the tab
+  count, as `AgentPresence(true)` does.
+
+The active terminal is tried first, then list order. A terminal that refuses
+the input is skipped. Restoring several sessions therefore puts the first one in
+the default shell and opens new terminals for the rest.
+
+"Untouched" is decided from input, never from screen content. A profile banner
+or a prompt theme changes what the first screen shows; whether anything was
+ever sent to the shell does not change.
+
+- `TerminalInstance` owns the fact (`interactiveInputAccepted`). Every
+  interactive write reaches it through `TerminalInstance::QueueInput`: keys and
+  paste from `CTerminalWnd`, `sendText`-style input, and tmux `send-keys`.
+- Replies the terminal sends by itself are queued as
+  `TerminalInputSource::Protocol` and do not count. Examples are a cursor
+  position report and device attributes.
+- **Focus reports are Protocol too.** ConPTY's first output is
+  `ESC[?9001h ESC[?1004h` (measured 2026-11-14 with `SAKURA_TERMINAL_TRACE_DIR`:
+  the 16-byte first read hashes to exactly that pair). Focus reporting is
+  therefore on in every real terminal, and each focus change sends `ESC[I` /
+  `ESC[O`. On the Interactive path, a click on a Sessions row, which blurs the
+  terminal, would mark the shell touched, and a new terminal would open anyway.
+  ConPTY consumes these reports itself and never forwards them to the prompt.
+  `CTerminalWnd::SetReportSink` sends them as Protocol, and `CTerminalTool`
+  wires it to `TerminalTabManager::QueueInput(..., Protocol)`.
+  - A report goes into the renderer's pending buffer in two cases: while keys
+    are backpressured (it queues behind them, keeping the byte order), and
+    when the report sink itself answers QueueFull. The buffer is flushed as
+    Interactive, so such a report marks the shell touched. The only effect is
+    a new terminal instead of reuse, which is the conservative answer.
+  - Mouse reports stay Interactive. ConPTY does not enable mouse modes; an
+    application that does is being used.
+- A restart creates a new instance, so a restarted shell is at its first prompt
+  again.
+
+This is a fork-side rule for a fork-only feature. The Sessions view and agent
+restore have no VS Code counterpart. VS Code's nearest concepts are
+`createTerminal` plus `sendText` (always a new terminal) and persistent-session
+revive. Neither reuses a shell.
+
+Not covered, deliberately:
+
+- A Project with nothing to restore still opens its default shell, as VS Code
+  does. Hiding the Panel instead (`terminal.integrated.hideOnStartup`) is not
+  part of #415.
+- The shell's *current* directory is not tracked. A shell started in the
+  Project folder qualifies by its start directory alone. Since it has received
+  no input, it cannot have changed directory.
+- A program that changes directory or runs without interactive input (a pwsh
+  profile script, a tmux-created pane with a command) is not detected. The
+  agent check covers the case that matters, a pane that already runs an agent.
+
+Verified 2026-11-14 on x64 Debug with six `TerminalTool` tests:
+`FirstPromptRequiresARunningUntouchedTerminalInTheSameFolder`,
+`ProtocolRepliesDoNotCountAsInteractiveInput`,
+`ResumeInputRunsInTheUntouchedDefaultShellInsteadOfANewTerminal`,
+`ResumeInputOpensANewTerminalWhenNoShellIsAtItsFirstPrompt`,
+`FocusReportsTakeTheReportSinkAndQueueBehindBackpressuredInput` and
+`AFocusedDefaultShellIsStillAtItsFirstPrompt`.
+
+- The terminal, session-restore and Projects suites pass: 240 tests.
+- Fail-before: with the report sink sent as Interactive,
+  `AFocusedDefaultShellIsStillAtItsFirstPrompt` fails because a second
+  terminal opens.
+- Not verified end to end: a real Project restore. It needs a recorded agent
+  session and a resumable agent CLI.
