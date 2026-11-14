@@ -30,6 +30,31 @@ struct TerminalPaneGroup final {
 	std::size_t root{};
 };
 
+//! Where a terminal sits inside its group's leaf order (#415 Phase 4). The
+//! terminal list paints the matching tree glyph inside the row label, as
+//! upstream terminalTabsList.ts composes it: U+250C for the first leaf,
+//! U+251C for interior leaves, U+2514 for the last. A single-terminal group,
+//! or a tab in no group at all, carries no glyph.
+enum class TerminalSplitPosition : std::uint8_t {
+	None,
+	First,
+	Middle,
+	Last,
+};
+
+//! The tree-glyph label prefix for `position`: U+250C/U+251C/U+2514 plus a
+//! space, matching the strings upstream terminalTabsList.ts builds. Empty
+//! for None.
+[[nodiscard]] constexpr const wchar_t* TerminalSplitPrefix( TerminalSplitPosition position ) noexcept
+{
+	switch( position ) {
+	case TerminalSplitPosition::First: return L"\u250C ";
+	case TerminalSplitPosition::Middle: return L"\u251C ";
+	case TerminalSplitPosition::Last: return L"\u2514 ";
+	default: return L"";
+	}
+}
+
 //! Pure model of the terminal panel's group list. A terminal session belongs
 //! to exactly one group, and only the selected group owns native viewport
 //! HWNDs at a time; this type owns neither the renderers nor the sessions,
@@ -58,6 +83,13 @@ public:
 	//! The group index `direction` steps away from the active one, wrapping
 	//! around; the active index itself is never changed. Absent when empty.
 	[[nodiscard]] std::optional<std::size_t> RelativeGroupIndex( int direction ) const noexcept;
+	//! The terminal list's row order (#415 Phase 4): every group in order,
+	//! each contributing its leaf tab ids in depth-first order (upstream
+	//! terminalTabsList.ts' `instances`).
+	[[nodiscard]] std::vector<std::uint64_t> InstancesInOrder() const;
+	//! `tabId`'s position inside its group's leaf order. None when the tab
+	//! is in no group or its group holds a single terminal.
+	[[nodiscard]] TerminalSplitPosition SplitPositionOf( std::uint64_t tabId ) const noexcept;
 	[[nodiscard]] std::optional<TerminalPaneOrientation> NodeOrientation( std::size_t groupIndex,
 		std::size_t nodeIndex ) const noexcept;
 	//! The orientation of the split node that directly contains `tabId`'s

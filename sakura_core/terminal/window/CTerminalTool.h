@@ -124,6 +124,17 @@ struct TerminalGroupLayoutSnapshot final {
 	std::optional<std::uint64_t> activeTabId;
 };
 
+//! One row of the terminal list as presented (#415 Phase 4): the tab, its
+//! split-group position, and the resolved texts. `label` already carries the
+//! tree-glyph prefix that upstream terminalTabsList.ts puts inside the label
+//! (U+250C/U+251C/U+2514 plus a space); `description` is the dimmed text.
+struct TerminalListRow final {
+	TerminalTabSnapshot tab;
+	TerminalSplitPosition splitPosition{ TerminalSplitPosition::None };
+	std::wstring label;
+	std::wstring description;
+};
+
 //! One terminal a layout restore installs. `input` queued after the session
 //! starts is what `ResumeAgentSessionInTerminal` builds (the resume command
 //! plus CR); an empty `input` makes it a plain shell. `reuseFirstPrompt`
@@ -262,6 +273,12 @@ public:
 	[[nodiscard]] bool HasTerminalSplit() const noexcept;
 	[[nodiscard]] TerminalPaneOrientation ActivePaneOrientation() const noexcept;
 	[[nodiscard]] std::vector<TerminalTabSnapshot> Tabs() const;
+	//! The terminal list's rows in display order (#415 Phase 4): groups in
+	//! order, each group's terminals in leaf order (upstream's `instances`).
+	//! A tab not yet installed in a group keeps its creation-order place at
+	//! the end. Painting, hit testing, Up/Down navigation, scroll-into-view
+	//! and the Sessions menu all read this same order.
+	[[nodiscard]] std::vector<TerminalListRow> TerminalListRows() const;
 	//! The current projection's groups, split trees, and active tab as plain
 	//! data (#415 Phase 3): what PersistLiveAgentSessions records.
 	[[nodiscard]] TerminalGroupLayoutSnapshot GroupLayoutSnapshot() const;
@@ -276,10 +293,11 @@ public:
 	[[nodiscard]] TerminalRestoreResult RestoreTerminalGroupLayout(
 		std::vector<TerminalRestoreGroup> groups,
 		std::optional<std::pair<std::size_t, std::size_t>> activeLeaf );
-	//! Terminals of the current projection that host an agent, in tab order.
-	//! `refresh` re-observes every terminal's job first (bounded by the tab
-	//! count) and does not call the sink for what it finds; false returns the
-	//! event-maintained state without touching any process.
+	//! Terminals of the current projection that host an agent, in the
+	//! terminal list's order. `refresh` re-observes every terminal's job
+	//! first (bounded by the tab count) and does not call the sink for what
+	//! it finds; false returns the event-maintained state without touching
+	//! any process.
 	[[nodiscard]] std::vector<TerminalAgentPresenceRecord> AgentPresence( bool refresh );
 	//! Called on the UI thread after an event changed which terminals host an
 	//! agent. The sink must not re-enter this tool synchronously except through

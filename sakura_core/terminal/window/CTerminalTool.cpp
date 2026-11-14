@@ -875,6 +875,56 @@ struct CTerminalTool::Impl {
 		return title;
 	}
 
+	//! The terminal list's row order (#415 Phase 4): groups in order with each
+	//! group's leaf order (upstream terminalTabsList.ts' `instances`). A tab
+	//! not yet installed in a group (transient between AddTab and its group
+	//! install) keeps its creation-order place after the grouped ones.
+	[[nodiscard]] std::vector<TerminalTabSnapshot> OrderedListTabs() const
+	{
+		const auto tabs = manager->Snapshot();
+		std::unordered_map<std::uint64_t, std::size_t> indexById;
+		indexById.reserve(tabs.size());
+		for( std::size_t index = 0; index < tabs.size(); ++index ) {
+			indexById.emplace(tabs[index].id, index);
+		}
+		std::vector<TerminalTabSnapshot> ordered;
+		ordered.reserve(tabs.size());
+		std::vector<bool> placed(tabs.size(), false);
+		for( const auto tabId : groupLayout.InstancesInOrder() ) {
+			const auto found = indexById.find(tabId);
+			if( found == indexById.end() || placed[found->second] ) continue;
+			placed[found->second] = true;
+			ordered.push_back(tabs[found->second]);
+		}
+		for( std::size_t index = 0; index < tabs.size(); ++index ) {
+			if( !placed[index] ) ordered.push_back(tabs[index]);
+		}
+		return ordered;
+	}
+
+	//! OrderedListTabs decorated for painting and observation: each row's
+	//! `label` carries the tree-glyph prefix VS Code composes inside the
+	//! label, so measurement and ellipsizing account for it automatically.
+	[[nodiscard]] std::vector<TerminalListRow> TerminalListRows() const
+	{
+		const auto tabs = OrderedListTabs();
+		std::vector<TerminalListRow> rows;
+		rows.reserve(tabs.size());
+		for( const auto& tab : tabs ) {
+			TerminalListRow row;
+			row.splitPosition = groupLayout.SplitPositionOf(tab.id);
+			const auto presentation = TabPresentation(tab);
+			auto title = presentation.title;
+			if( title.empty() ) title = tab.profileLabel;
+			if( title.empty() ) title = LS(STR_TERMINAL_FALLBACK_LABEL);
+			row.label = std::wstring(TerminalSplitPrefix(row.splitPosition)) + title;
+			row.description = presentation.description;
+			row.tab = tab;
+			rows.push_back(std::move(row));
+		}
+		return rows;
+	}
+
 	std::wstring ActiveTerminalTitle() const
 	{
 		const auto focused = FocusedTabId();
@@ -1137,7 +1187,7 @@ struct CTerminalTool::Impl {
 
 	void EnsureTerminalTabVisible( std::uint64_t tabId ) noexcept
 	{
-		const auto tabs = manager->Snapshot();
+		const auto tabs = OrderedListTabs();
 		const auto found = std::find_if(tabs.begin(), tabs.end(), [tabId](const TerminalTabSnapshot& tab) {
 			return tab.id == tabId;
 		});
@@ -1185,7 +1235,7 @@ struct CTerminalTool::Impl {
 	std::optional<std::uint64_t> TerminalTabAtPoint( const POINT& point ) const
 	{
 		if( ::PtInRect(&paneLayout.tabsBounds, point) == FALSE ) return std::nullopt;
-		const auto tabs = manager->Snapshot();
+		const auto tabs = OrderedListTabs();
 		for( std::size_t index = 0; index < tabs.size(); ++index ) {
 			const RECT row = TerminalTabRow(index);
 			if( ::PtInRect(&row, point) != FALSE ) return tabs[index].id;
@@ -1202,36 +1252,30 @@ struct CTerminalTool::Impl {
 		}
 		const auto previousFont = chromeFont.Get() ? ::SelectObject(dc, chromeFont.Get()) : nullptr;
 		::SetBkMode(dc, TRANSPARENT);
-		const auto tabs = manager->Snapshot();
-		const auto first = std::min(terminalTabsFirstVisible, tabs.size());
+		const auto rows = TerminalListRows();
+		const auto first = std::min(terminalTabsFirstVisible, rows.size());
 		const auto focused = FocusedTabId();
 		const int markerWidth = std::max(2, ScaleDip(3, dpi));
 		const int horizontalPadding = ScaleDip(8, dpi);
-		for( std::size_t index = first; index < tabs.size(); ++index ) {
-			const auto& tab = tabs[index];
-			const RECT row = TerminalTabRow(index);
-			if( IsEmptyRect(row) ) break;
-			const bool selected = focused && tab.id == *focused;
-			if( selected ) FillSolidRect(dc, row, palette.raised.ToColorRef());
+		for( std::size_t index = first; index < rows.size(); ++index ) {
+			const auto& row = rows[index];
+			const RECT rowRect = TerminalTabRow(index);
+			if( IsEmptyRect(rowRect) ) break;
+			const bool selected = focused && row.tab.id == *focused;
+			if( selected ) FillSolidRect(dc, rowRect, palette.raised.ToColorRef());
 
-			RECT marker = row;
-			marker.right = std::min<LONG>(row.right, marker.left + markerWidth);
-			const auto groupIndex = groupLayout.FindGroup(tab.id);
-			const auto* owner = groupIndex ? groupLayout.GroupAt(*groupIndex) : nullptr;
-			const bool split = owner && owner->tabIds.size() > 1;
+			RECT marker = rowRect;
+			marker.right = std::min<LONG>(rowRect.right, marker.left + markerWidth);
+			const bool split = row.splitPosition != TerminalSplitPosition::None;
 			FillSolidRect(dc, marker, (selected ? palette.accent : (split ? palette.secondaryText : palette.border)).ToColorRef());
 
-			RECT label = row;
+			RECT label = rowRect;
 			label.left = std::min<LONG>(label.right, label.left + horizontalPadding);
 			label.right = std::max<LONG>(label.left, label.right - horizontalPadding);
-			const auto presentation = TabPresentation(tab);
-			std::wstring title = presentation.title;
-			if( title.empty() ) title = tab.profileLabel;
-			if( title.empty() ) title = LS(STR_TERMINAL_FALLBACK_LABEL);
 			const TerminalTabRowLayoutInput geometryInput {
 				{ static_cast<int>(label.left), static_cast<int>(label.top),
 					static_cast<int>(label.right), static_cast<int>(label.bottom) }, dpi, split, true,
-				!presentation.description.empty(), tab.state == TerminalSessionState::Failed };
+				!row.description.empty(), row.tab.state == TerminalSessionState::Failed };
 			const auto geometry = CalculateTerminalTabRowLayout(geometryInput);
 			const auto toNativeRect = [](const TerminalTabPresentationRect& rect) {
 				return RECT { rect.left, rect.top, rect.right, rect.bottom };
@@ -1242,19 +1286,19 @@ struct CTerminalTool::Impl {
 			}
 			if( geometry.Title().Width() > 0 ) {
 				RECT titleRect = toNativeRect(geometry.Title());
-				::SetTextColor(dc, tab.state == TerminalSessionState::Failed
+				::SetTextColor(dc, row.tab.state == TerminalSessionState::Failed
 					? palette.danger.ToColorRef()
 					: (selected ? palette.primaryText : palette.secondaryText).ToColorRef());
-				::DrawTextW(dc, title.c_str(), -1, &titleRect,
+				::DrawTextW(dc, row.label.c_str(), -1, &titleRect,
 					DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
 			}
-			if( geometry.Description().Width() > 0 && !presentation.description.empty() ) {
+			if( geometry.Description().Width() > 0 && !row.description.empty() ) {
 				RECT descriptionRect = toNativeRect(geometry.Description());
 				::SetTextColor(dc, palette.descriptionText.ToColorRef());
-				::DrawTextW(dc, presentation.description.c_str(), -1, &descriptionRect,
+				::DrawTextW(dc, row.description.c_str(), -1, &descriptionRect,
 					DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
 			}
-			if( geometry.Status().Width() > 0 && tab.state == TerminalSessionState::Failed ) {
+			if( geometry.Status().Width() > 0 && row.tab.state == TerminalSessionState::Failed ) {
 				RECT statusRect = toNativeRect(geometry.Status());
 				::SetTextColor(dc, palette.danger.ToColorRef());
 				::DrawTextW(dc, L"!", 1, &statusRect,
@@ -1534,7 +1578,7 @@ struct CTerminalTool::Impl {
 		if( !menu ) return;
 		const HWND menuOwner = owner ? owner : window;
 		const auto focusedId = FocusedTabId();
-		const auto tabs = manager->Snapshot();
+		const auto tabs = OrderedListTabs();
 		const HMENU sessionsMenu = ::CreatePopupMenu();
 		tabCommandIds.clear();
 		if( sessionsMenu ) {
@@ -1897,7 +1941,7 @@ struct CTerminalTool::Impl {
 		}
 		case WM_KEYDOWN:
 			if( terminalTabsFocused && (wParam == VK_UP || wParam == VK_DOWN || wParam == VK_RETURN) ) {
-				const auto tabs = manager->Snapshot();
+				const auto tabs = OrderedListTabs();
 				if( tabs.empty() ) return 0;
 				const auto focused = FocusedTabId();
 				auto index = std::find_if(tabs.begin(), tabs.end(), [focused](const TerminalTabSnapshot& tab) {
@@ -2141,7 +2185,7 @@ struct CTerminalTool::Impl {
 					reinterpret_cast<const std::uint8_t*>(leaf.input.data()), leaf.input.size());
 				std::optional<std::uint64_t> placed;
 				if( leaf.reuseFirstPrompt && !leaf.input.empty() && !reusedTabId ) {
-					auto tabs = manager->Snapshot();
+					auto tabs = OrderedListTabs();
 					std::stable_partition(tabs.begin(), tabs.end(),
 						[](const TerminalTabSnapshot& tab) { return tab.active; });
 					for( const auto& tab : tabs ) {
@@ -2857,7 +2901,7 @@ std::optional<TerminalInputTarget> CTerminalTool::RunInFirstPromptTerminalOrAdd(
 	// A job observation is bounded by the tab count. Like AgentPresence(true),
 	// the caller is not notified of what the refresh finds.
 	static_cast<void>(m_impl->ReconcileAgentPresence(true));
-	auto tabs = m_impl->manager->Snapshot();
+	auto tabs = m_impl->OrderedListTabs();
 	std::stable_partition(tabs.begin(), tabs.end(), [](const TerminalTabSnapshot& tab) { return tab.active; });
 	const auto bytes = std::span(reinterpret_cast<const std::uint8_t*>(input.data()), input.size());
 	for( const auto& tab : tabs ) {
@@ -2977,6 +3021,11 @@ std::vector<TerminalTabSnapshot> CTerminalTool::Tabs() const
 	return m_impl->manager->Snapshot();
 }
 
+std::vector<TerminalListRow> CTerminalTool::TerminalListRows() const
+{
+	return m_impl->closed ? std::vector<TerminalListRow>{} : m_impl->TerminalListRows();
+}
+
 std::vector<TerminalAgentPresenceRecord> CTerminalTool::AgentPresence( bool refresh )
 {
 	std::vector<TerminalAgentPresenceRecord> result;
@@ -2984,7 +3033,7 @@ std::vector<TerminalAgentPresenceRecord> CTerminalTool::AgentPresence( bool refr
 	// The caller asked for current data and receives it, so a refresh-driven
 	// change is not echoed back through the sink.
 	if( refresh ) static_cast<void>(m_impl->ReconcileAgentPresence(true));
-	const auto tabs = m_impl->manager->Snapshot();
+	const auto tabs = m_impl->OrderedListTabs();
 	const auto projection = m_impl->manager->ProjectionSnapshot();
 	for( const auto& tab : tabs ) {
 		const auto kind = m_impl->agentPresence.Presence(tab.id);

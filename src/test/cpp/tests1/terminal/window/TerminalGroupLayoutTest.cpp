@@ -537,4 +537,70 @@ TEST(TerminalGroupLayout, InstallGroupIgnoresUnreachableDeadNodes)
 		layout.GroupAt(1)->tabIds);
 }
 
+TEST(TerminalGroupLayout, InstancesInOrderIsEmptyWithoutGroups)
+{
+	const terminal::TerminalGroupLayout layout;
+	EXPECT_TRUE(layout.InstancesInOrder().empty());
+}
+
+TEST(TerminalGroupLayout, InstancesInOrderListsEachGroupInOrder)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	layout.AppendGroup(2);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 1, 2 }), layout.InstancesInOrder());
+	ExpectModelInvariants(layout);
+}
+
+TEST(TerminalGroupLayout, InstancesInOrderPutsSplitLeavesAfterTheirSibling)
+{
+	// VS Code's tabs list shows a split group's terminals beside it: T1 in its
+	// own group and T2 in another, then splitting T1 for T3 reads T1, T3, T2,
+	// not the creation order T1, T2, T3.
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	layout.AppendGroup(2);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 3, terminal::TerminalPaneOrientation::Horizontal));
+	ExpectModelInvariants(layout);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 1, 3, 2 }), layout.InstancesInOrder());
+}
+
+TEST(TerminalGroupLayout, InstancesInOrderFollowsNestedLeafOrder)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	// Splitting leaf 1 orthogonally wraps it, so the tree reads 1, 4, 2.
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 4, terminal::TerminalPaneOrientation::Vertical));
+	layout.AppendGroup(3);
+	ExpectModelInvariants(layout);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 1, 4, 2, 3 }), layout.InstancesInOrder());
+}
+
+TEST(TerminalGroupLayout, SplitPositionOfNamesTheLeafPositions)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	// A single-terminal group has no split position, and an unknown or
+	// ungrouped tab has none either.
+	EXPECT_EQ(terminal::TerminalSplitPosition::None, layout.SplitPositionOf(1));
+	EXPECT_EQ(terminal::TerminalSplitPosition::None, layout.SplitPositionOf(42));
+	layout.AppendGroup(9);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 2, 3, terminal::TerminalPaneOrientation::Horizontal));
+	ExpectModelInvariants(layout);
+	EXPECT_EQ(terminal::TerminalSplitPosition::First, layout.SplitPositionOf(1));
+	EXPECT_EQ(terminal::TerminalSplitPosition::Middle, layout.SplitPositionOf(2));
+	EXPECT_EQ(terminal::TerminalSplitPosition::Last, layout.SplitPositionOf(3));
+	EXPECT_EQ(terminal::TerminalSplitPosition::None, layout.SplitPositionOf(9));
+}
+
+TEST(TerminalGroupLayout, SplitPositionPrefixesMatchTheTreeGlyphs)
+{
+	EXPECT_STREQ(L"", terminal::TerminalSplitPrefix(terminal::TerminalSplitPosition::None));
+	EXPECT_STREQ(L"\u250C ", terminal::TerminalSplitPrefix(terminal::TerminalSplitPosition::First));
+	EXPECT_STREQ(L"\u251C ", terminal::TerminalSplitPrefix(terminal::TerminalSplitPosition::Middle));
+	EXPECT_STREQ(L"\u2514 ", terminal::TerminalSplitPrefix(terminal::TerminalSplitPosition::Last));
+}
+
 } // namespace

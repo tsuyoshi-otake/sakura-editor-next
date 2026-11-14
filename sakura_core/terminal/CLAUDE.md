@@ -546,6 +546,20 @@ Project folder when that directory is gone) — Sakura spawns it fresh where
 VS Code revives processes — and a group that held only shells is never
 recreated.
 
+The terminal list's row order is the group layout's, not creation order
+(#415 Phase 4): `TerminalGroupLayout::InstancesInOrder` yields the groups in
+panel order, each contributing its terminals in depth-first leaf order —
+upstream `terminalTabsList.ts`' `instances`. A row of a split group carries
+the tree-glyph prefix inside its label (`TerminalSplitPosition` +
+`TerminalSplitPrefix`: U+250C first, U+251C middle, U+2514 last); a
+single-terminal group's label stays bare. Painting (`PaintTerminalTabs`),
+hit testing (`TerminalTabAtPoint`), the list's Up/Down navigation,
+scroll-into-view (`EnsureTerminalTabVisible`), and the context menu's
+Sessions submenu all read the one ordered projection
+(`OrderedListTabs`/`TerminalListRows`, exported for tests as
+`CTerminalTool::TerminalListRows`); a tab not yet installed in a group sorts
+after the grouped ones in creation order.
+
 The active group is a recursive split layout. Upstream VS Code keeps bottom-
 Panel splits on one axis (side-by-side); nested panes and vertical splits are
 an explicit Sakura multiplexer extension. A split on the same axis as the

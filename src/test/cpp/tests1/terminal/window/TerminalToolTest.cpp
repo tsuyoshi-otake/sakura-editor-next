@@ -1442,6 +1442,55 @@ TEST(TerminalTool, TerminalListScrollsWhenArbitraryGroupsExceedItsHeight)
 	::DestroyWindow(parent);
 }
 
+//! #415 Phase 4: the terminal list follows the group layout model: groups in
+//! order, each group's terminals in leaf order, with VS Code's tree-glyph
+//! prefixes inside the label (upstream terminalTabsList.ts). Creation order
+//! alone would read T1, T2, T3.
+TEST(TerminalTool, TerminalListFollowsGroupLayoutOrderWithSplitPrefixes)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.Activate();
+	const auto first = tool.ActiveTerminalId();
+	ASSERT_TRUE(first.has_value());
+	const auto second = tool.AddTerminal();
+	ASSERT_TRUE(second.has_value());
+	ASSERT_TRUE(tool.SelectTerminal(*first));
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	const auto third = tool.ActiveTerminalId();
+	ASSERT_TRUE(third.has_value());
+
+	// T1's group reads T1, T3 in leaf order before T2's group.
+	auto rows = tool.TerminalListRows();
+	ASSERT_EQ(3u, rows.size());
+	EXPECT_EQ(*first, rows[0].tab.id);
+	EXPECT_EQ(*third, rows[1].tab.id);
+	EXPECT_EQ(*second, rows[2].tab.id);
+	EXPECT_EQ(terminal::TerminalSplitPosition::First, rows[0].splitPosition);
+	EXPECT_EQ(terminal::TerminalSplitPosition::Last, rows[1].splitPosition);
+	EXPECT_EQ(terminal::TerminalSplitPosition::None, rows[2].splitPosition);
+	EXPECT_TRUE(rows[0].label.starts_with(L"\u250C "));
+	EXPECT_TRUE(rows[1].label.starts_with(L"\u2514 "));
+	EXPECT_EQ(std::wstring::npos, rows[2].label.find_first_of(L"\u250C\u251C\u2514"));
+
+	// A second split inserts its leaf after the focused one and gains the
+	// middle glyph: T1, T3, T4, then T2's group.
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	const auto fourth = tool.ActiveTerminalId();
+	ASSERT_TRUE(fourth.has_value());
+	rows = tool.TerminalListRows();
+	ASSERT_EQ(4u, rows.size());
+	EXPECT_EQ(*first, rows[0].tab.id);
+	EXPECT_EQ(*third, rows[1].tab.id);
+	EXPECT_EQ(*fourth, rows[2].tab.id);
+	EXPECT_EQ(*second, rows[3].tab.id);
+	EXPECT_EQ(terminal::TerminalSplitPosition::Middle, rows[1].splitPosition);
+	EXPECT_EQ(terminal::TerminalSplitPosition::Last, rows[2].splitPosition);
+	EXPECT_TRUE(rows[1].label.starts_with(L"\u251C "));
+	EXPECT_TRUE(rows[2].label.starts_with(L"\u2514 "));
+	tool.Close();
+}
+
 TEST(TerminalTool, HeaderMaximizeAndCloseButtonsInvokeFrameOwnedActionsOnRelease)
 {
 	ToolHarness harness;

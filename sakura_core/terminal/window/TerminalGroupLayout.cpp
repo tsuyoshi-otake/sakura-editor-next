@@ -60,6 +60,32 @@ std::optional<std::size_t> TerminalGroupLayout::RelativeGroupIndex( int directio
 	return direction < 0 ? (current + count - 1) % count : (current + 1) % count;
 }
 
+std::vector<std::uint64_t> TerminalGroupLayout::InstancesInOrder() const
+{
+	std::vector<std::uint64_t> ids;
+	std::size_t total = 0;
+	for( const auto& group : m_groups ) total += group.tabIds.size();
+	ids.reserve(total);
+	// `tabIds` is the maintained depth-first leaf order of the tree.
+	for( const auto& group : m_groups ) {
+		ids.insert(ids.end(), group.tabIds.begin(), group.tabIds.end());
+	}
+	return ids;
+}
+
+TerminalSplitPosition TerminalGroupLayout::SplitPositionOf( std::uint64_t tabId ) const noexcept
+{
+	for( const auto& group : m_groups ) {
+		const auto found = std::find(group.tabIds.begin(), group.tabIds.end(), tabId);
+		if( found == group.tabIds.end() ) continue;
+		if( group.tabIds.size() < 2 ) return TerminalSplitPosition::None;
+		const auto position = static_cast<std::size_t>(found - group.tabIds.begin());
+		if( position == 0 ) return TerminalSplitPosition::First;
+		return position + 1 == group.tabIds.size() ? TerminalSplitPosition::Last : TerminalSplitPosition::Middle;
+	}
+	return TerminalSplitPosition::None;
+}
+
 std::optional<TerminalPaneOrientation> TerminalGroupLayout::NodeOrientation(
 	std::size_t groupIndex, std::size_t nodeIndex ) const noexcept
 {
