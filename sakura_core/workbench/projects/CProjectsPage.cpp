@@ -99,7 +99,7 @@ ProjectsTexts LoadProjectsTexts()
 	load(texts.branchesFormat, STR_WORKBENCH_PROJECTS_BRANCHES_COUNT);
 	load(texts.hideLinkedWorktrees, STR_WORKBENCH_PROJECTS_HIDE_LINKED);
 	load(texts.showLinkedWorktrees, STR_WORKBENCH_PROJECTS_SHOW_LINKED);
-	load(texts.projects, STR_WORKBENCH_PROJECTS_TITLE);
+	load(texts.catalog, STR_WORKBENCH_PROJECTS_CATALOG);
 	load(texts.sessions, STR_WORKBENCH_PROJECTS_SESSIONS);
 	load(texts.loadingSessions, STR_WORKBENCH_PROJECTS_SESSIONS_LOADING);
 	load(texts.noSessions, STR_WORKBENCH_PROJECTS_SESSIONS_EMPTY);
@@ -1966,7 +1966,7 @@ private:
 		if (HasSessionsView()) {
 			// The first header sits under the container title, which already
 			// separates it; every later header draws the section line.
-			viewcontainer::PaintViewPaneHeader(dc, m_projectsHeader, m_texts.projects,
+			viewcontainer::PaintViewPaneHeader(dc, m_projectsHeader, m_texts.catalog,
 				m_projectsCollapsed, m_projectsHeader.top > m_contentBounds.top, m_dpi, m_palette);
 			viewcontainer::PaintViewPaneHeader(dc, m_sessionsHeader, m_texts.sessions,
 				m_sessionsCollapsed, m_sessionsHeader.top > m_contentBounds.top, m_dpi, m_palette);

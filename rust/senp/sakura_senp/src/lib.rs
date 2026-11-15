@@ -4163,6 +4163,43 @@ mod tests {
         }
     }
 
+    /// #417: a ViewContainer with two or more Views shows every View header
+    /// under the container title, so no View may repeat that title (VS Code's
+    /// "Source Control" container names its view "Changes"). A single View
+    /// merges into the title and is exempt. Scans the directory so a new
+    /// built-in package is covered without editing this list.
+    #[test]
+    fn built_in_multi_view_containers_never_repeat_their_title_as_a_view_name() {
+        let extensions = Path::new(env!("CARGO_MANIFEST_DIR")).join("../extensions");
+        let mut checked = 0;
+        for entry in fs::read_dir(&extensions).unwrap() {
+            let manifest_path = entry.unwrap().path().join(MANIFEST_PATH);
+            if !manifest_path.is_file() {
+                continue;
+            }
+            let manifest = parse_manifest(&fs::read(&manifest_path).unwrap()).unwrap();
+            for container in &manifest.contributes.views_containers.activitybar {
+                let views = manifest
+                    .contributes
+                    .views
+                    .get(&container.id)
+                    .map_or(&[][..], Vec::as_slice);
+                if views.len() < 2 {
+                    continue;
+                }
+                checked += 1;
+                for view in views {
+                    assert_ne!(
+                        view.name, container.title,
+                        "{}: view {} repeats its container title",
+                        manifest.id, view.id
+                    );
+                }
+            }
+        }
+        assert!(checked > 0, "no multi-view built-in container was checked");
+    }
+
     /// Replaces an installed package's manifest and re-signs its checksum line,
     /// as an older build's install of the same id would have left it.
     fn rewrite_installed_manifest(content: &Path, manifest: &[u8]) {

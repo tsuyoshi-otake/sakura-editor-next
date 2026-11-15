@@ -1473,6 +1473,30 @@ TEST(ProjectsPage, AgentNotificationAddsRowsAndActivatesWithoutGitRediscovery)
 	::DestroyWindow(hostWindow);
 }
 
+// #417: with the Sessions View the pane stack paints the first View's header
+// under the container title, so that header is Catalog in every language and
+// never repeats the "Projects" title (VS Code's Source Control / Changes).
+TEST(ProjectsPage, CatalogPaneHeaderNeverRepeatsTheContainerTitleInAnyLanguage)
+{
+	tests1::ScopedLanguageSelection restoreLanguage;
+	CSelectLang::InitializeLanguageEnvironment();
+	const std::pair<const wchar_t*, const wchar_t*> locales[] = {
+		{ L"", L"\u30ab\u30bf\u30ed\u30b0" },
+		{ L"sakura_lang_zh_CN.dll", L"\u76ee\u5f55" },
+		{ L"sakura_lang_en_US.dll", L"Catalog" },
+	};
+	for (const auto& [dll, catalog] : locales) {
+		CSelectLang::ChangeLang(dll);
+		// A direct selected-module read rejects a silent Japanese fallback.
+		wchar_t value[256]{};
+		ASSERT_GT(::LoadStringW(CSelectLang::getLangRsrcInstance(), STR_WORKBENCH_PROJECTS_CATALOG,
+			value, 256), 0) << dll;
+		EXPECT_EQ(std::wstring(catalog), value) << dll;
+		EXPECT_NE(std::wstring(CSelectLang::LoadStringW(STR_WORKBENCH_PROJECTS_TITLE)), value) << dll;
+	}
+	EXPECT_EQ(L"Catalog", ProjectsTexts{}.catalog);
+}
+
 TEST(ProjectsPage, SessionsLoadOffTheUiThreadResumeFromTheRowAndCancelOnClose)
 {
 	tests1::ScopedLanguageSelection restoreLanguage;

@@ -211,10 +211,25 @@ and lifecycle rules as the rest of the native workbench.
   `TreeView_SetIndent` (#409). A row's dot or chevron sits in the level column
   just before its label.
 - **Two Views in one container (#411).** `sakura.view.projects` holds two
-  declarative Views, `sakura.projects` (Projects) and `sakura.agentSessions`
+  declarative Views, `sakura.projects` (Catalog) and `sakura.agentSessions`
   (Sessions), the way Explorer holds Explorer and Outline. Both name the
   provider `sakura.projects`, which supplies `factoryForContainer`, so
   `ProjectHostViewPages` creates one page for the pair.
+  - **View names never repeat the container title (#417).** With two Views
+    every header is painted under the container title, so the first View is
+    named Catalog / カタログ / 目录 (`STR_WORKBENCH_PROJECTS_CATALOG`), not
+    Projects. `STR_WORKBENCH_PROJECTS_TITLE` names only the container and its
+    Activity Bar entry. This is VS Code's own pattern: the "Source Control"
+    container names `workbench.scm` "Changes". "Catalog" is the code's own
+    term (`ProjectCatalog`), so the UI adds no second word for a Project.
+  - **Renaming is display-only.** `sakura.view.projects`, `sakura.projects`
+    (View ID and provider), and `sakura.projects.*` settings keys stay: stored
+    layout state, the provider gate, and user settings are keyed on them, and
+    VS Code kept `workbench.scm` when it renamed that View.
+  - Enforced by `built_in_multi_view_containers_never_repeat_their_title_as_a_view_name`
+    (every built-in `senp.json`; a single View is exempt because it merges into
+    the title) and `ProjectsPage.CatalogPaneHeaderNeverRepeatsTheContainerTitleInAnyLanguage`
+    (each language's painted header string).
   - The page renders VS Code's paneview: a 22 DIP header per View
     (`PaintViewPaneHeader`; every header below the first draws the section
     line), bodies split by `BuildViewPaneStackLayout` with a 120 DIP minimum,
@@ -222,7 +237,7 @@ and lifecycle rules as the rest of the native workbench.
     expands its View, and the press and the release must land on the same
     header. A collapsed body hands its keyboard focus to the other list.
   - Without session history (`ProjectsPageOptions::agentSessions` unset),
-    the page has only the Projects View. Its header merges into the container
+    the page has only the Catalog View. Its header merges into the container
     title, as `mergeViewWithContainerWhenSingleView` does, and the list fills
     the content.
   - `CProjectsListPane` owns one View's list mechanics: the owner-drawn

@@ -23,7 +23,7 @@
       "sakura.view.projects": [
         {
           "id": "sakura.projects",
-          "name": "Projects",
+          "name": "Catalog",
           "provider": "sakura.projects",
           "order": 10
         },

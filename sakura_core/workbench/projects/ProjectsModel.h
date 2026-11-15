@@ -45,8 +45,10 @@ struct ProjectsTexts final {
 	std::wstring branchesFormat{ L"{0} branches" };
 	std::wstring hideLinkedWorktrees{ L"Hide linked worktrees" };
 	std::wstring showLinkedWorktrees{ L"Show linked worktrees" };
-	//! #411: the two pane headers of the Projects ViewContainer.
-	std::wstring projects{ L"Projects" };
+	//! #411: the two pane headers of the Projects ViewContainer. #417: the first
+	//! is Catalog, never the container's own "Projects" title, so the stack does
+	//! not repeat the title it sits under (VS Code's Source Control / Changes).
+	std::wstring catalog{ L"Catalog" };
 	std::wstring sessions{ L"Sessions" };
 	std::wstring loadingSessions{ L"Loading..." };
 	std::wstring noSessions{ L"No sessions" };
