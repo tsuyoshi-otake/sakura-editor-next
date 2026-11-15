@@ -107,7 +107,11 @@ TEST(CThemeService, LightPaletteMatchesWorkbenchTokensExactly)
 	expected.minimapSliderHoverBackground = { 0x64, 0x64, 0x64, 0x59 };
 	expected.minimapSliderActiveBackground = { 0x00, 0x00, 0x00, 0x4C };
 	expected.editorIndentGuideBackground = { 0xD3, 0xD3, 0xD3 };
+	// #416: `list.dropBetweenBackground` defaults to the light `icon.foreground`.
+	expected.listDropBetweenBackground = { 0x42, 0x42, 0x42 };
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Light));
+	EXPECT_EQ((ThemeColor{ 0xC5, 0xC5, 0xC5 }),
+		CThemeService::PaletteFor(ThemeMode::Dark).listDropBetweenBackground);
 }
 
 TEST(CThemeService, EditorWhitespaceRolesUseTheVsCodeTokenOverTheEditorCanvas)
@@ -171,6 +175,7 @@ TEST(CThemeService, HighContrastTerminalBackgroundUsesThePanelFace)
 	EXPECT_EQ(highContrast.primaryText, highContrast.editorLineNumberActiveForeground);
 	EXPECT_EQ(highContrast.primaryText, highContrast.editorWhitespaceForeground);
 	EXPECT_EQ(highContrast.primaryText, highContrast.editorIndentGuideBackground);
+	EXPECT_EQ(highContrast.primaryText, highContrast.listDropBetweenBackground);
 }
 
 TEST(CThemeService, ActiveColorThemePalettePublishesEditorProjectionWithoutCopying)

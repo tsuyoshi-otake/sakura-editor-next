@@ -203,6 +203,8 @@ struct ProjectsProjection final {
 
 //! Projects are stable catalog entries. Every Project can expose a passive Git
 //! summary, while only the active Project receives actionable worktree children.
+//! A preferred Project row is the one of `preferredProjectIndex` when given
+//! (#416: a moved Project stays selected), otherwise the first Project row.
 [[nodiscard]] ProjectsProjection ProjectProjects(
 	std::span<const ProjectEntry> projects,
 	const config::WorkspaceContextSnapshot& workspace,
@@ -213,7 +215,8 @@ struct ProjectsProjection final {
 	std::wstring_view preferredWorktreeIdentity = {},
 	const ProjectsTexts& texts = {},
 	std::span<const ProjectAgentEntry> agents = {},
-	std::wstring_view preferredAgentIdentity = {});
+	std::wstring_view preferredAgentIdentity = {},
+	std::optional<std::size_t> preferredProjectIndex = std::nullopt);
 
 //! #411: the Sessions View's rows. Loading with no sessions yet says
 //! loadingSessions, Ready with none says noSessions, and Unavailable says
@@ -253,6 +256,28 @@ struct ProjectsProjection final {
 	const ProjectsTexts& texts = {});
 [[nodiscard]] std::wstring AgentSessionsAccessibleLabel(
 	const AgentSessionsRow& row, const ProjectsTexts& texts = {});
+
+//! #416: where a dragged Project would land. The line is drawn on the top edge
+//! of `insertionRow`; `insertionRow == rows.size()` means after the last row.
+//! `beforeProjectIndex` is the catalog index the Project moves in front of, or
+//! empty for the end of the catalog.
+struct ProjectDropGap final {
+	std::size_t insertionRow{};
+	std::optional<std::size_t> beforeProjectIndex;
+
+	[[nodiscard]] bool operator==(const ProjectDropGap&) const noexcept = default;
+};
+
+//! #416: the gap a pointer means while a Project is dragged. A block is a
+//! Project row plus the child rows that follow it, and the gaps lie between
+//! blocks, so a drop never splits a Project from its worktrees or agents. The
+//! gap nearest to `pointY` wins; on a one-row block that is upstream's rule,
+//! the top half meaning before the row and the bottom half after it (an exact
+//! midpoint counts as the bottom half). The rows are the owner-drawn list's
+//! fixed-height rows: row i spans [firstRowTop + i*rowHeight, +rowHeight).
+//! A point above the first row or below the last row is no gap.
+[[nodiscard]] std::optional<ProjectDropGap> HitTestProjectDropGap(
+	std::span<const ProjectsRow> rows, int firstRowTop, int rowHeight, int pointY) noexcept;
 
 //! #410: an agent row the page saw appear, and when it first saw it.
 struct ProjectAgentSighting final {

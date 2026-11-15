@@ -549,6 +549,9 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 		palette.listHoverBackground = first(palette.listHoverBackground, { L"list.hoverBackground" });
 		palette.listFocusAndSelectionOutline = first(palette.listFocusAndSelectionOutline,
 			{ L"list.focusAndSelectionOutline" });
+		// Upstream registers `list.dropBetweenBackground` as `iconForeground`.
+		palette.listDropBetweenBackground = first(palette.listDropBetweenBackground,
+			{ L"list.dropBetweenBackground", L"icon.foreground" });
 		// Unlike ordinary GDI roles, scrollbar colors remain translucent until a
 		// concrete Editor/Side Bar/Panel/Quick Input surface is known. VS Code uses
 		// the same slider tokens over all of those backgrounds.

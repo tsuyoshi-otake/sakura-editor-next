@@ -265,7 +265,8 @@ ProjectsProjection ProjectProjects(
 	const std::wstring_view preferredWorktreeIdentity,
 	const ProjectsTexts& texts,
 	const std::span<const ProjectAgentEntry> agents,
-	const std::wstring_view preferredAgentIdentity)
+	const std::wstring_view preferredAgentIdentity,
+	const std::optional<std::size_t> preferredProjectIndex)
 {
 	ProjectsProjection result;
 	for (std::size_t index = 0; index < projects.size(); ++index) {
@@ -359,6 +360,10 @@ ProjectsProjection ProjectProjects(
 		for (std::size_t rowIndex = 0; rowIndex < result.rows.size(); ++rowIndex) {
 			const auto& row = result.rows[rowIndex];
 			if (row.kind != *preferredKind) continue;
+			if (row.kind == EProjectsRowKind::Project && preferredProjectIndex
+				&& row.projectIndex != *preferredProjectIndex) {
+				continue;
+			}
 			if (row.worktreeIndex && worktrees
 				&& *row.worktreeIndex < worktrees->rows.size()
 				&& !preferredWorktreeIdentity.empty()
@@ -490,6 +495,34 @@ std::size_t CountAgentsAwaitingSessionHistory(
 		}
 	}
 	return waiting;
+}
+
+std::optional<ProjectDropGap> HitTestProjectDropGap(const std::span<const ProjectsRow> rows,
+	const int firstRowTop, const int rowHeight, const int pointY) noexcept
+{
+	if (rows.empty() || rowHeight <= 0) return std::nullopt;
+	const auto top = static_cast<long long>(firstRowTop);
+	const auto height = static_cast<long long>(rowHeight);
+	const auto bottom = top + height * static_cast<long long>(rows.size());
+	const auto y = static_cast<long long>(pointY);
+	if (y < top || y >= bottom) return std::nullopt;
+	std::optional<ProjectDropGap> nearest;
+	long long nearestDistance = 0;
+	const auto consider = [&](const std::size_t insertionRow, std::optional<std::size_t> before) {
+		const auto gapY = top + height * static_cast<long long>(insertionRow);
+		const auto distance = gapY > y ? gapY - y : y - gapY;
+		// Later gaps win ties, so an exact midpoint is the bottom half.
+		if (!nearest || distance <= nearestDistance) {
+			nearest = ProjectDropGap{ insertionRow, before };
+			nearestDistance = distance;
+		}
+	};
+	for (std::size_t index = 0; index < rows.size(); ++index) {
+		if (rows[index].kind == EProjectsRowKind::Project) consider(index, rows[index].projectIndex);
+	}
+	if (!nearest) return std::nullopt;
+	consider(rows.size(), std::nullopt);
+	return nearest;
 }
 
 } // namespace workbench::projects

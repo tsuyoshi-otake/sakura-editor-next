@@ -70,6 +70,8 @@ constexpr int kSessionsListControlId = 2;
 //! The Sessions View's share of the two expanded bodies until a sash drag.
 constexpr double kDefaultSessionsShare = 0.5;
 constexpr UINT kRemoveProjectMenuId = 1;
+constexpr UINT kMoveProjectUpMenuId = 0x5103;
+constexpr UINT kMoveProjectDownMenuId = 0x5104;
 constexpr std::size_t kMaximumBranchRepositoriesPerProject = 8;
 constexpr std::size_t kMaximumBranchRequestsPerRefresh = 64;
 
@@ -309,7 +311,20 @@ public:
 
 	[[nodiscard]] bool PreTranslateProjection(MSG& message) noexcept override
 	{
-		if (!m_active || message.hwnd == nullptr || message.message != WM_KEYDOWN) return false;
+		if (!m_active || message.hwnd == nullptr) return false;
+		// #416: a drag owns the list's keys; the list itself handles Esc.
+		if (message.hwnd == m_projectsList.Handle() && m_projectsList.IsDragging()) return false;
+		if (message.message == WM_SYSKEYDOWN && message.hwnd == m_projectsList.Handle()
+			&& (message.wParam == VK_UP || message.wParam == VK_DOWN)
+			&& (::GetKeyState(VK_CONTROL) & 0x8000) == 0 && (::GetKeyState(VK_SHIFT) & 0x8000) == 0) {
+			// Alt+Up / Alt+Down move the selected Project. They reach the page
+			// before the frame's accelerators (F_UP_BOX / F_DOWN_BOX), and only
+			// while the Catalog list has focus.
+			if (!CanMoveSelection()) return false;
+			MoveSelectedProject(message.wParam == VK_UP ? -1 : 1);
+			return true;
+		}
+		if (message.message != WM_KEYDOWN) return false;
 		if (HasSessionsView() && message.hwnd == m_sessionsList.Handle()) {
 			switch (message.wParam) {
 			case VK_RETURN:
@@ -611,6 +626,38 @@ private:
 			if (key != VK_DELETE || !CanRemoveSelection()) return false;
 			RemoveSelectedProject();
 			return true;
+		};
+		// #416: only Project rows are drag sources, and the gaps lie between
+		// a Project and its child rows' block.
+		callbacks.canDrag = [this](const std::size_t row) {
+			return m_options.moveProject && m_state == EPageState::Loaded && row < m_rows.size()
+				&& m_rows[row].kind == EProjectsRowKind::Project
+				&& m_rows[row].projectIndex < m_projects.size();
+		};
+		callbacks.dropRowAt = [this](const int firstRowTop, const int rowHeight, const int pointY)
+			-> std::optional<std::size_t> {
+			const auto gap = HitTestProjectDropGap(m_rows, firstRowTop, rowHeight, pointY);
+			if (!gap) return std::nullopt;
+			return gap->insertionRow;
+		};
+		callbacks.dragStarted = [this](const std::size_t row) {
+			m_dragSource.reset();
+			if (row < m_rows.size() && m_rows[row].projectIndex < m_projects.size()) {
+				m_dragSource = m_projects[m_rows[row].projectIndex];
+			}
+		};
+		callbacks.dragEnded = [this](const std::optional<std::size_t> insertionRow) {
+			auto source = std::exchange(m_dragSource, std::nullopt);
+			if (!source || !insertionRow) return;
+			std::optional<ProjectEntry> before;
+			if (*insertionRow < m_rows.size()) {
+				const auto& target = m_rows[*insertionRow];
+				if (target.kind != EProjectsRowKind::Project || target.projectIndex >= m_projects.size()) return;
+				before = m_projects[target.projectIndex];
+			} else if (*insertionRow != m_rows.size()) {
+				return;
+			}
+			MoveProject(*source, before);
 		};
 		return callbacks;
 	}
@@ -1338,10 +1385,20 @@ private:
 				summaries.push_back(found == m_branchCache.end()
 					? SummarizeProjectBranches({}, false, false, m_texts) : found->second.summary);
 			}
+			std::optional<std::size_t> preferredProject;
+			if (!m_selectedProjectIdentity.empty()) {
+				for (std::size_t index = 0; index < m_projects.size(); ++index) {
+					if (platform::uri::UriIdentityService::MakeComparisonKey(m_projects[index].uri)
+						== m_selectedProjectIdentity) {
+						preferredProject = index;
+						break;
+					}
+				}
+			}
 			const auto projection = ProjectProjects(m_projects, m_workspace,
 				m_worktrees ? &*m_worktrees : nullptr, m_worktreesExpanded,
 				summaries, m_selectedKind, m_selectedWorktreeIdentity, m_texts,
-				m_agents, m_selectedAgentIdentity);
+				m_agents, m_selectedAgentIdentity, preferredProject);
 			m_rows = projection.rows;
 			m_selectedIndex = projection.selectedRowIndex;
 		} catch (...) {
@@ -1365,6 +1422,13 @@ private:
 			labels.clear();
 		}
 		m_projectsList.SetRows(labels, m_selectedIndex);
+		// #416: a drag survives a rebuild until its Project leaves the catalog.
+		if (m_projectsList.IsDragging() && m_dragSource
+			&& std::ranges::none_of(m_projects, [this](const ProjectEntry& project) {
+				return platform::uri::UriIdentityService::IsEqual(project.uri, m_dragSource->uri);
+			})) {
+			m_projectsList.CancelDrag();
+		}
 	}
 
 	//! #411: rebuilds the Sessions View's rows from the accepted sessions.
@@ -1799,6 +1863,15 @@ private:
 		m_selectedIndex = *selected;
 		const auto& row = m_rows[*m_selectedIndex];
 		m_selectedKind = row.kind;
+		m_selectedProjectIdentity.clear();
+		if (row.kind == EProjectsRowKind::Project && row.projectIndex < m_projects.size()) {
+			try {
+				m_selectedProjectIdentity = platform::uri::UriIdentityService::MakeComparisonKey(
+					m_projects[row.projectIndex].uri);
+			} catch (...) {
+				m_selectedProjectIdentity.clear();
+			}
+		}
 		if (row.worktreeIndex && m_worktrees
 			&& *row.worktreeIndex < m_worktrees->rows.size()) {
 			m_selectedWorktreeIdentity = m_worktrees->rows[*row.worktreeIndex].identity;
@@ -1883,7 +1956,121 @@ private:
 		m_selectedKind.reset();
 		m_selectedWorktreeIdentity.clear();
 		m_selectedAgentIdentity.clear();
+		m_selectedProjectIdentity.clear();
 		Refresh();
+	}
+
+	//! #416 Phase 2: the selected row is a Project and the catalog can move it.
+	[[nodiscard]] bool CanMoveSelection() const noexcept
+	{
+		return m_options.moveProject && m_state == EPageState::Loaded && CanRemoveSelection();
+	}
+
+	//! Moves the selected Project one place up (-1) or down (+1). The first
+	//! Project cannot move up and the last cannot move down; both do nothing.
+	void MoveSelectedProject(const int direction) noexcept
+	{
+		CaptureSelection();
+		if (!CanMoveSelection() || !m_selectedIndex) return;
+		const auto index = m_rows[*m_selectedIndex].projectIndex;
+		std::optional<ProjectEntry> before;
+		if (direction < 0) {
+			if (index == 0) return;
+			before = m_projects[index - 1U];
+		} else {
+			if (index + 1U >= m_projects.size()) return;
+			if (index + 2U < m_projects.size()) before = m_projects[index + 2U];
+		}
+		MoveProject(m_projects[index], before);
+	}
+
+	//! #416: one reorder through the catalog. A move that changes nothing does
+	//! not reach the catalog; a failed one beeps and leaves the list as it was.
+	void MoveProject(const ProjectEntry& project, const std::optional<ProjectEntry>& before) noexcept
+	{
+		if (!m_options.moveProject) return;
+		try {
+			const std::optional<platform::uri::Uri> beforeUri = before
+				? std::optional<platform::uri::Uri>(before->uri) : std::nullopt;
+			if (MoveProjectEntry(m_projects, project.uri, beforeUri).status != EProjectMoveStatus::Moved) {
+				return;
+			}
+		} catch (...) {
+			return;
+		}
+		EProjectsMoveStatus status = EProjectsMoveStatus::Failed;
+		try {
+			status = m_options.moveProject(project, before);
+		} catch (...) {
+			status = EProjectsMoveStatus::Failed;
+		}
+		if (status != EProjectsMoveStatus::Moved) {
+			(void)::MessageBeep(MB_ICONWARNING);
+			return;
+		}
+		try {
+			m_selectedProjectIdentity = platform::uri::UriIdentityService::MakeComparisonKey(project.uri);
+		} catch (...) {
+			m_selectedProjectIdentity.clear();
+		}
+		m_selectedKind = EProjectsRowKind::Project;
+		m_selectedWorktreeIdentity.clear();
+		m_selectedAgentIdentity.clear();
+		const auto top = TopIndex(m_projectsList);
+		ApplyCatalogOrder();
+		if (top != LB_ERR && m_projectsList.Handle() != nullptr) {
+			(void)::SendMessageW(m_projectsList.Handle(), LB_SETTOPINDEX, top, 0);
+			m_projectsList.UpdateScrollbar();
+		}
+	}
+
+	//! #416: re-reads the catalog after a reorder. When it holds the same
+	//! Projects, only their order changed: the branch cache is keyed by
+	//! identity, so the rows are reprojected and queued Git requests are
+	//! renumbered instead of restarting discovery. Anything else refreshes.
+	void ApplyCatalogOrder() noexcept
+	{
+		try {
+			auto projects = m_options.projects();
+			if (!projects || projects->size() != m_projects.size()
+				|| m_projectBranchKeys.size() != m_projects.size()) {
+				Refresh();
+				return;
+			}
+			std::vector<std::wstring> keys;
+			keys.reserve(projects->size());
+			for (const auto& project : *projects) {
+				keys.push_back(platform::uri::UriIdentityService::MakeComparisonKey(project.uri));
+			}
+			auto sortedNew = keys;
+			auto sortedOld = m_projectBranchKeys;
+			std::ranges::sort(sortedNew);
+			std::ranges::sort(sortedOld);
+			if (sortedNew != sortedOld) {
+				Refresh();
+				return;
+			}
+			const auto indexOf = [&keys](const std::wstring& identity) -> std::optional<std::size_t> {
+				const auto found = std::ranges::find(keys, identity);
+				if (found == keys.end()) return std::nullopt;
+				return static_cast<std::size_t>(found - keys.begin());
+			};
+			for (auto& request : m_branchQueue) {
+				if (const auto index = indexOf(request.identity)) request.projectIndex = *index;
+			}
+			if (m_currentBranchRequest) {
+				if (const auto index = indexOf(m_currentBranchRequest->identity)) {
+					m_currentBranchRequest->projectIndex = *index;
+				}
+			}
+			m_projects = std::move(*projects);
+			m_projectBranchKeys = std::move(keys);
+			m_currentProjectIndex = ProjectProjects(m_projects, m_workspace, nullptr, false).currentProjectIndex;
+		} catch (...) {
+			Refresh();
+			return;
+		}
+		RebuildProjection();
 	}
 
 	void ShowProjectContextMenu(const LPARAM position) noexcept
@@ -1922,6 +2109,28 @@ private:
 			::DestroyMenu(menu);
 			return;
 		}
+		if (m_options.moveProject && m_selectedIndex && *m_selectedIndex < m_rows.size()) {
+			// #416 Phase 2. The boundary entry stays visible but disabled.
+			const auto index = m_rows[*m_selectedIndex].projectIndex;
+			std::wstring up;
+			std::wstring down;
+			try {
+				up = std::wstring(LS(STR_WORKBENCH_PROJECTS_MOVE_UP)) + L"\tAlt+Up";
+				down = std::wstring(LS(STR_WORKBENCH_PROJECTS_MOVE_DOWN)) + L"\tAlt+Down";
+			} catch (...) {
+				::DestroyMenu(menu);
+				return;
+			}
+			if (::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) == FALSE
+				|| ::AppendMenuW(menu, MF_STRING | (index == 0 ? MF_GRAYED : 0U),
+					kMoveProjectUpMenuId, up.c_str()) == FALSE
+				|| ::AppendMenuW(menu, MF_STRING | (index + 1U >= m_projects.size() ? MF_GRAYED : 0U),
+					kMoveProjectDownMenuId, down.c_str()) == FALSE
+				|| ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) == FALSE) {
+				::DestroyMenu(menu);
+				return;
+			}
+		}
 		if (::AppendMenuW(menu, MF_STRING, kRemoveProjectMenuId,
 			LS(STR_WORKBENCH_PROJECTS_REMOVE)) == FALSE) {
 			::DestroyMenu(menu);
@@ -1941,6 +2150,10 @@ private:
 			} catch (...) {
 				(void)::MessageBeep(MB_ICONWARNING);
 			}
+		} else if (command == kMoveProjectUpMenuId) {
+			MoveSelectedProject(-1);
+		} else if (command == kMoveProjectDownMenuId) {
+			MoveSelectedProject(1);
 		} else if (command == kRemoveProjectMenuId) RemoveSelectedProject();
 	}
 
@@ -2224,6 +2437,12 @@ private:
 	std::optional<EProjectsRowKind> m_selectedKind;
 	std::wstring m_selectedWorktreeIdentity;
 	std::wstring m_selectedAgentIdentity;
+	//! #416: the selected Project row by comparison key, so a reorder or a
+	//! rebuild keeps that Project selected rather than the first Project row.
+	std::wstring m_selectedProjectIdentity;
+	//! #416: the Project a drag in progress carries, by value, so a rebuild of
+	//! the rows during the drag cannot change what is dropped.
+	std::optional<ProjectEntry> m_dragSource;
 	std::atomic_bool m_agentsChangedPending{ false };
 	std::vector<AgentSessionRecord> m_sessions;
 	std::wstring m_sessionsFolder;	//! the folder m_sessions belongs to

@@ -14,12 +14,19 @@
 #include <windowsx.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <utility>
 
 namespace workbench::projects {
 namespace {
 
 constexpr UINT_PTR kListSubclassId = 0x7072;
+//! #416: the drag's own edge-scroll timer on the list window.
+constexpr UINT_PTR kDragScrollTimerId = 0x7073;
+constexpr UINT kDragScrollIntervalMs = 50;
+//! Upstream listView.ts scrolls while the pointer is within 35px of an edge.
+constexpr int kDragScrollZoneDip = 35;
+constexpr int kDropLineThicknessDip = 1;
 constexpr int kEmptyMessageInsetDip = 20;
 constexpr int kEmptyMessageTopDip = 4;
 
@@ -88,6 +95,10 @@ bool CProjectsListPane::Create(const HWND parent, const int controlId, const HIN
 
 void CProjectsListPane::Destroy() noexcept
 {
+	// Closing the page is one of the drag's exits; the page is going away, so
+	// it is not told.
+	EndDrag(std::nullopt, false);
+	m_dragCandidateRow.reset();
 	// The tooltip is a top-level popup owned by the page, so it can outlive
 	// this list; take the tool back while both still exist.
 	if (m_toolAdded && m_tooltip != nullptr && ::IsWindow(m_tooltip) && m_list != nullptr) {
@@ -108,6 +119,7 @@ void CProjectsListPane::SetRows(const std::span<const std::wstring> labels,
 	const std::optional<std::size_t> selected) noexcept
 {
 	m_pressedRow.reset();
+	m_dragCandidateRow.reset();
 	if (m_list == nullptr) return;
 	::SendMessageW(m_list, WM_SETREDRAW, FALSE, 0);
 	(void)::SendMessageW(m_list, LB_RESETCONTENT, 0, 0);
@@ -120,9 +132,12 @@ void CProjectsListPane::SetRows(const std::span<const std::wstring> labels,
 	::SendMessageW(m_list, WM_SETREDRAW, TRUE, 0);
 	// LB_ADDSTRING can re-show the platform bar; hide it before the paint.
 	UpdateScrollbar();
+	// A drag survives the rebuild (#416). The whole list repaints, so the gap
+	// is re-resolved against the new rows without a separate invalidation.
+	if (m_dragging) m_dropRow = DropRowAt(m_dragPoint);
 	::RedrawWindow(m_list, nullptr, nullptr, RDW_INVALIDATE | RDW_NOERASE);
 	// The hovered index may now name another row.
-	HoverRowUnderCursor();
+	if (!m_dragging) HoverRowUnderCursor();
 }
 
 std::optional<std::size_t> CProjectsListPane::Selection() const noexcept
@@ -266,6 +281,162 @@ void CProjectsListPane::SetTooltipText(const std::wstring& text) noexcept
 	(void)::SendMessageW(m_tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
 }
 
+void CProjectsListPane::CancelDrag() noexcept
+{
+	EndDrag(std::nullopt, true);
+}
+
+bool CProjectsListPane::DragEnabled() const noexcept
+{
+	return m_callbacks.canDrag && m_callbacks.dropRowAt && m_callbacks.dragStarted
+		&& m_callbacks.dragEnded;
+}
+
+void CProjectsListPane::BeginDragIfPastThreshold(const POINT point) noexcept
+{
+	if (m_dragging || !m_dragCandidateRow || m_list == nullptr) return;
+	const int dragX = std::max(1, ::GetSystemMetrics(SM_CXDRAG));
+	const int dragY = std::max(1, ::GetSystemMetrics(SM_CYDRAG));
+	if (std::abs(point.x - m_dragOrigin.x) < dragX && std::abs(point.y - m_dragOrigin.y) < dragY) return;
+	const auto source = *std::exchange(m_dragCandidateRow, std::nullopt);
+	m_pressedRow.reset();
+	m_dragging = true;
+	m_dropRow.reset();
+	m_dragPoint = point;
+	m_changingCapture = true;
+	// End the list's own press-and-move selection at the press point, so the
+	// selection stays on the dragged row, then hold the capture for the drag.
+	(void)::DefSubclassProc(m_list, WM_LBUTTONUP, 0, MAKELPARAM(m_dragOrigin.x, m_dragOrigin.y));
+	(void)::SetCapture(m_list);
+	m_changingCapture = false;
+	m_hoveredRow.reset();
+	SetTooltipText({});
+	try { m_callbacks.dragStarted(source); } catch (...) {}
+	if (m_dragging) UpdateDrag(point);
+}
+
+void CProjectsListPane::UpdateDrag(const POINT point) noexcept
+{
+	if (!m_dragging || m_list == nullptr) return;
+	m_dragPoint = point;
+	SetDropRow(DropRowAt(point));
+	RECT client{};
+	::GetClientRect(m_list, &client);
+	const int zone = ScaleDip(kDragScrollZoneDip, m_dpi);
+	const bool scrolls = point.x >= client.left && point.x < client.right
+		&& (point.y < client.top + zone || point.y >= client.bottom - zone);
+	if (scrolls && !m_autoScrollTimer) {
+		m_autoScrollTimer = ::SetTimer(m_list, kDragScrollTimerId, kDragScrollIntervalMs, nullptr) != 0;
+	} else if (!scrolls && m_autoScrollTimer) {
+		(void)::KillTimer(m_list, kDragScrollTimerId);
+		m_autoScrollTimer = false;
+	}
+}
+
+void CProjectsListPane::EndDrag(const std::optional<std::size_t> insertionRow, const bool notify) noexcept
+{
+	if (!m_dragging) return;
+	m_dragging = false;
+	if (m_autoScrollTimer && m_list != nullptr) (void)::KillTimer(m_list, kDragScrollTimerId);
+	m_autoScrollTimer = false;
+	InvalidateDropLine(std::exchange(m_dropRow, std::nullopt));
+	if (m_list != nullptr && ::GetCapture() == m_list) {
+		m_changingCapture = true;
+		(void)::ReleaseCapture();
+		m_changingCapture = false;
+	}
+	if (notify && m_callbacks.dragEnded) {
+		try { m_callbacks.dragEnded(insertionRow); } catch (...) {}
+	}
+	HoverRowUnderCursor();
+}
+
+std::optional<std::size_t> CProjectsListPane::DropRowAt(const POINT point) const noexcept
+{
+	if (m_list == nullptr || !m_callbacks.dropRowAt) return std::nullopt;
+	RECT client{};
+	if (::GetClientRect(m_list, &client) == FALSE || ::PtInRect(&client, point) == FALSE) return std::nullopt;
+	const LRESULT top = ::SendMessageW(m_list, LB_GETTOPINDEX, 0, 0);
+	const LRESULT height = ::SendMessageW(m_list, LB_GETITEMHEIGHT, 0, 0);
+	if (top == LB_ERR || height == LB_ERR || height <= 0) return std::nullopt;
+	try {
+		return m_callbacks.dropRowAt(-static_cast<int>(top) * static_cast<int>(height),
+			static_cast<int>(height), point.y);
+	} catch (...) {
+		return std::nullopt;
+	}
+}
+
+std::optional<RECT> CProjectsListPane::DropLineRect(const std::size_t insertionRow) const noexcept
+{
+	if (m_list == nullptr) return std::nullopt;
+	const LRESULT count = ::SendMessageW(m_list, LB_GETCOUNT, 0, 0);
+	if (count == LB_ERR || count <= 0 || insertionRow > static_cast<std::size_t>(count)) return std::nullopt;
+	const bool afterLast = insertionRow == static_cast<std::size_t>(count);
+	const auto row = afterLast ? insertionRow - 1U : insertionRow;
+	RECT item{};
+	if (::SendMessageW(m_list, LB_GETITEMRECT, row, reinterpret_cast<LPARAM>(&item)) == LB_ERR) {
+		return std::nullopt;
+	}
+	RECT client{};
+	::GetClientRect(m_list, &client);
+	const int thickness = std::max(1, ScaleDip(kDropLineThicknessDip, m_dpi));
+	// "After the last row" sits on that row's bottom edge, inside the row.
+	RECT line{ client.left, afterLast ? item.bottom - thickness : item.top, client.right, 0 };
+	line.bottom = line.top + thickness;
+	return line;
+}
+
+void CProjectsListPane::InvalidateDropLine(const std::optional<std::size_t> insertionRow) noexcept
+{
+	if (!insertionRow || m_list == nullptr) return;
+	if (const auto line = DropLineRect(*insertionRow)) ::InvalidateRect(m_list, &*line, FALSE);
+}
+
+void CProjectsListPane::SetDropRow(const std::optional<std::size_t> insertionRow) noexcept
+{
+	if (insertionRow == m_dropRow) return;
+	InvalidateDropLine(m_dropRow);
+	m_dropRow = insertionRow;
+	InvalidateDropLine(m_dropRow);
+}
+
+void CProjectsListPane::PaintDropLine() noexcept
+{
+	if (!m_dragging || !m_dropRow || m_list == nullptr) return;
+	const auto line = DropLineRect(*m_dropRow);
+	if (!line) return;
+	const HDC dc = ::GetDC(m_list);
+	if (dc == nullptr) return;
+	::SetDCBrushColor(dc, m_palette.listDropBetweenBackground.ToColorRef());
+	::FillRect(dc, &*line, static_cast<HBRUSH>(::GetStockObject(DC_BRUSH)));
+	::ReleaseDC(m_list, dc);
+}
+
+void CProjectsListPane::AutoScrollTick() noexcept
+{
+	if (!m_dragging || m_list == nullptr) return;
+	RECT client{};
+	::GetClientRect(m_list, &client);
+	const int zone = ScaleDip(kDragScrollZoneDip, m_dpi);
+	const LRESULT count = ::SendMessageW(m_list, LB_GETCOUNT, 0, 0);
+	const LRESULT top = ::SendMessageW(m_list, LB_GETTOPINDEX, 0, 0);
+	const LRESULT height = ::SendMessageW(m_list, LB_GETITEMHEIGHT, 0, 0);
+	if (count == LB_ERR || top == LB_ERR || height == LB_ERR || height <= 0) return;
+	const LRESULT visible = std::max<LRESULT>(1, (client.bottom - client.top) / height);
+	const LRESULT lastTop = std::max<LRESULT>(0, count - visible);
+	LRESULT next = top;
+	// One row per tick; a short list that puts the pointer in both zones scrolls up.
+	if (m_dragPoint.y < client.top + zone) next = std::max<LRESULT>(0, top - 1);
+	else if (m_dragPoint.y >= client.bottom - zone) next = std::min(lastTop, top + 1);
+	if (next == top) return;
+	(void)::SendMessageW(m_list, LB_SETTOPINDEX, static_cast<WPARAM>(next), 0);
+	UpdateScrollbar();
+	// The control scrolls its own bits, which would carry the line along.
+	::InvalidateRect(m_list, nullptr, FALSE);
+	m_dropRow = DropRowAt(m_dragPoint);
+}
+
 bool CProjectsListPane::PaintEmptyMessage() noexcept
 {
 	if (m_list == nullptr || m_emptyMessage.empty()
@@ -304,8 +475,36 @@ LRESULT CALLBACK CProjectsListPane::SubclassProc(const HWND window, const UINT m
 	}
 	if (self == nullptr) return ::DefSubclassProc(window, message, wParam, lParam);
 	switch (message) {
-	case WM_PAINT:
+	case WM_PAINT: {
 		if (self->PaintEmptyMessage()) return 0;
+		const LRESULT result = ::DefSubclassProc(window, message, wParam, lParam);
+		// The drop line sits over the rows the control just painted (#416).
+		self->PaintDropLine();
+		return result;
+	}
+	case WM_TIMER:
+		if (wParam == kDragScrollTimerId) {
+			self->AutoScrollTick();
+			return 0;
+		}
+		break;
+	case WM_CAPTURECHANGED:
+		if (!self->m_changingCapture) {
+			self->m_dragCandidateRow.reset();
+			// Another window took the capture: the drag ends where it is.
+			if (self->m_dragging && reinterpret_cast<HWND>(lParam) != window) {
+				self->EndDrag(std::nullopt, true);
+			}
+		}
+		break;
+	case WM_CANCELMODE:
+		self->EndDrag(std::nullopt, true);
+		break;
+	case WM_RBUTTONDOWN:
+		if (self->m_dragging) {
+			self->EndDrag(std::nullopt, true);
+			return 0;
+		}
 		break;
 	case WM_CONTEXTMENU:
 		if (self->m_callbacks.contextMenu) {
@@ -314,20 +513,45 @@ LRESULT CALLBACK CProjectsListPane::SubclassProc(const HWND window, const UINT m
 		}
 		break;
 	case WM_KEYDOWN:
+		if (self->m_dragging) {
+			// A drag keeps the keyboard; only Esc means something to it.
+			if (wParam == VK_ESCAPE) self->EndDrag(std::nullopt, true);
+			return 0;
+		}
 		if (self->m_callbacks.keyDown) {
 			bool handled = false;
 			try { handled = self->m_callbacks.keyDown(wParam); } catch (...) { handled = false; }
 			if (handled) return 0;
 		}
 		break;
-	case WM_LBUTTONDOWN:
-		self->m_pressedRow = self->SingleClickRowAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+	case WM_LBUTTONDOWN: {
+		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		self->m_pressedRow = self->SingleClickRowAt(point);
+		self->m_dragCandidateRow.reset();
+		if (self->DragEnabled()) {
+			if (const auto row = self->RowAt(point)) {
+				bool draggable = false;
+				try { draggable = self->m_callbacks.canDrag(*row); } catch (...) { draggable = false; }
+				if (draggable) {
+					self->m_dragCandidateRow = row;
+					self->m_dragOrigin = point;
+				}
+			}
+		}
 		break;
+	}
 	case WM_LBUTTONDBLCLK:
 		// The second press of a double click belongs to LBN_DBLCLK.
 		self->m_pressedRow.reset();
+		self->m_dragCandidateRow.reset();
 		break;
 	case WM_LBUTTONUP: {
+		if (self->m_dragging) {
+			const auto insertionRow = self->DropRowAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+			self->EndDrag(insertionRow, true);
+			return 0;
+		}
+		self->m_dragCandidateRow.reset();
 		// VS Code's singleClick open and expand modes (#412): releasing the
 		// press on the same row opens it. The list selects the row and
 		// releases capture inside DefSubclassProc.
@@ -339,14 +563,28 @@ LRESULT CALLBACK CProjectsListPane::SubclassProc(const HWND window, const UINT m
 		}
 		return result;
 	}
-	case WM_MOUSEMOVE:
-		self->HoverRowAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+	case WM_MOUSEMOVE: {
+		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if (self->m_dragCandidateRow && (wParam & MK_LBUTTON) == 0) self->m_dragCandidateRow.reset();
+		self->BeginDragIfPastThreshold(point);
+		if (self->m_dragging) {
+			// The list's own press-and-move selection must not run while dragging.
+			self->UpdateDrag(point);
+			return 0;
+		}
+		self->HoverRowAt(point);
 		break;
+	}
 	case WM_MOUSEWHEEL:
 		// The overlay hides the platform bar, and a list box without a visible
 		// bar drops the wheel, so the rows move here (#407).
 		controls::ScrollListBoxByWheel(window, wParam);
 		self->UpdateScrollbar();
+		if (self->m_dragging) {
+			::InvalidateRect(window, nullptr, FALSE);
+			self->m_dropRow = self->DropRowAt(self->m_dragPoint);
+			return 0;
+		}
 		// Scrolling moves another row under a pointer that did not move.
 		self->HoverRowUnderCursor();
 		return 0;

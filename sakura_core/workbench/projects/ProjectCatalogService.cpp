@@ -135,6 +135,36 @@ std::optional<EProjectKind> ParseKind(const std::wstring_view value) noexcept
 
 } // namespace
 
+ProjectMoveResult MoveProjectEntry(const std::vector<ProjectEntry>& entries,
+	const platform::uri::Uri& project, const std::optional<platform::uri::Uri>& before)
+{
+	const auto same = [](const platform::uri::Uri& target) {
+		return [&target](const ProjectEntry& entry) {
+			return platform::uri::UriIdentityService::IsEqual(entry.uri, target);
+		};
+	};
+	const auto source = std::ranges::find_if(entries, same(project));
+	if (source == entries.end()) return { EProjectMoveStatus::UnknownProject, entries };
+	const auto sourceIndex = static_cast<std::size_t>(source - entries.begin());
+	std::size_t targetIndex = entries.size();
+	if (before) {
+		const auto target = std::ranges::find_if(entries, same(*before));
+		if (target == entries.end()) return { EProjectMoveStatus::UnknownTarget, entries };
+		targetIndex = static_cast<std::size_t>(target - entries.begin());
+	}
+	// Before itself, or before the entry that already follows it, is where it is.
+	if (targetIndex == sourceIndex || targetIndex == sourceIndex + 1U) {
+		return { EProjectMoveStatus::Unchanged, entries };
+	}
+	auto next = entries;
+	auto moved = std::move(next[sourceIndex]);
+	next.erase(next.begin() + static_cast<std::ptrdiff_t>(sourceIndex));
+	// A move downwards accounts for its own removal (upstream openEditorsView drop).
+	const auto insertAt = targetIndex > sourceIndex ? targetIndex - 1U : targetIndex;
+	next.insert(next.begin() + static_cast<std::ptrdiff_t>(insertAt), std::move(moved));
+	return { EProjectMoveStatus::Moved, std::move(next) };
+}
+
 CProjectCatalogService::CProjectCatalogService(std::unique_ptr<IProjectCatalogStore> store) noexcept :
 	m_store(std::move(store))
 {
@@ -220,6 +250,47 @@ ProjectCatalogResult CProjectCatalogService::Remove(const platform::uri::Uri& ur
 		const auto saved = SaveEntries(next);
 		if (saved.status == EProjectCatalogStoreSaveStatus::Succeeded) {
 			m_entries = std::move(next);
+			return { EProjectCatalogOutcome::Succeeded, {} };
+		}
+		if (saved.status != EProjectCatalogStoreSaveStatus::Conflict || attempt != 0) {
+			return { EProjectCatalogOutcome::Failed,
+				saved.diagnostic.empty() ? "project catalog store write failed" : saved.diagnostic };
+		}
+		const auto reloaded = Load();
+		if (reloaded.outcome != EProjectCatalogOutcome::Succeeded) return reloaded;
+	}
+	return { EProjectCatalogOutcome::Failed, "project catalog conflict retry was exhausted" };
+}
+
+ProjectCatalogResult CProjectCatalogService::Move(const platform::uri::Uri& project,
+	const std::optional<platform::uri::Uri>& before)
+{
+	if (m_state != EProjectCatalogState::Ready) {
+		return { EProjectCatalogOutcome::Failed,
+			"project catalog writes require a successful coherent load" };
+	}
+	const auto canonicalProject = CanonicalizeUri(project);
+	if (!canonicalProject) return { EProjectCatalogOutcome::Failed, "project URI is invalid" };
+	std::optional<platform::uri::Uri> canonicalBefore;
+	if (before) {
+		canonicalBefore = CanonicalizeUri(*before);
+		if (!canonicalBefore) return { EProjectCatalogOutcome::Failed, "target project URI is invalid" };
+	}
+	for (int attempt = 0; attempt < 2; ++attempt) {
+		auto moved = MoveProjectEntry(m_entries, *canonicalProject, canonicalBefore);
+		switch (moved.status) {
+		case EProjectMoveStatus::Unchanged:
+			return { EProjectCatalogOutcome::Succeeded, {} };
+		case EProjectMoveStatus::UnknownProject:
+			return { EProjectCatalogOutcome::Failed, "project is not in the catalog" };
+		case EProjectMoveStatus::UnknownTarget:
+			return { EProjectCatalogOutcome::Failed, "target project is not in the catalog" };
+		case EProjectMoveStatus::Moved:
+			break;
+		}
+		const auto saved = SaveEntries(moved.entries);
+		if (saved.status == EProjectCatalogStoreSaveStatus::Succeeded) {
+			m_entries = std::move(moved.entries);
 			return { EProjectCatalogOutcome::Succeeded, {} };
 		}
 		if (saved.status != EProjectCatalogStoreSaveStatus::Conflict || attempt != 0) {

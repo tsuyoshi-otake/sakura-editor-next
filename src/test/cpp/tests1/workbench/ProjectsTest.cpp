@@ -356,6 +356,187 @@ TEST(ProjectCatalogService, FailedRemovePreservesTheAcceptedCatalogSnapshot)
 		FileUri(L"C:\\repo"), snapshot[0].uri));
 }
 
+// #416: the pure reorder is addressed by identity, and a move downwards
+// accounts for its own removal, as upstream's Open Editors drop does.
+TEST(ProjectCatalogService, MoveProjectEntryReordersByIdentity)
+{
+	const std::vector<ProjectEntry> entries{
+		ProjectFolder(L"C:\\a"), ProjectFolder(L"C:\\b"), ProjectFolder(L"C:\\c"),
+	};
+	const auto names = [](const ProjectMoveResult& result) {
+		std::vector<std::wstring> paths;
+		for (const auto& entry : result.entries) paths.push_back(entry.uri.ToString());
+		return paths;
+	};
+	const auto order = [&entries](std::initializer_list<std::size_t> indices) {
+		std::vector<std::wstring> paths;
+		for (const auto index : indices) paths.push_back(entries[index].uri.ToString());
+		return paths;
+	};
+	const auto upward = MoveProjectEntry(entries, FileUri(L"C:\\c"), FileUri(L"C:\\a"));
+	EXPECT_EQ(EProjectMoveStatus::Moved, upward.status);
+	EXPECT_EQ(order({ 2, 0, 1 }), names(upward));
+	const auto toEnd = MoveProjectEntry(entries, FileUri(L"C:\\a"), std::nullopt);
+	EXPECT_EQ(EProjectMoveStatus::Moved, toEnd.status);
+	EXPECT_EQ(order({ 1, 2, 0 }), names(toEnd));
+	const auto downward = MoveProjectEntry(entries, FileUri(L"C:\\a"), FileUri(L"C:\\c"));
+	EXPECT_EQ(EProjectMoveStatus::Moved, downward.status);
+	EXPECT_EQ(order({ 1, 0, 2 }), names(downward));
+	// Identity, not spelling: the drive letter's case does not matter.
+	const auto folded = MoveProjectEntry(entries, FileUri(L"c:\\C"), FileUri(L"c:\\A"));
+	EXPECT_EQ(EProjectMoveStatus::Moved, folded.status);
+	EXPECT_EQ(order({ 2, 0, 1 }), names(folded));
+
+	for (const auto& [project, before] : std::vector<std::pair<std::wstring, std::optional<std::wstring>>>{
+		{ L"C:\\a", L"C:\\b" }, { L"C:\\a", L"C:\\a" }, { L"C:\\c", std::nullopt } }) {
+		const auto unchanged = MoveProjectEntry(entries, FileUri(project),
+			before ? std::optional(FileUri(*before)) : std::nullopt);
+		EXPECT_EQ(EProjectMoveStatus::Unchanged, unchanged.status) << project;
+		EXPECT_EQ(order({ 0, 1, 2 }), names(unchanged)) << project;
+	}
+	EXPECT_EQ(EProjectMoveStatus::UnknownProject,
+		MoveProjectEntry(entries, FileUri(L"C:\\z"), std::nullopt).status);
+	const auto unknownTarget = MoveProjectEntry(entries, FileUri(L"C:\\a"), FileUri(L"C:\\z"));
+	EXPECT_EQ(EProjectMoveStatus::UnknownTarget, unknownTarget.status);
+	EXPECT_EQ(order({ 0, 1, 2 }), names(unknownTarget));
+}
+
+namespace {
+
+//! A catalog payload holding `paths` in order, as another window would save it.
+std::string CatalogPayload(std::initializer_list<const wchar_t*> paths)
+{
+	auto store = std::make_unique<ScriptedProjectStore>();
+	auto* script = store.get();
+	CProjectCatalogService writer(std::move(store));
+	EXPECT_EQ(EProjectCatalogOutcome::Succeeded, writer.Load().outcome);
+	for (const auto* path : paths) {
+		EXPECT_EQ(EProjectCatalogOutcome::Succeeded,
+			writer.RecordSuccessfulOpen(ProjectFolder(path)).outcome);
+	}
+	return script->saved.empty() ? std::string{} : script->saved.back();
+}
+
+std::vector<std::wstring> CatalogOrder(const std::vector<ProjectEntry>& entries)
+{
+	std::vector<std::wstring> paths;
+	for (const auto& entry : entries) {
+		const auto path = entry.uri.ToWindowsPath();
+		paths.push_back(path.value ? *path.value : entry.uri.ToString());
+	}
+	return paths;
+}
+
+} // namespace
+
+TEST(ProjectCatalogService, MoveChangesTheOrderAndTheOrderSurvivesASaveAndALoad)
+{
+	auto store = std::make_unique<ScriptedProjectStore>();
+	auto* script = store.get();
+	store->load = { EProjectCatalogStoreLoadStatus::Succeeded,
+		CatalogPayload({ L"C:\\a", L"C:\\b", L"C:\\c" }), {} };
+	CProjectCatalogService service(std::move(store));
+	ASSERT_EQ(EProjectCatalogOutcome::Succeeded, service.Load().outcome);
+
+	EXPECT_EQ(EProjectCatalogOutcome::Succeeded,
+		service.Move(FileUri(L"C:\\c"), FileUri(L"C:\\a")).outcome);
+	const std::vector<std::wstring> moved{ L"C:\\c", L"C:\\a", L"C:\\b" };
+	EXPECT_EQ(moved, CatalogOrder(service.Snapshot()));
+	ASSERT_EQ(1U, script->saved.size());
+
+	auto reader = std::make_unique<ScriptedProjectStore>();
+	reader->load = { EProjectCatalogStoreLoadStatus::Succeeded, script->saved.back(), {} };
+	CProjectCatalogService reloaded(std::move(reader));
+	ASSERT_EQ(EProjectCatalogOutcome::Succeeded, reloaded.Load().outcome);
+	EXPECT_EQ(moved, CatalogOrder(reloaded.Snapshot()));
+	// Reopening a moved Project keeps its new place.
+	EXPECT_EQ(EProjectCatalogOutcome::Succeeded,
+		reloaded.RecordSuccessfulOpen(ProjectFolder(L"C:\\a", L"A")).outcome);
+	EXPECT_EQ(moved, CatalogOrder(reloaded.Snapshot()));
+}
+
+TEST(ProjectCatalogService, MoveThatChangesNothingOrNamesAnUnknownProjectPerformsNoSave)
+{
+	auto store = std::make_unique<ScriptedProjectStore>();
+	auto* script = store.get();
+	store->load = { EProjectCatalogStoreLoadStatus::Succeeded,
+		CatalogPayload({ L"C:\\a", L"C:\\b" }), {} };
+	CProjectCatalogService service(std::move(store));
+	ASSERT_EQ(EProjectCatalogOutcome::Succeeded, service.Load().outcome);
+
+	EXPECT_EQ(EProjectCatalogOutcome::Succeeded,
+		service.Move(FileUri(L"C:\\a"), FileUri(L"C:\\b")).outcome);
+	EXPECT_EQ(EProjectCatalogOutcome::Succeeded,
+		service.Move(FileUri(L"C:\\b"), std::nullopt).outcome);
+	EXPECT_EQ(EProjectCatalogOutcome::Failed,
+		service.Move(FileUri(L"C:\\z"), std::nullopt).outcome);
+	EXPECT_EQ(EProjectCatalogOutcome::Failed,
+		service.Move(FileUri(L"C:\\b"), FileUri(L"C:\\z")).outcome);
+	EXPECT_TRUE(script->saved.empty());
+	const std::vector<std::wstring> unchanged{ L"C:\\a", L"C:\\b" };
+	EXPECT_EQ(unchanged, CatalogOrder(service.Snapshot()));
+
+	CProjectCatalogService unloaded(std::make_unique<ScriptedProjectStore>());
+	EXPECT_EQ(EProjectCatalogOutcome::Failed,
+		unloaded.Move(FileUri(L"C:\\a"), std::nullopt).outcome);
+}
+
+TEST(ProjectCatalogService, MoveConflictReloadsAndAppliesOnceOrFailsClosed)
+{
+	{
+		// Another window added D meanwhile; "C before A" still means the same.
+		auto store = std::make_unique<ScriptedProjectStore>();
+		auto* script = store.get();
+		store->load = { EProjectCatalogStoreLoadStatus::Succeeded,
+			CatalogPayload({ L"C:\\a", L"C:\\b", L"C:\\c" }), {} };
+		CProjectCatalogService service(std::move(store));
+		ASSERT_EQ(EProjectCatalogOutcome::Succeeded, service.Load().outcome);
+		script->load.payload = CatalogPayload({ L"C:\\a", L"C:\\b", L"C:\\c", L"C:\\d" });
+		script->saves.push_back({ EProjectCatalogStoreSaveStatus::Conflict, "stale revision" });
+
+		EXPECT_EQ(EProjectCatalogOutcome::Succeeded,
+			service.Move(FileUri(L"C:\\c"), FileUri(L"C:\\a")).outcome);
+		EXPECT_EQ(2, script->loads);
+		ASSERT_EQ(2U, script->saved.size());
+		const std::vector<std::wstring> expected{ L"C:\\c", L"C:\\a", L"C:\\b", L"C:\\d" };
+		EXPECT_EQ(expected, CatalogOrder(service.Snapshot()));
+	}
+	{
+		// The reload no longer holds C: the move fails and writes nothing more.
+		auto store = std::make_unique<ScriptedProjectStore>();
+		auto* script = store.get();
+		store->load = { EProjectCatalogStoreLoadStatus::Succeeded,
+			CatalogPayload({ L"C:\\a", L"C:\\b", L"C:\\c" }), {} };
+		CProjectCatalogService service(std::move(store));
+		ASSERT_EQ(EProjectCatalogOutcome::Succeeded, service.Load().outcome);
+		script->load.payload = CatalogPayload({ L"C:\\a", L"C:\\b" });
+		script->saves.push_back({ EProjectCatalogStoreSaveStatus::Conflict, "stale revision" });
+
+		EXPECT_EQ(EProjectCatalogOutcome::Failed,
+			service.Move(FileUri(L"C:\\c"), FileUri(L"C:\\a")).outcome);
+		EXPECT_EQ(2, script->loads);
+		EXPECT_EQ(1U, script->saved.size());
+		const std::vector<std::wstring> reloaded{ L"C:\\a", L"C:\\b" };
+		EXPECT_EQ(reloaded, CatalogOrder(service.Snapshot()));
+	}
+	{
+		// A second Conflict after the reload is terminal; no third attempt.
+		auto store = std::make_unique<ScriptedProjectStore>();
+		auto* script = store.get();
+		store->load = { EProjectCatalogStoreLoadStatus::Succeeded,
+			CatalogPayload({ L"C:\\a", L"C:\\b" }), {} };
+		CProjectCatalogService service(std::move(store));
+		ASSERT_EQ(EProjectCatalogOutcome::Succeeded, service.Load().outcome);
+		script->saves.push_back({ EProjectCatalogStoreSaveStatus::Conflict, "stale revision" });
+		script->saves.push_back({ EProjectCatalogStoreSaveStatus::Conflict, "stale revision" });
+		EXPECT_EQ(EProjectCatalogOutcome::Failed,
+			service.Move(FileUri(L"C:\\b"), FileUri(L"C:\\a")).outcome);
+		EXPECT_EQ(2U, script->saved.size());
+		const std::vector<std::wstring> unchanged{ L"C:\\a", L"C:\\b" };
+		EXPECT_EQ(unchanged, CatalogOrder(service.Snapshot()));
+	}
+}
+
 TEST(ProjectCatalogService, CorruptEntriesFailClosedWithoutReplacingAcceptedState)
 {
 	auto store = std::make_unique<ScriptedProjectStore>();
@@ -370,6 +551,76 @@ TEST(ProjectCatalogService, CorruptEntriesFailClosedWithoutReplacingAcceptedStat
 	EXPECT_EQ(EProjectCatalogOutcome::Failed,
 		service.RecordSuccessfulOpen(ProjectFolder(L"C:\\repo")).outcome);
 	EXPECT_TRUE(script->saved.empty());
+}
+
+// #416: the drop gaps lie between blocks (a Project row and its child rows).
+TEST(ProjectsModel, DropGapHitTestUsesBlocksAndTheNearestGap)
+{
+	const auto row = [](const EProjectsRowKind kind, const std::size_t project) {
+		ProjectsRow result;
+		result.kind = kind;
+		result.projectIndex = project;
+		return result;
+	};
+	// Project 1 is current and expanded: rows 2..5 are its children.
+	const std::vector<ProjectsRow> rows{
+		row(EProjectsRowKind::Project, 0),
+		row(EProjectsRowKind::Project, 1),
+		row(EProjectsRowKind::CurrentWorktree, 1),
+		row(EProjectsRowKind::Agent, 1),
+		row(EProjectsRowKind::WorktreesToggle, 1),
+		row(EProjectsRowKind::Worktree, 1),
+		row(EProjectsRowKind::Project, 2),
+	};
+	constexpr int height = 20;
+	const auto gap = [&rows](const int y, const int top = 0) {
+		return HitTestProjectDropGap(rows, top, height, y);
+	};
+	const auto before = [](const std::size_t insertionRow, std::optional<std::size_t> project) {
+		return std::optional(ProjectDropGap{ insertionRow, project });
+	};
+	// Every gap: before 0, before 1, before 2 (after 1's block), and the end.
+	EXPECT_EQ(before(0, 0), gap(0));
+	EXPECT_EQ(before(1, 1), gap(20));
+	EXPECT_EQ(before(6, 2), gap(120));
+	EXPECT_EQ(before(7, std::nullopt), gap(139));
+	// A one-row block: the top half is before it, the bottom half after it.
+	EXPECT_EQ(before(0, 0), gap(9));
+	EXPECT_EQ(before(1, 1), gap(10));
+	EXPECT_EQ(before(6, 2), gap(129));
+	EXPECT_EQ(before(7, std::nullopt), gap(130));
+	// Over child rows the nearest block boundary wins; a drop never lands
+	// between a Project and its worktrees or agents.
+	EXPECT_EQ(before(1, 1), gap(45));
+	EXPECT_EQ(before(1, 1), gap(69));
+	EXPECT_EQ(before(6, 2), gap(70));
+	EXPECT_EQ(before(6, 2), gap(115));
+	// Outside the rows there is no gap.
+	EXPECT_EQ(std::nullopt, gap(-1));
+	EXPECT_EQ(std::nullopt, gap(140));
+	EXPECT_EQ(std::nullopt, HitTestProjectDropGap({}, 0, height, 5));
+	EXPECT_EQ(std::nullopt, HitTestProjectDropGap(rows, 0, 0, 5));
+	// A scrolled list: row 2 is at the top, and the rows above are negative.
+	EXPECT_EQ(before(1, 1), gap(0, -40));
+	EXPECT_EQ(before(6, 2), gap(79, -40));
+	EXPECT_EQ(std::nullopt, gap(-41, -40));
+}
+
+TEST(ProjectsModel, PreferredProjectIndexSelectsThatProjectRow)
+{
+	const std::vector<ProjectEntry> projects{
+		ProjectFolder(L"C:\\a"), ProjectFolder(L"C:\\b"), ProjectFolder(L"C:\\c"),
+	};
+	config::WorkspaceContextSnapshot workspace;
+	workspace.kind = config::EWorkspaceKind::Empty;
+	const auto first = ProjectProjects(projects, workspace, nullptr, false, {},
+		EProjectsRowKind::Project);
+	ASSERT_TRUE(first.selectedRowIndex.has_value());
+	EXPECT_EQ(0U, *first.selectedRowIndex);
+	const auto preferred = ProjectProjects(projects, workspace, nullptr, false, {},
+		EProjectsRowKind::Project, {}, {}, {}, {}, 2U);
+	ASSERT_TRUE(preferred.selectedRowIndex.has_value());
+	EXPECT_EQ(2U, *preferred.selectedRowIndex);
 }
 
 TEST(ProjectsModel, GroupsCurrentCheckoutAndCollapsesTheRemainingWorktrees)
@@ -1473,6 +1724,334 @@ TEST(ProjectsPage, AgentNotificationAddsRowsAndActivatesWithoutGitRediscovery)
 	::DestroyWindow(hostWindow);
 }
 
+namespace {
+
+//! #416: a page over a three-Project catalog whose moves land in `projects`.
+struct CatalogReorderPage final {
+	std::vector<ProjectEntry> projects{
+		ProjectFolder(L"C:\\alpha", L"Alpha"),
+		ProjectFolder(L"C:\\beta", L"Beta"),
+		ProjectFolder(L"C:\\gamma", L"Gamma"),
+	};
+	config::WorkspaceContextSnapshot workspace;
+	std::vector<std::pair<std::wstring, std::optional<std::wstring>>> moves;
+	int activations = 0;
+	int catalogReads = 0;
+	bool failMoves = false;
+	HWND hostWindow = nullptr;
+	HWND list = nullptr;
+	std::unique_ptr<workbench::viewcontainer::IViewContainerPage> page;
+	workbench::viewcontainer::IViewContainerPageProjection* nativePage = nullptr;
+
+	void Open()
+	{
+		workspace.kind = config::EWorkspaceKind::Empty;
+		ProjectsPageOptions options;
+		options.projects = [this] {
+			++catalogReads;
+			return std::optional(projects);
+		};
+		options.workspace = [this] { return workspace; };
+		options.workspaceRoot = [] { return std::wstring{}; };
+		options.repositoryRoots = [](const ProjectEntry&) {
+			return std::optional(std::vector<std::wstring>{});
+		};
+		options.activateProject = [this](const ProjectEntry&, bool) {
+			++activations;
+			return EProjectsActivationStatus::FocusedCurrentWindow;
+		};
+		options.activateWorktree = [](std::wstring_view, bool) {
+			return EProjectsActivationStatus::Failed;
+		};
+		options.removeProject = [](const ProjectEntry&) { return EProjectsRemovalStatus::Failed; };
+		options.moveProject = [this](const ProjectEntry& project, const std::optional<ProjectEntry>& before) {
+			moves.emplace_back(*project.uri.ToWindowsPath().value,
+				before ? std::optional(*before->uri.ToWindowsPath().value) : std::nullopt);
+			if (failMoves) return EProjectsMoveStatus::Failed;
+			auto moved = MoveProjectEntry(projects, project.uri,
+				before ? std::optional(before->uri) : std::nullopt);
+			projects = std::move(moved.entries);
+			return EProjectsMoveStatus::Moved;
+		};
+		hostWindow = ::CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+			0, 0, 320, 400, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+		ASSERT_NE(nullptr, hostWindow);
+		page = CreateProjectsPage(hostWindow, std::move(options));
+		ASSERT_NE(nullptr, page);
+		const auto nativeHost = reinterpret_cast<workbench::viewcontainer::ViewContainerNativeHandle>(
+			hostWindow);
+		ASSERT_EQ(workbench::viewcontainer::EViewContainerPageReparentStatus::Reparented,
+			page->Reparent(nativeHost));
+		const workbench::viewcontainer::ViewContainerPageHost host{
+			"workbench.parts.sidebar",
+			workbench::layout::EViewContainerLocation::Sidebar,
+			nativeHost,
+		};
+		ASSERT_EQ(workbench::viewcontainer::EViewContainerPageAttachStatus::Attached,
+			page->Attach(host));
+		nativePage = dynamic_cast<workbench::viewcontainer::IViewContainerPageProjection*>(page.get());
+		ASSERT_NE(nullptr, nativePage);
+		const RECT bounds{ 0, 0, 320, 400 };
+		nativePage->LayoutProjection(bounds, bounds, 96);
+		nativePage->SetProjectionVisible(true);
+		nativePage->ActivateProjection();
+		const HWND pageWindow = ::FindWindowExW(hostWindow, nullptr, L"SakuraProjectsPage", nullptr);
+		ASSERT_NE(nullptr, pageWindow);
+		list = ::FindWindowExW(pageWindow, nullptr, L"LISTBOX", nullptr);
+		ASSERT_NE(nullptr, list);
+		ASSERT_EQ(3, ::SendMessageW(list, LB_GETCOUNT, 0, 0));
+	}
+
+	~CatalogReorderPage()
+	{
+		if (::GetCapture() != nullptr) (void)::ReleaseCapture();
+		if (nativePage != nullptr) nativePage->DeactivateProjection();
+		if (page) (void)page->Close();
+		page.reset();
+		if (hostWindow != nullptr) ::DestroyWindow(hostWindow);
+	}
+
+	[[nodiscard]] RECT Row(const int index) const
+	{
+		RECT item{};
+		EXPECT_NE(LB_ERR, ::SendMessageW(list, LB_GETITEMRECT, static_cast<WPARAM>(index),
+			reinterpret_cast<LPARAM>(&item)));
+		return item;
+	}
+
+	[[nodiscard]] static LPARAM At(const int x, const int y) { return MAKELPARAM(x, y); }
+
+	//! Press on `row`'s centre and move past the system drag threshold.
+	void BeginDrag(const int row) const
+	{
+		const RECT item = Row(row);
+		const int x = (item.left + item.right) / 2;
+		const int y = (item.top + item.bottom) / 2;
+		(void)::SendMessageW(list, WM_LBUTTONDOWN, MK_LBUTTON, At(x, y));
+		const int step = std::max(::GetSystemMetrics(SM_CXDRAG), ::GetSystemMetrics(SM_CYDRAG)) + 2;
+		(void)::SendMessageW(list, WM_MOUSEMOVE, MK_LBUTTON, At(x + step, y));
+	}
+
+	void MoveTo(const int y) const
+	{
+		(void)::SendMessageW(list, WM_MOUSEMOVE, MK_LBUTTON, At(40, y));
+	}
+
+	void ReleaseAt(const int y) const
+	{
+		(void)::SendMessageW(list, WM_LBUTTONUP, 0, At(40, y));
+	}
+
+	//! Re-shows the page, which refreshes from the catalog and rebuilds every row.
+	void Rebuild()
+	{
+		const int before = catalogReads;
+		nativePage->DeactivateProjection();
+		nativePage->ActivateProjection();
+		EXPECT_GT(catalogReads, before);
+	}
+
+	[[nodiscard]] std::vector<std::wstring> Labels() const
+	{
+		std::vector<std::wstring> names;
+		for (const auto& entry : projects) names.push_back(*entry.label);
+		return names;
+	}
+};
+
+} // namespace
+
+TEST(ProjectsPage, DragAndDropMovesTheProjectAndKeepsItSelected)
+{
+	CatalogReorderPage fixture;
+	fixture.Open();
+	if (::testing::Test::HasFatalFailure()) return;
+
+	// Drag Gamma onto the top half of Alpha.
+	fixture.BeginDrag(2);
+	EXPECT_EQ(fixture.list, ::GetCapture());
+	fixture.MoveTo(fixture.Row(0).top + 2);
+	// The list's own press-and-move selection does not follow the pointer.
+	EXPECT_EQ(2, ::SendMessageW(fixture.list, LB_GETCURSEL, 0, 0));
+	fixture.ReleaseAt(fixture.Row(0).top + 2);
+
+	ASSERT_EQ(1U, fixture.moves.size());
+	EXPECT_EQ(L"C:\\gamma", fixture.moves[0].first);
+	EXPECT_EQ(std::optional<std::wstring>(L"C:\\alpha"), fixture.moves[0].second);
+	EXPECT_EQ((std::vector<std::wstring>{ L"Gamma", L"Alpha", L"Beta" }), fixture.Labels());
+	const auto rows = ListBoxRows(fixture.list);
+	ASSERT_EQ(3U, rows.size());
+	EXPECT_NE(std::wstring::npos, rows[0].find(L"Gamma"));
+	EXPECT_NE(std::wstring::npos, rows[1].find(L"Alpha"));
+	EXPECT_EQ(0, ::SendMessageW(fixture.list, LB_GETCURSEL, 0, 0));
+	EXPECT_NE(fixture.list, ::GetCapture());
+
+	// Downwards past the end: the bottom half of the last row means the end.
+	fixture.BeginDrag(0);
+	fixture.MoveTo(fixture.Row(2).bottom - 2);
+	fixture.ReleaseAt(fixture.Row(2).bottom - 2);
+	ASSERT_EQ(2U, fixture.moves.size());
+	EXPECT_EQ(L"C:\\gamma", fixture.moves[1].first);
+	EXPECT_EQ(std::nullopt, fixture.moves[1].second);
+	EXPECT_EQ((std::vector<std::wstring>{ L"Alpha", L"Beta", L"Gamma" }), fixture.Labels());
+	EXPECT_EQ(2, ::SendMessageW(fixture.list, LB_GETCURSEL, 0, 0));
+
+	// A drop where the Project already is does not reach the catalog.
+	fixture.BeginDrag(1);
+	fixture.ReleaseAt(fixture.Row(1).top + 2);
+	EXPECT_EQ(2U, fixture.moves.size());
+	EXPECT_EQ(0, fixture.activations);
+
+	// A failed move leaves the list as it was.
+	fixture.failMoves = true;
+	fixture.BeginDrag(2);
+	fixture.ReleaseAt(fixture.Row(0).top + 2);
+	ASSERT_EQ(3U, fixture.moves.size());
+	EXPECT_EQ((std::vector<std::wstring>{ L"Alpha", L"Beta", L"Gamma" }), fixture.Labels());
+	EXPECT_NE(std::wstring::npos, ListBoxRows(fixture.list)[0].find(L"Alpha"));
+}
+
+TEST(ProjectsPage, ClickAndDoubleClickOnAProjectRowNeverMoveIt)
+{
+	CatalogReorderPage fixture;
+	fixture.Open();
+	if (::testing::Test::HasFatalFailure()) return;
+	const RECT item = fixture.Row(1);
+	const LPARAM centre = CatalogReorderPage::At(40, (item.top + item.bottom) / 2);
+	// A press and a release, with a move inside the threshold, is a click.
+	(void)::SendMessageW(fixture.list, WM_LBUTTONDOWN, MK_LBUTTON, centre);
+	(void)::SendMessageW(fixture.list, WM_MOUSEMOVE, MK_LBUTTON,
+		CatalogReorderPage::At(41, (item.top + item.bottom) / 2));
+	(void)::SendMessageW(fixture.list, WM_LBUTTONUP, 0, centre);
+	EXPECT_EQ(1, ::SendMessageW(fixture.list, LB_GETCURSEL, 0, 0));
+	EXPECT_EQ(0, fixture.activations);
+	// The double click still switches the Project.
+	(void)::SendMessageW(fixture.list, WM_LBUTTONDBLCLK, MK_LBUTTON, centre);
+	(void)::SendMessageW(fixture.list, WM_LBUTTONUP, 0, centre);
+	EXPECT_EQ(1, fixture.activations);
+	EXPECT_TRUE(fixture.moves.empty());
+	EXPECT_EQ((std::vector<std::wstring>{ L"Alpha", L"Beta", L"Gamma" }), fixture.Labels());
+}
+
+TEST(ProjectsPage, EscapeALostCaptureOrAReleaseOutsideTheRowsCancelTheDrag)
+{
+	CatalogReorderPage fixture;
+	fixture.Open();
+	if (::testing::Test::HasFatalFailure()) return;
+	const int top = fixture.Row(0).top + 2;
+
+	fixture.BeginDrag(2);
+	fixture.MoveTo(top);
+	(void)::SendMessageW(fixture.list, WM_KEYDOWN, VK_ESCAPE, 0);
+	EXPECT_NE(fixture.list, ::GetCapture());
+	fixture.ReleaseAt(top);
+
+	fixture.BeginDrag(2);
+	fixture.MoveTo(top);
+	ASSERT_EQ(fixture.list, ::GetCapture());
+	(void)::SetCapture(fixture.hostWindow);
+	(void)::ReleaseCapture();
+	fixture.ReleaseAt(top);
+
+	// Below the last row there is no gap.
+	fixture.BeginDrag(0);
+	fixture.ReleaseAt(fixture.Row(2).bottom + 30);
+
+	EXPECT_TRUE(fixture.moves.empty());
+	EXPECT_EQ((std::vector<std::wstring>{ L"Alpha", L"Beta", L"Gamma" }), fixture.Labels());
+	EXPECT_EQ(0, fixture.activations);
+}
+
+TEST(ProjectsPage, ARowRebuildDuringADragKeepsTheDragUntilItsProjectIsGone)
+{
+	CatalogReorderPage fixture;
+	fixture.Open();
+	if (::testing::Test::HasFatalFailure()) return;
+	const int top = fixture.Row(0).top + 2;
+
+	fixture.BeginDrag(2);
+	fixture.Rebuild();
+	EXPECT_EQ(fixture.list, ::GetCapture());
+	fixture.MoveTo(top);
+	fixture.ReleaseAt(top);
+	ASSERT_EQ(1U, fixture.moves.size());
+	EXPECT_EQ(L"C:\\gamma", fixture.moves[0].first);
+	EXPECT_EQ((std::vector<std::wstring>{ L"Gamma", L"Alpha", L"Beta" }), fixture.Labels());
+
+	// Another window removed the dragged Project: the rebuild cancels the drag.
+	fixture.BeginDrag(2);
+	std::erase_if(fixture.projects, [](const ProjectEntry& entry) { return *entry.label == L"Beta"; });
+	fixture.Rebuild();
+	EXPECT_NE(fixture.list, ::GetCapture());
+	fixture.ReleaseAt(top);
+	EXPECT_EQ(1U, fixture.moves.size());
+	EXPECT_EQ(2, ::SendMessageW(fixture.list, LB_GETCOUNT, 0, 0));
+}
+
+TEST(ProjectsPage, AltUpAndAltDownMoveTheSelectedProjectOnePlace)
+{
+	CatalogReorderPage fixture;
+	fixture.Open();
+	if (::testing::Test::HasFatalFailure()) return;
+	const auto press = [&fixture](const WPARAM key) {
+		MSG message{};
+		message.hwnd = fixture.list;
+		message.message = WM_SYSKEYDOWN;
+		message.wParam = key;
+		message.lParam = static_cast<LPARAM>(1U << 29U);	// the Alt context bit
+		return fixture.nativePage->PreTranslateProjection(message);
+	};
+
+	ASSERT_NE(LB_ERR, ::SendMessageW(fixture.list, LB_SETCURSEL, 1, 0));
+	EXPECT_TRUE(press(VK_UP));
+	EXPECT_EQ((std::vector<std::wstring>{ L"Beta", L"Alpha", L"Gamma" }), fixture.Labels());
+	EXPECT_EQ(0, ::SendMessageW(fixture.list, LB_GETCURSEL, 0, 0));
+	// The first Project cannot move up.
+	EXPECT_TRUE(press(VK_UP));
+	EXPECT_EQ(1U, fixture.moves.size());
+
+	EXPECT_TRUE(press(VK_DOWN));
+	EXPECT_EQ((std::vector<std::wstring>{ L"Alpha", L"Beta", L"Gamma" }), fixture.Labels());
+	EXPECT_EQ(1, ::SendMessageW(fixture.list, LB_GETCURSEL, 0, 0));
+	EXPECT_TRUE(press(VK_DOWN));
+	EXPECT_EQ((std::vector<std::wstring>{ L"Alpha", L"Gamma", L"Beta" }), fixture.Labels());
+	ASSERT_EQ(3U, fixture.moves.size());
+	EXPECT_EQ(L"C:\\beta", fixture.moves[2].first);
+	EXPECT_EQ(std::nullopt, fixture.moves[2].second);
+	// The last Project cannot move down.
+	EXPECT_EQ(2, ::SendMessageW(fixture.list, LB_GETCURSEL, 0, 0));
+	EXPECT_TRUE(press(VK_DOWN));
+	EXPECT_EQ(3U, fixture.moves.size());
+	// Other Alt keys are not the page's.
+	EXPECT_FALSE(press(VK_LEFT));
+}
+
+TEST(ProjectsPage, MoveUpAndMoveDownMenuEntriesAreLocalized)
+{
+	tests1::ScopedLanguageSelection restoreLanguage;
+	CSelectLang::InitializeLanguageEnvironment();
+	struct Locale final {
+		const wchar_t* dll;
+		const wchar_t* up;
+		const wchar_t* down;
+	};
+	const Locale locales[] = {
+		{ L"", L"\u4e0a\u3078\u79fb\u52d5", L"\u4e0b\u3078\u79fb\u52d5" },
+		{ L"sakura_lang_zh_CN.dll", L"\u4e0a\u79fb", L"\u4e0b\u79fb" },
+		{ L"sakura_lang_en_US.dll", L"Move Up", L"Move Down" },
+	};
+	for (const auto& locale : locales) {
+		CSelectLang::ChangeLang(locale.dll);
+		wchar_t value[256]{};
+		ASSERT_GT(::LoadStringW(CSelectLang::getLangRsrcInstance(), STR_WORKBENCH_PROJECTS_MOVE_UP,
+			value, 256), 0) << locale.dll;
+		EXPECT_EQ(std::wstring(locale.up), value) << locale.dll;
+		ASSERT_GT(::LoadStringW(CSelectLang::getLangRsrcInstance(), STR_WORKBENCH_PROJECTS_MOVE_DOWN,
+			value, 256), 0) << locale.dll;
+		EXPECT_EQ(std::wstring(locale.down), value) << locale.dll;
+	}
+}
+
 // #417: with the Sessions View the pane stack paints the first View's header
 // under the container title, so that header is Catalog in every language and
 // never repeats the "Projects" title (VS Code's Source Control / Changes).
@@ -1711,6 +2290,21 @@ TEST(ProjectsPage, SessionsLoadOffTheUiThreadResumeFromTheRowAndCancelOnClose)
 	(void)::SendMessageW(sessionsList, WM_LBUTTONUP, 0, claudePoint);
 	EXPECT_EQ(claudeIndex, ::SendMessageW(sessionsList, LB_GETCURSEL, 0, 0));
 	EXPECT_EQ(2U, resumed.size());
+
+	// #416: the Sessions list is ordered by pin and recency, so it offers no
+	// reordering. A press moved past the drag threshold stays the list's own
+	// press-and-move selection, which follows the pointer to the other row.
+	{
+		const auto sessionRowsBefore = ListBoxRows(sessionsList);
+		const LPARAM codexPoint = rowPoint(sessionsList, codexIndex);
+		(void)::SendMessageW(sessionsList, WM_LBUTTONDOWN, MK_LBUTTON, claudePoint);
+		(void)::SendMessageW(sessionsList, WM_MOUSEMOVE, MK_LBUTTON, codexPoint);
+		EXPECT_EQ(codexIndex, ::SendMessageW(sessionsList, LB_GETCURSEL, 0, 0));
+		(void)::SendMessageW(sessionsList, WM_LBUTTONUP, 0, codexPoint);
+		EXPECT_NE(sessionsList, ::GetCapture());
+		EXPECT_EQ(sessionRowsBefore, ListBoxRows(sessionsList));
+		EXPECT_EQ(2U, resumed.size());
+	}
 
 	// A click on a pane header collapses that View and gives its space to the
 	// other one; the press and the release must both land on the header.

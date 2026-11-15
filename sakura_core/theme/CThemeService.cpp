@@ -176,6 +176,9 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 		face, face, frame, highlight, highlightText, face, highlightText,
 		{ 0x00, 0x00, 0x00, 0x00 }, frame, frame, frame, windowText };
 	palette.editorIndentGuideBackground = windowText;
+	// `icon.foreground` registers #FFFFFF / #292929 for the two contrast kinds,
+	// which is the system window text of each.
+	palette.listDropBetweenBackground = windowText;
 	return palette;
 }
 

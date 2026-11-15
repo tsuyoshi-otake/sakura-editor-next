@@ -196,5 +196,27 @@ TEST(CColorThemeRegistry, ProjectsTheStableIndentGuideTokenAndDeprecatedFallback
 	EXPECT_EQ((ThemeColor{ 4, 5, 6, 0x90 }), stable.editorIndentGuideBackground);
 }
 
+// #416: upstream registers `list.dropBetweenBackground` as `iconForeground`.
+TEST(CColorThemeRegistry, ProjectsTheListDropLineFromItsTokenOrTheIconForeground)
+{
+	using theme::CColorThemeRegistry;
+	using theme::ColorThemeKind;
+	using theme::ThemeColor;
+
+	EXPECT_EQ((ThemeColor{ 0xC5, 0xC5, 0xC5 }),
+		CColorThemeRegistry::ProjectPalette(ColorThemeKind::Dark, {}).listDropBetweenBackground);
+	EXPECT_EQ((ThemeColor{ 0x42, 0x42, 0x42 }),
+		CColorThemeRegistry::ProjectPalette(ColorThemeKind::Light, {}).listDropBetweenBackground);
+	const auto icon = CColorThemeRegistry::ProjectPalette(ColorThemeKind::Dark, {
+		{ L"icon.foreground", ThemeColor{ 0x10, 0x20, 0x30 } },
+	});
+	EXPECT_EQ((ThemeColor{ 0x10, 0x20, 0x30 }), icon.listDropBetweenBackground);
+	const auto explicitLine = CColorThemeRegistry::ProjectPalette(ColorThemeKind::Dark, {
+		{ L"icon.foreground", ThemeColor{ 0x10, 0x20, 0x30 } },
+		{ L"list.dropBetweenBackground", ThemeColor{ 0x40, 0x50, 0x60 } },
+	});
+	EXPECT_EQ((ThemeColor{ 0x40, 0x50, 0x60 }), explicitLine.listDropBetweenBackground);
+}
+
 
 } // namespace

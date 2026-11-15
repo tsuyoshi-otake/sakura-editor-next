@@ -36,6 +36,11 @@ enum class EProjectsRemovalStatus : std::uint8_t {
 	Failed,
 };
 
+enum class EProjectsMoveStatus : std::uint8_t {
+	Moved,
+	Failed,
+};
+
 using ProjectsSnapshotProvider =
 	std::function<std::optional<std::vector<ProjectEntry>>() >;
 using ProjectsWorkspaceSnapshotProvider = std::function<config::WorkspaceContextSnapshot()>;
@@ -53,6 +58,10 @@ using ProjectWorktreeActivationCallback =
 	std::function<EProjectsActivationStatus(std::wstring_view, bool)>;
 using ProjectRemovalCallback =
 	std::function<EProjectsRemovalStatus(const ProjectEntry&)>;
+//! #416: move `project` in front of `before`, or to the end of the catalog
+//! when `before` is empty. Both name catalog entries by identity.
+using ProjectMoveCallback =
+	std::function<EProjectsMoveStatus(const ProjectEntry& project, const std::optional<ProjectEntry>& before)>;
 using ProjectGitDiscoveryFactory =
 	std::function<std::unique_ptr<worktree::GitWorktreeDiscoverySource>()>;
 //! refresh=true only from the page's own Refresh() (activation / explicit
@@ -119,6 +128,9 @@ struct ProjectsPageOptions final {
 	ProjectNewWindowActivationCallback activateProjectInNewWindow;
 	ProjectWorktreeActivationCallback activateWorktree;
 	ProjectRemovalCallback removeProject;
+	//! Optional #416 seam. Absent = the Catalog offers no reordering: no drag,
+	//! no Move Up / Move Down.
+	ProjectMoveCallback moveProject;
 	//! Optional test/composition seam. Production constructs the hardened
 	//! passive Git source when this factory is absent.
 	ProjectGitDiscoveryFactory gitDiscoveryFactory;

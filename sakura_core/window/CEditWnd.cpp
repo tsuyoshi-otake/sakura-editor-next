@@ -3163,6 +3163,23 @@ bool CEditWnd::InitializeWorkbench()
 						? workbench::projects::EProjectsRemovalStatus::Removed
 						: workbench::projects::EProjectsRemovalStatus::Failed;
 				};
+				// #416: the Catalog's reorder goes to the profile catalog by identity.
+				options.moveProject = [this](const workbench::projects::ProjectEntry& project,
+					const std::optional<workbench::projects::ProjectEntry>& before) {
+					if (m_workbenchRuntime == nullptr) {
+						return workbench::projects::EProjectsMoveStatus::Failed;
+					}
+					const auto projects = m_workbenchRuntime->Projects();
+					if (projects == nullptr) {
+						return workbench::projects::EProjectsMoveStatus::Failed;
+					}
+					const std::optional<platform::uri::Uri> beforeUri = before
+						? std::optional<platform::uri::Uri>(before->uri) : std::nullopt;
+					const auto moved = projects->Move(project.uri, beforeUri);
+					return moved.outcome == workbench::projects::EProjectCatalogOutcome::Succeeded
+						? workbench::projects::EProjectsMoveStatus::Moved
+						: workbench::projects::EProjectsMoveStatus::Failed;
+				};
 				// #402 Phase A: the window's terminal agent presence, projected under
 				// the current Project. Identity is the runtime terminal instance;
 				// the tab id only routes activation back to the same terminal.

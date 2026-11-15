@@ -193,6 +193,10 @@ struct ThemePalette {
 	//! VS Code `editorIndentGuide.background1`. It stays raw until the editor
 	//! paints it over the current line background and extension decorations.
 	ThemeColor editorIndentGuideBackground = { 0x40, 0x40, 0x40 };
+	//! VS Code `list.dropBetweenBackground`, the 1px line a list drag draws at
+	//! its insertion gap (#416). Upstream defaults it to `icon.foreground`,
+	//! whose registered dark value is #C5C5C5 and light value #424242.
+	ThemeColor listDropBetweenBackground = { 0xC5, 0xC5, 0xC5 };
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
 
@@ -440,6 +444,7 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		palette.minimapSliderHoverBackground = { 0x64, 0x64, 0x64, 0x59 };
 		palette.minimapSliderActiveBackground = { 0x00, 0x00, 0x00, 0x4C };
 		palette.editorIndentGuideBackground = { 0xD3, 0xD3, 0xD3 };
+		palette.listDropBetweenBackground = { 0x42, 0x42, 0x42 };
 		return palette;
 	}
 	return {

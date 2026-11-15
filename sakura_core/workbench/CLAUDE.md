@@ -242,7 +242,8 @@ and lifecycle rules as the rest of the native workbench.
     the content.
   - `CProjectsListPane` owns one View's list mechanics: the owner-drawn
     LISTBOX, the overlay scrollbar (#407), its tooltip tool, the single-click
-    gesture (#412), and the empty message painted in the list's own body.
+    gesture (#412), the optional row drag (#416), and the empty message
+    painted in the list's own body.
     `CProjectsPage` owns the rows, the pane stack, and what each row does.
   - Session discovery rebuilds only the Sessions list, so it never resets
     the Projects list's selection or scroll position.
@@ -253,6 +254,65 @@ and lifecycle rules as the rest of the native workbench.
       keeps them in its view-state memento, which this container lacks.
     - Pane headers take no keyboard focus, so Space/Enter on a header and
       the header's Up/Down navigation are not available.
+- **Reordering the Catalog (#416).** The user orders Projects by drag and
+  drop or from the keyboard; nothing else reorders them.
+  - **The catalog owns the order.** `IProjectCatalogService::Move(project,
+    before)` addresses both by identity, never by index: "P before Q", or the
+    end when `before` is empty. The reorder is the pure `MoveProjectEntry`.
+    A move that changes nothing writes nothing, an unknown Project or target
+    fails and writes nothing, and a `Conflict` reloads and applies once; if
+    the reload no longer holds either Project the move fails closed.
+    `RecordSuccessfulOpen` still never reorders.
+  - **Only Project rows move.** A block is a Project row plus its child rows
+    (worktrees, agents, the group row), and the gaps lie between blocks, so a
+    drop never splits a Project from its children. `HitTestProjectDropGap`
+    picks the gap nearest to the pointer; on a one-row block that is
+    upstream's rule (top half before, bottom half after). Outside the rows
+    there is no gap, and a release there cancels.
+  - **The gesture lives in `CProjectsListPane`.** A press on a draggable row
+    becomes a drag past the system drag threshold (`SM_CXDRAG`/`SM_CYDRAG`,
+    the Activity Bar's own threshold); before that it is still a click, and a
+    double click still switches the Project. Starting the drag ends the list's
+    own press-and-move tracking at the press point and takes the capture, so
+    the selection stays on the dragged row. The feedback is a 1 DIP line on
+    the gap in `list.dropBetweenBackground` (upstream default
+    `icon.foreground`), drawn after the list's own paint; the list scrolls one
+    row per 50 ms tick while the pointer is within 35 DIP of an edge.
+  - **Every exit is terminal.** A drop, a release outside a gap, `Esc`, a
+    right press, `WM_CAPTURECHANGED` to another window, `WM_CANCELMODE`, and
+    `CancelDrag` each kill the timer, remove the line and release the capture,
+    and call `dragEnded` exactly once. Page close (`Destroy`) does the same
+    without the callback.
+  - **A rebuild keeps the drag.** The page holds the dragged Project by value
+    and identity; Refresh, Git results, and agent changes rebuild the rows
+    without ending the drag. A rebuild that no longer holds that Project
+    cancels it.
+  - **After a move** the page re-reads the catalog. When only the order
+    changed it renumbers its branch cache keys and queued Git requests by
+    identity instead of restarting discovery, then keeps the moved Project
+    selected (`ProjectProjects`'s `preferredProjectIndex`) at the same scroll
+    position. A failed move beeps and the list is unchanged. Another window
+    sees the order on its own next catalog load; live cross-window refresh is
+    an existing limit.
+  - **Keyboard and menu (Phase 2).** With the Catalog list focused,
+    `Alt+Up` / `Alt+Down` move the selected Project one place, and the row
+    menu offers Move Up / Move Down (`STR_WORKBENCH_PROJECTS_MOVE_UP` /
+    `_DOWN`, ja/en/zh), disabled at the first/last Project. The keys arrive
+    as `WM_SYSKEYDOWN` and `PreTranslateProjection` takes them before the
+    frame's accelerator table, whose `Alt+Up` / `Alt+Down` are the editor's
+    `F_UP_BOX` / `F_DOWN_BOX`; with any other focus those keep working.
+  - **The Sessions list never reorders**: it is ordered by pin and recency,
+    so it gets no drag callbacks, like upstream's sorted lists.
+  - **Documented divergence:** the Issue names the actions
+    `sakura.projects.moveUp` / `sakura.projects.moveDown`, but like Remove and
+    Open in New Window they are page-local row actions, not registered
+    workbench commands, so the Command Palette and the keybinding editor do
+    not list them. Register them when the view gains a focused-view context
+    key that a `when` clause could test.
+  - Tests: `ProjectCatalogService.Move*`, `ProjectsModel.DropGapHitTest*`,
+    `ProjectsPage.DragAndDrop*`, `ClickAndDoubleClick*`,
+    `EscapeALostCapture*`, `ARowRebuildDuringADrag*`, `AltUpAndAltDown*`,
+    and the Sessions assertion inside `SessionsLoadOffTheUiThread*`.
 - **Agent session history (#406, fork extension).** The Sessions View lists
   the current folder's resumable agent CLI sessions, newest first, as
   top-level rows. Double-click or Enter on a row resumes it. While discovery

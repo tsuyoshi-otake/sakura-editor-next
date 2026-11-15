@@ -82,6 +82,28 @@ public:
 	virtual ProjectCatalogStoreSaveResult Save(std::string payload) = 0;
 };
 
+//! #416: the outcome of the pure reorder. `Moved` carries the new order;
+//! every other status leaves the input unchanged and must write nothing.
+enum class EProjectMoveStatus : std::uint8_t {
+	Moved,
+	Unchanged,
+	UnknownProject,
+	UnknownTarget,
+};
+
+struct ProjectMoveResult final {
+	EProjectMoveStatus status{ EProjectMoveStatus::UnknownProject };
+	std::vector<ProjectEntry> entries;
+};
+
+//! #416: move `project` so it sits immediately before `before`, or at the end
+//! when `before` is empty. Both are addressed by identity, never by index, so a
+//! reload that inserted or removed other Projects keeps the same meaning.
+//! Moving a Project before itself, or to the place it already holds, is
+//! `Unchanged`. A pure function over the entries; it never touches a store.
+[[nodiscard]] ProjectMoveResult MoveProjectEntry(const std::vector<ProjectEntry>& entries,
+	const platform::uri::Uri& project, const std::optional<platform::uri::Uri>& before);
+
 class IProjectCatalogService {
 public:
 	virtual ~IProjectCatalogService() = default;
@@ -92,6 +114,11 @@ public:
 	//! boundary. Reopening an existing Project updates it without reordering it.
 	virtual ProjectCatalogResult RecordSuccessfulOpen(ProjectEntry entry) = 0;
 	virtual ProjectCatalogResult Remove(const platform::uri::Uri& uri) = 0;
+	//! #416: reorder by identity (see MoveProjectEntry). An unchanged order writes
+	//! nothing. A Conflict reloads and applies once; when the reloaded catalog no
+	//! longer holds `project` or `before`, the move fails and writes nothing.
+	virtual ProjectCatalogResult Move(const platform::uri::Uri& project,
+		const std::optional<platform::uri::Uri>& before) = 0;
 };
 
 class CProjectCatalogService final : public IProjectCatalogService {
@@ -103,6 +130,8 @@ public:
 	[[nodiscard]] std::vector<ProjectEntry> Snapshot() const override;
 	ProjectCatalogResult RecordSuccessfulOpen(ProjectEntry entry) override;
 	ProjectCatalogResult Remove(const platform::uri::Uri& uri) override;
+	ProjectCatalogResult Move(const platform::uri::Uri& project,
+		const std::optional<platform::uri::Uri>& before) override;
 
 	[[nodiscard]] static std::optional<ProjectEntry> Normalize(ProjectEntry entry);
 
