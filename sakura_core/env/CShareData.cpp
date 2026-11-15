@@ -156,6 +156,7 @@ bool CShareData::InitShareData()
 			0,
 			0
 		);
+		m_createdSharedMemory = true;
 		CreateTypeSettings();
 
 		m_pShareData->m_vStructureVersion = uShareDataVersion;

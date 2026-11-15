@@ -184,6 +184,20 @@ bool CProcessFactory::IsStartingControlProcess() const
 	return EControlProcessStartupWaitOutcome::WaitFailed;
 }
 
+/* static */ std::optional<DWORD> CProcessFactory::ControlStartRetryDelayMs(
+	DWORD exitCode, unsigned int completedAttempts, unsigned int jitter) noexcept
+{
+	if (exitCode != static_cast<DWORD>(EControlProcessStartupExitCode::ControlSharedDataStillInUse)) {
+		return std::nullopt;
+	}
+	if (completedAttempts == 0 || completedAttempts >= kMaximumControlStartAttempts) {
+		return std::nullopt;
+	}
+	constexpr DWORD kFirstDelayMs = 250;
+	const DWORD base = kFirstDelayMs << (completedAttempts - 1);
+	return base + jitter % (base / 2 + 1);
+}
+
 /*!
 	@brief コントロールプロセスを起動する
 	
@@ -238,74 +252,84 @@ bool CProcessFactory::IsStartingControlProcess() const
 		::auto_sprintf_s( szCmdLineBuf, std::size(szCmdLineBuf), L"\"%s\" -NOWIN", szEXE ); // ""付加
 	}
 
-	//常駐プロセス起動
-	DWORD dwCreationFlag = CREATE_DEFAULT_ERROR_MODE;
-	CStartupTrace::Mark(CStartupTrace::Event::ControlSpawnBegin);
-#ifdef _DEBUG
-//	dwCreationFlag |= DEBUG_PROCESS; //2007.09.22 kobake デバッグ用フラグ
-#endif
-	BOOL bCreateResult = ::CreateProcess(
-		szEXE,				// 実行可能モジュールの名前
-		szCmdLineBuf,		// コマンドラインの文字列
-		nullptr,				// セキュリティ記述子
-		nullptr,				// セキュリティ記述子
-		FALSE,				// ハンドルの継承オプション
-		dwCreationFlag,		// 作成のフラグ
-		nullptr,				// 新しい環境ブロック
-		nullptr,				// カレントディレクトリの名前
-		&s,					// スタートアップ情報
-		&p					// プロセス情報
-	);
-	if( !bCreateResult ){
-		CStartupTrace::Mark(CStartupTrace::Event::ControlSpawnEnd);
-		//	失敗
-		WCHAR* pMsg;
-		::FormatMessage( FORMAT_MESSAGE_ALLOCATE_BUFFER |
-						FORMAT_MESSAGE_IGNORE_INSERTS |
-						FORMAT_MESSAGE_FROM_SYSTEM,
-						nullptr,
-						::GetLastError(),
-						MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-						(LPWSTR)&pMsg,
-						0,
-						nullptr
+	// A control process that finds the previous session's shared memory still
+	// mapped exits with ControlSharedDataStillInUse; that holder is going away,
+	// so start again after a short, growing, jittered wait (#423).
+	const auto jitterSeed = static_cast<unsigned int>(::GetTickCount64() ^ ::GetCurrentProcessId());
+	for (unsigned int attempt = 1;; ++attempt) {
+		//常駐プロセス起動
+		DWORD dwCreationFlag = CREATE_DEFAULT_ERROR_MODE;
+		CStartupTrace::Mark(CStartupTrace::Event::ControlSpawnBegin);
+	#ifdef _DEBUG
+	//	dwCreationFlag |= DEBUG_PROCESS; //2007.09.22 kobake デバッグ用フラグ
+	#endif
+		BOOL bCreateResult = ::CreateProcess(
+			szEXE,				// 実行可能モジュールの名前
+			szCmdLineBuf,		// コマンドラインの文字列
+			nullptr,				// セキュリティ記述子
+			nullptr,				// セキュリティ記述子
+			FALSE,				// ハンドルの継承オプション
+			dwCreationFlag,		// 作成のフラグ
+			nullptr,				// 新しい環境ブロック
+			nullptr,				// カレントディレクトリの名前
+			&s,					// スタートアップ情報
+			&p					// プロセス情報
 		);
-		ErrorMessage( nullptr, L"\'%s\'\nプロセスの起動に失敗しました。\n%s", szEXE, pMsg );
-		::LocalFree( (HLOCAL)pMsg );	//	エラーメッセージバッファを解放
-		return false;
-	}
-
-	HandleHolder hProcess{ p.hProcess };
-	HandleHolder hThread{ p.hThread };
-	CStartupTrace::Mark(CStartupTrace::Event::ControlSpawnEnd, p.dwProcessId);
-
-	// 初期化完了を待つ
-	std::array handles{ hEvent.get(), hProcess.get()};
-	CStartupTrace::Mark(CStartupTrace::Event::ControlWaitBegin);
-	const auto waitResult = ::WaitForMultipleObjects(DWORD(std::size(handles)), std::data(handles), FALSE, 15000);
-	CStartupTrace::Mark(CStartupTrace::Event::ControlWaitEnd);
-	CStartupTrace::Mark(CStartupTrace::Event::ControlWaitResult, waitResult);
-	switch (ClassifyStartupWaitResult(waitResult)) {
-	case EControlProcessStartupWaitOutcome::Ready:
-		return true;
-	case EControlProcessStartupWaitOutcome::ChildExited:
-	{
-		DWORD exitCode = ERROR_PROCESS_ABORTED;
-		if (!::GetExitCodeProcess(hProcess.get(), &exitCode) || exitCode == STILL_ACTIVE) {
-			exitCode = ERROR_PROCESS_ABORTED;
+		if( !bCreateResult ){
+			CStartupTrace::Mark(CStartupTrace::Event::ControlSpawnEnd);
+			//	失敗
+			WCHAR* pMsg;
+			::FormatMessage( FORMAT_MESSAGE_ALLOCATE_BUFFER |
+							FORMAT_MESSAGE_IGNORE_INSERTS |
+							FORMAT_MESSAGE_FROM_SYSTEM,
+							nullptr,
+							::GetLastError(),
+							MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+							(LPWSTR)&pMsg,
+							0,
+							nullptr
+			);
+			ErrorMessage( nullptr, L"\'%s\'\nプロセスの起動に失敗しました。\n%s", szEXE, pMsg );
+			::LocalFree( (HLOCAL)pMsg );	//	エラーメッセージバッファを解放
+			return false;
 		}
-		TopErrorMessage(nullptr, L"%ls", CControlProcess::StartupFailureMessage(exitCode).data());
-		return false;
-	}
-	case EControlProcessStartupWaitOutcome::TimedOut:
-		// L"エディタまたはシステムがビジー状態です。\nしばらく待って開きなおしてください。
-		TopErrorMessage(nullptr, LS(STR_ERR_DLGPROCFACT5));
-		return false;
-	case EControlProcessStartupWaitOutcome::WaitFailed:
-	default:
-		TopErrorMessage(nullptr,
-			L"コントロールプロセスの初期化結果を待機できませんでした。\n"
-			L"Sakura Editor NEXT をすべて終了してから、もう一度起動してください。");
-		return false;
+
+		HandleHolder hProcess{ p.hProcess };
+		HandleHolder hThread{ p.hThread };
+		CStartupTrace::Mark(CStartupTrace::Event::ControlSpawnEnd, p.dwProcessId);
+
+		// 初期化完了を待つ
+		std::array handles{ hEvent.get(), hProcess.get()};
+		CStartupTrace::Mark(CStartupTrace::Event::ControlWaitBegin);
+		const auto waitResult = ::WaitForMultipleObjects(DWORD(std::size(handles)), std::data(handles), FALSE, 15000);
+		CStartupTrace::Mark(CStartupTrace::Event::ControlWaitEnd);
+		CStartupTrace::Mark(CStartupTrace::Event::ControlWaitResult, waitResult);
+		switch (ClassifyStartupWaitResult(waitResult)) {
+		case EControlProcessStartupWaitOutcome::Ready:
+			return true;
+		case EControlProcessStartupWaitOutcome::ChildExited:
+		{
+			DWORD exitCode = ERROR_PROCESS_ABORTED;
+			if (!::GetExitCodeProcess(hProcess.get(), &exitCode) || exitCode == STILL_ACTIVE) {
+				exitCode = ERROR_PROCESS_ABORTED;
+			}
+			if (const auto delay = ControlStartRetryDelayMs(exitCode, attempt, jitterSeed * attempt)) {
+				::Sleep(*delay);
+				continue;
+			}
+			TopErrorMessage(nullptr, L"%ls", CControlProcess::StartupFailureMessage(exitCode).data());
+			return false;
+		}
+		case EControlProcessStartupWaitOutcome::TimedOut:
+			// L"エディタまたはシステムがビジー状態です。\nしばらく待って開きなおしてください。
+			TopErrorMessage(nullptr, LS(STR_ERR_DLGPROCFACT5));
+			return false;
+		case EControlProcessStartupWaitOutcome::WaitFailed:
+		default:
+			TopErrorMessage(nullptr,
+				L"コントロールプロセスの初期化結果を待機できませんでした。\n"
+				L"Sakura Editor NEXT をすべて終了してから、もう一度起動してください。");
+			return false;
+		}
 	}
 }

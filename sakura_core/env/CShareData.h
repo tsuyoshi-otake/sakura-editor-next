@@ -87,6 +87,12 @@ public:
 	int			GetMacroFilename( int idx, WCHAR* pszPath, int nBufLen ); // idxで指定したマクロファイル名（フルパス）を取得する	//	Jun. 14, 2003 genta 引数追加．書式変更
 	bool		BeReloadWhenExecuteMacro(int idx) const;	//	idxで指定したマクロは、実行するたびにファイルを読み込む設定か？
 
+	//! True only when InitShareData created the mapping in this process. The
+	//! control-only state (type settings, initial shared data) exists only then;
+	//! a process that attached to an existing mapping must not act as the control
+	//! process, because that mapping still belongs to a previous session (#423).
+	[[nodiscard]] bool CreatedSharedMemory() const noexcept { return m_createdSharedMemory; }
+
 	//タイプ別設定(コントロールプロセス専用)
 	void CreateTypeSettings();
 	std::vector<STypeConfig*>& GetTypeSettings();
@@ -120,6 +126,7 @@ private:
 	HANDLE			m_hFileMap = nullptr;
 	DLLSHAREDATA*	m_pShareData = nullptr;
 	std::vector<STypeConfig*>* 	m_pvTypeSettings = nullptr;	//	(コントロールプロセスのみ)
+	bool			m_createdSharedMemory = false;
 	HWND			m_hwndTraceOutSource = nullptr;	// TraceOutA()起動元ウィンドウ（いちいち起動元を指定しなくてすむように）
 };
 

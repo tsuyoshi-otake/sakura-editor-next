@@ -177,6 +177,18 @@ bool CControlProcess::InitializeProcess()
 	if( !CProcess::InitializeProcess() ){
 		return false;
 	}
+	// Holding the CP mutex does not prove the shared memory is ours. A process of
+	// the previous session (an exiting control or editor process) can still hold
+	// the mapping after the CP mutex is released. Attaching to it would leave the
+	// control-only type settings uncreated and LoadShareData would dereference
+	// them (#423). End with a typed outcome the launcher can retry instead.
+	if( !GetShareData().CreatedSharedMemory() ){
+		m_startupExitCode = static_cast<DWORD>(EControlProcessStartupExitCode::ControlSharedDataStillInUse);
+		if (!m_launcherOwnsStartupError) {
+			TopErrorMessage(nullptr, L"%ls", StartupFailureMessage(m_startupExitCode).data());
+		}
+		return false;
+	}
 	CStartupTrace::Mark(CStartupTrace::Event::ControlSharedDataReady);
 
 	// コントロールプロセスのカレントディレクトリをシステムディレクトリに変更
@@ -393,6 +405,10 @@ std::wstring_view CControlProcess::StartupFailureMessage(DWORD exitCode) noexcep
 			L"別のプロファイルとして誤って開かないよう起動を中止しました。保存データは変更していません。\n\n"
 			L".sakura-platform\\storage-v1.bin を削除せず別名でバックアップしてから再起動してください。\n"
 			L"sakura.ini は移動・削除しないでください。";
+	case ExitCode::ControlSharedDataStillInUse:
+		return L"前回の Sakura Editor NEXT がまだ終了処理中のため、起動できませんでした。\n"
+			L"数秒待ってから、もう一度起動してください。\n"
+			L"繰り返し表示される場合は、残っている sakura.exe をタスク マネージャーで確認してください。";
 	case ExitCode::ControlPlatformFailed:
 		return L"プラットフォームサービスの初期化に失敗したため、起動を中止しました。";
 	case ExitCode::InitializationFailed:

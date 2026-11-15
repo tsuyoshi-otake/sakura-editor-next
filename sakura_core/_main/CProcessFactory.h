@@ -19,6 +19,8 @@
 
 #include "global.h"
 
+#include <optional>
+
 class CProcess;
 
 enum class EControlProcessStartupWaitOutcome : unsigned char {
@@ -46,6 +48,15 @@ public:
 	static bool	StartControlProcess();
 	[[nodiscard]] static EControlProcessStartupWaitOutcome ClassifyStartupWaitResult(
 		DWORD waitResult) noexcept;
+	//! Total control-process start attempts, the first one included.
+	static constexpr unsigned int kMaximumControlStartAttempts = 4;
+	//! The wait before starting the control process again after attempt number
+	//! `completedAttempts` (1-based) exited with `exitCode`, or nullopt when that
+	//! exit is not transient or the attempt budget is spent. Only
+	//! ControlSharedDataStillInUse is transient (#423). The delay doubles from
+	//! 250 ms and adds `jitter` reduced to at most half of the base.
+	[[nodiscard]] static std::optional<DWORD> ControlStartRetryDelayMs(
+		DWORD exitCode, unsigned int completedAttempts, unsigned int jitter) noexcept;
 
 	CProcess* Create( HINSTANCE hInstance, LPCWSTR lpCmdLine );
 

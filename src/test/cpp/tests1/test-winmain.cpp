@@ -1058,6 +1058,44 @@ TEST_F(WinMainFuncTest, CreateControlProcess102)
 }
 
 /*!
+ * @brief A control process that wins the CP mutex while a previous session's
+ *  process still holds a valid shared-memory mapping ends with the typed
+ *  ControlSharedDataStillInUse outcome instead of an access violation (#423).
+ */
+TEST_F(WinMainFuncTest, CreateControlProcess104)
+{
+	const auto profileName{ GetProfileName() };
+
+	SFilePath shareDataName{ GSTR_SHAREDATA };
+	shareDataName.append(profileName);
+
+	// The previous session's mapping: same structure version and size, so the
+	// version check accepts it and only the creator check can refuse it.
+	cxx::HandleHolder fileMapHolder{ ::CreateFileMappingW(
+		INVALID_HANDLE_VALUE,
+		nullptr,
+		PAGE_READWRITE | SEC_COMMIT,
+		0,
+		sizeof(DLLSHAREDATA),
+		shareDataName
+	) };
+	ASSERT_THAT(fileMapHolder, NotNull());
+
+	using MappedDataHolder = cxx::ResourceHolder<&::UnmapViewOfFile, DLLSHAREDATA*>;
+	MappedDataHolder mappedData = static_cast<DLLSHAREDATA*>(::MapViewOfFile(
+		fileMapHolder.get(), FILE_MAP_ALL_ACCESS, 0, 0, 0));
+	ASSERT_THAT(mappedData, NotNull());
+
+	auto pShareData = static_cast<DLLSHAREDATA*>(mappedData);
+	pShareData->m_vStructureVersion = N_SHAREDATA_VERSION;
+	pShareData->m_nSize = sizeof(DLLSHAREDATA);
+
+	ASSERT_EXIT({ StartEditorProcess(std::format(LR"(-NOWIN -PROF="{:s}")", profileName)); },
+		::testing::ExitedWithCode(static_cast<int>(EControlProcessStartupExitCode::ControlSharedDataStillInUse)),
+		".*");
+}
+
+/*!
  * @brief コントロールプロセス起動の失敗をテストする。（初期化完了イベント作成済み）
  */
 TEST_F(WinMainFuncTest, CreateControlProcess103)

@@ -44,6 +44,9 @@ enum class EControlProcessStartupExitCode : DWORD {
 	ControlPlatformStorageUnsupportedFormat,
 	ControlPlatformStorageGenerationRollback,
 	ControlPlatformStorageOrphanedState,
+	//! The profile's shared-memory mapping already existed, so a previous
+	//! session's process still holds it (#423). Transient: the launcher retries.
+	ControlSharedDataStillInUse,
 };
 
 /*-----------------------------------------------------------------------

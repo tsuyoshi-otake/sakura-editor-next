@@ -186,3 +186,25 @@ operation ID plus a storage-revision CAS precondition; a failed write rolls
 back its in-memory mutation. Runtime shutdown stops the host first, then saves
 the registry before closing storage. UI rendering remains a separate concern;
 no HWND, PID, raw path, or raw pointer is used as durable identity.
+
+## The control process must create its shared memory (2026-11-15, #423)
+
+- Winning the `GSTR_MUTEX_SAKURA_CP` mutex does not prove the profile's
+  shared-memory mapping is new. A process of the previous session (a control
+  process past its mutex release, or an exiting editor) can still hold it.
+  `CShareData::InitShareData` creates the control-only type settings only for
+  a new mapping, so a control process that attached to an old one crashed in
+  `LoadShareData` (null `m_pvTypeSettings`, v3.1.0.7915 dump).
+- `CControlProcess::InitializeProcess` therefore checks
+  `CShareData::CreatedSharedMemory()` right after `CProcess::InitializeProcess`
+  and ends with `ControlSharedDataStillInUse` (0x2009). It never adopts the old
+  mapping: its contents belong to a session that may still be writing it.
+- That exit is the only transient one. `CProcessFactory::StartControlProcess`
+  starts the control process again, at most `kMaximumControlStartAttempts` (4)
+  times in total, after 250/500/1000 ms plus jitter up to half the base
+  (`ControlStartRetryDelayMs`). It keeps the same init event across attempts.
+  When the budget is spent the launcher shows the typed message; every other
+  exit code is reported on the first attempt as before.
+- Tests: `ControlProcessStartup.*` (policy and message) and
+  `WinMainFuncTest.CreateControlProcess104` (a valid pre-existing mapping ends
+  with the typed exit code, not `0xC0000005`).
