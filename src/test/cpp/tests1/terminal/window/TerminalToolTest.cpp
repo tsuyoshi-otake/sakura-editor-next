@@ -14,6 +14,7 @@
 #include "terminal/input/SakuraTerminalInputAdapter.h"
 #include "theme/CThemeService.h"
 
+#include <RichEdit.h>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -669,6 +670,46 @@ TEST(BottomPanelComposite, DetachSwitchAndMessageRoutingPreserveTerminalUntilExp
 	}
 	EXPECT_EQ(EBottomPanelPageAttachStatus::Closed, panel.AttachActivePage());
 	EXPECT_EQ(EBottomPanelPageDetachStatus::Closed, panel.DetachActivePage());
+	::DestroyWindow(parent);
+}
+
+TEST(BottomPanelComposite, OutputBodyBackgroundFollowsThePanelRoleNotTheSystemWindowColor)
+{
+	using namespace workbench::panel;
+
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+
+	CBottomPanelTool panel(harness.Dependencies());
+	ASSERT_TRUE(panel.Create(parent));
+	panel.Layout({ 0, 0, 640, 320 }, 96);
+
+	const HWND panelWindow = ::FindWindowExW(parent, nullptr, L"SakuraBottomPanel", nullptr);
+	ASSERT_NE(nullptr, panelWindow);
+	// The Output page's plain-text Rich Edit; the plain-EDIT fallback keeps its
+	// own WM_CTLCOLOREDIT/WM_CTLCOLORSTATIC path and is not the surface checked here.
+	const HWND outputText = ::FindWindowExW(panelWindow, nullptr, MSFTEDIT_CLASS, nullptr);
+	ASSERT_NE(nullptr, outputText);
+
+	// EM_SETBKGNDCOLOR's return value is the background the control actually
+	// paints behind the text area, so reading it back with a sentinel answers
+	// "what is behind the empty body" rather than "what the palette asked for".
+	// With the system-color flag set, the stored value is COLOR_WINDOW's
+	// resolved COLORREF and the body goes white regardless of the palette.
+	const auto appliedBackground = [&panel, outputText](const theme::ThemePalette& palette) {
+		panel.SetPalette(palette);
+		return static_cast<COLORREF>(::SendMessageW(outputText, EM_SETBKGNDCOLOR, 0, RGB(0x12, 0x34, 0x56)));
+	};
+
+	EXPECT_EQ(theme::CThemeService::PaletteFor(theme::ThemeMode::Dark).bottomPanel.ToColorRef(),
+		appliedBackground(theme::CThemeService::PaletteFor(theme::ThemeMode::Dark)));
+	EXPECT_EQ(theme::CThemeService::PaletteFor(theme::ThemeMode::Light).bottomPanel.ToColorRef(),
+		appliedBackground(theme::CThemeService::PaletteFor(theme::ThemeMode::Light)));
+	EXPECT_EQ(theme::CThemeService::HighContrastPalette().bottomPanel.ToColorRef(),
+		appliedBackground(theme::CThemeService::HighContrastPalette()));
+
+	panel.Close();
 	::DestroyWindow(parent);
 }
 

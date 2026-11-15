@@ -216,6 +216,7 @@
     {"runtime":{"runner_id":"tests1","selector":"Base64Cases/Base64DecodeTest.DoDecode/7"},"status":"enabled","test_id":"tests1:Base64Cases/Base64DecodeTest.DoDecode/7"},
     {"runtime":{"runner_id":"tests1","selector":"Base64Cases/Base64DecodeTest.DoDecode/8"},"status":"enabled","test_id":"tests1:Base64Cases/Base64DecodeTest.DoDecode/8"},
     {"runtime":{"runner_id":"tests1","selector":"BottomPanelComposite.DetachSwitchAndMessageRoutingPreserveTerminalUntilExplicitClose"},"status":"enabled","test_id":"tests1:BottomPanelComposite.DetachSwitchAndMessageRoutingPreserveTerminalUntilExplicitClose"},
+    {"runtime":{"runner_id":"tests1","selector":"BottomPanelComposite.OutputBodyBackgroundFollowsThePanelRoleNotTheSystemWindowColor"},"status":"enabled","test_id":"tests1:BottomPanelComposite.OutputBodyBackgroundFollowsThePanelRoleNotTheSystemWindowColor"},
     {"runtime":{"runner_id":"tests1","selector":"BottomPanelComposite.UsesCanonicalContainerIdsAndKeepsUserRequestsSeparateFromApply"},"status":"enabled","test_id":"tests1:BottomPanelComposite.UsesCanonicalContainerIdsAndKeepsUserRequestsSeparateFromApply"},
     {"runtime":{"runner_id":"tests1","selector":"BoundedProcessRunner.BuildsTheEnvironmentBlockInASingleAllocation"},"status":"enabled","test_id":"tests1:BoundedProcessRunner.BuildsTheEnvironmentBlockInASingleAllocation"},
     {"runtime":{"runner_id":"tests1","selector":"BoundedProcessRunner.CapturesSeparatedStreamsAndClosesStandardInput"},"status":"enabled","test_id":"tests1:BoundedProcessRunner.CapturesSeparatedStreamsAndClosesStandardInput"},

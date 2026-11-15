@@ -406,7 +406,11 @@ struct CBottomPanelTool::Impl {
 			if (control) ::InvalidateRect(control, nullptr, FALSE);
 		}
 		if (outputText) {
-			::SendMessageW(outputText, EM_SETBKGNDCOLOR, TRUE, palette.bottomPanel.ToColorRef());
+			// EM_SETBKGNDCOLOR's wParam is the system-color flag: a nonzero value
+			// makes the control paint COLOR_WINDOW and ignore lParam entirely.
+			// Passing 0 applies the panel role as a plain COLORREF, the same way
+			// SenpTextResourceView themes its own Rich Edit surface.
+			::SendMessageW(outputText, EM_SETBKGNDCOLOR, 0, palette.bottomPanel.ToColorRef());
 			// The Rich Edit surface keeps its own character colors; reapplying
 			// the current text re-renders them against the new palette.
 			outputTextUpdating = true;
