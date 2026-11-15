@@ -3805,6 +3805,48 @@
           "path": "src/test/cpp/tests1/workbench/ProjectsTest.cpp"
         }
       ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#423 makes the control process end with ControlSharedDataStillInUse (0x2009) when the profile's shared-memory mapping already existed, instead of crashing in LoadShareData, and makes CProcessFactory::StartControlProcess start it again only for that exit code with bounded exponential backoff and jitter. Each new item was reviewed: the CreateProcess acquisition in CProcessFactory.cpp is the existing control-process spawn re-anchored inside the retry loop; its process and thread handles are closed on every attempt and the init event is created once and closed on every exit. CShareData gains one private bool and a noexcept accessor; CControlProcess.cpp and test-winmain.cpp gain a typed early exit and its test. The missing reductions are earlier debt in files this fix had to touch; reducing unrelated debt would widen a crash fix. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "tracking_issue": 389,
+      "created": "2026-11-15",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/_main/CControlProcess.cpp": "sha256:ed0190954e08943ce5be695f8f9b3e74945504907bc8afecd6c5ea04432b8584",
+        "sakura_core/_main/CProcessFactory.cpp": "sha256:bff0143f4552bf6e483675da185612750de93fa203b2118fe9e394a9f7f34eba",
+        "sakura_core/env/CShareData.cpp": "sha256:589410cbe71f2d4fab726bdd2e3b06e3405fc059591bd7a7240b9df8319dd428",
+        "sakura_core/env/CShareData.h": "sha256:05d239031980edf53880caa9e036f1d941e62b8c6be6c7860845d04b42189ff5",
+        "src/test/cpp/tests1/test-winmain.cpp": "sha256:68f99259ddf4866d440014c710ad82f1bfb4efe167613979a612e959307c2dd8"
+      },
+      "new_findings": [
+        {
+          "column": 26,
+          "evidence_sha256": "sha256:ebc6c1efa1812b7f947c2d922f89fd9653e61813e1f57d7d648095c7d5dc20e9",
+          "line": 266,
+          "path": "sakura_core/_main/CProcessFactory.cpp",
+          "rule_id": "resource.stop_required_acquisition"
+        }
+      ],
+      "missing_touched_reductions": [
+        {
+          "baseline_finding_count": 10,
+          "path": "sakura_core/_main/CControlProcess.cpp"
+        },
+        {
+          "baseline_finding_count": 7,
+          "path": "sakura_core/env/CShareData.cpp"
+        },
+        {
+          "baseline_finding_count": 5,
+          "path": "sakura_core/env/CShareData.h"
+        },
+        {
+          "baseline_finding_count": 14,
+          "path": "src/test/cpp/tests1/test-winmain.cpp"
+        }
+      ]
     }
   ]
 }
