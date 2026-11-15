@@ -26,6 +26,8 @@
 
 namespace workbench::scm {
 
+struct GitOutputSink;
+
 //! The terminal destination for a wheel that reaches the SCM frame itself.
 //! `Consume` is also the explicit result for an unavailable or collapsed view.
 enum class EScmWheelRoute : unsigned char {
@@ -138,6 +140,10 @@ public:
 	void RefreshStrings();
 	//! Borrow the runtime-owned SCM authority. The tool never stops or owns it.
 	void SetSourceControlService(SourceControlService* service);
+	//! The Output channel the Git provider mirrors its own invocations into.
+	//! A null `service` inside the sink reduces the background poll to the
+	//! bare `RunGit` calls it has always made; logging is strictly best-effort.
+	void SetGitOutputSink(GitOutputSink sink);
 	//! Re-read the immutable provider snapshot on the next UI turn.
 	void SetVisible(bool visible);
 	void Refresh();

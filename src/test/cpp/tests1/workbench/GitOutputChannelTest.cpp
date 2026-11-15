@@ -17,7 +17,10 @@
 
 #include "workbench/output/IOutputService.h"
 #include "workbench/output/OutputService.h"
+#include "workbench/scm/CScmWorkbenchTool.h"
 #include "workbench/scm/GitOutputChannel.h"
+#include "workbench/scm/GitStatusRefresh.h"
+#include "workbench/scm/SourceControlService.h"
 
 using namespace workbench::scm;
 using namespace workbench::output;
@@ -379,4 +382,82 @@ TEST(GitOutputChannel, RunGitLoggedSkipsLoggingWhenTheOperationIdFactoryIsExhaus
 	const auto* channel = FindGitChannel(snapshot);
 	ASSERT_NE(nullptr, channel);
 	EXPECT_TRUE(channel->logEntries.empty());
+}
+
+TEST(GitOutputChannel, ScmProviderStartCreatesTheGitChannelBeforeAnyCommandRuns)
+{
+	OutputService output;
+	SourceControlService scm;
+	CScmWorkbenchTool tool;
+
+	GitOutputSink sink;
+	sink.service = &output;
+	sink.owner = { .ownerId = "workbench.scm.git", .generation = 1 };
+	sink.createOperationId = "test-create";
+	sink.nextAppendOperationId = []() -> std::optional<std::string> { return std::nullopt; };
+	tool.SetGitOutputSink(std::move(sink));
+
+	// Upstream's Git extension creates its channel at activation
+	// (window.createOutputChannel('Git', { log: true })), so it must exist
+	// before any git invocation -- not after the first user command.
+	EXPECT_EQ(nullptr, FindGitChannel(output.Snapshot()));
+	tool.SetSourceControlService(&scm);
+
+	const auto snapshot = output.Snapshot();
+	const auto* channel = FindGitChannel(snapshot);
+	ASSERT_NE(nullptr, channel);
+	EXPECT_EQ(EOutputChannelKind::Log, channel->kind);
+	EXPECT_EQ("Git", channel->label);
+	EXPECT_EQ("workbench.scm.git", channel->owner.ownerId);
+	EXPECT_TRUE(channel->logEntries.empty());
+
+	tool.Close();
+}
+
+TEST(GitOutputChannel, StatusRefreshThroughTheRunnerSeamAppendsTheCommandHeader)
+{
+	OutputService output;
+	GitOutputSink sink;
+	sink.service = &output;
+	sink.owner = { .ownerId = "workbench.scm.git", .generation = 1 };
+	sink.createOperationId = "test-create";
+	const auto nextId = std::make_shared<std::uint64_t>(0);
+	sink.nextAppendOperationId = [nextId]() -> std::optional<std::string> {
+		return "test-append-" + std::to_string(++(*nextId));
+	};
+
+	std::vector<std::vector<std::wstring>> seenArguments;
+	const GitRunner run = [&seenArguments](const GitExecutionRequest& request, HANDLE) -> GitExecutionResult {
+		seenArguments.push_back(request.arguments);
+		GitExecutionResult result;
+		result.status = EGitExecutionStatus::Succeeded;
+		if (!request.arguments.empty() && request.arguments.front() == L"status") {
+			// A `# branch.` record is what marks the output as a repository and
+			// lets the refresh run its history leg.
+			static const char kStatus[] = "# branch.oid abc0123\0# branch.head main\0";
+			result.standardOutput.assign(kStatus, kStatus + sizeof(kStatus) - 1);
+		}
+		return result;
+	};
+
+	const auto outcome = RunGitStatusRefresh(L"C:\\repo", nullptr, sink, run);
+	EXPECT_EQ(EGitExecutionStatus::Succeeded, outcome.execution);
+	EXPECT_TRUE(outcome.state.repository);
+	EXPECT_TRUE(outcome.historyRead);
+	ASSERT_EQ(2u, seenArguments.size());
+	EXPECT_EQ(L"status", seenArguments[0].front());
+	EXPECT_EQ(L"log", seenArguments[1].front());
+
+	const auto snapshot = output.Snapshot();
+	const auto* channel = FindGitChannel(snapshot);
+	ASSERT_NE(nullptr, channel);
+	// Every spawned process appears once, in run order: status, then the
+	// history page -- the same entries the periodic refresh now writes. The
+	// logged line is the *effective* argv this runner executes, which includes
+	// the passive-read `-c core.fsmonitor=false` pair.
+	ASSERT_EQ(2u, channel->logEntries.size());
+	EXPECT_TRUE(channel->logEntries[0].message.starts_with(
+		"> git -C C:\\repo -c core.fsmonitor=false status --porcelain=v2 --branch -z --untracked-files=normal"));
+	EXPECT_TRUE(channel->logEntries[1].message.starts_with(
+		"> git -C C:\\repo -c core.fsmonitor=false log --topo-order"));
 }

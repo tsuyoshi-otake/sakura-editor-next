@@ -745,6 +745,7 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitRefModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\decorations\FileDecorationModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmModel.h" />
+	<ClInclude Include="..\sakura_core\workbench\scm\GitStatusRefresh.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitDiffModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitLineStaging.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmPublisher.h" />
@@ -1527,6 +1528,7 @@
 	<ClCompile Include="..\sakura_core\workbench\scm\GitStageCommands.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitRefModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmModel.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\scm\GitStatusRefresh.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitDiffModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitLineStaging.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmPublisher.cpp" />

@@ -54,6 +54,13 @@ void CGitHubRepositoryStatusService::SetWorkspaceRoot(std::wstring root)
 	if (changed) changed();
 }
 
+void CGitHubRepositoryStatusService::SetGitOutputSink(GitOutputSink sink)
+{
+	std::lock_guard lock(m_mutex);
+	if (m_shutdown) return;
+	m_outputSink = std::move(sink);
+}
+
 void CGitHubRepositoryStatusService::Refresh()
 {
 	{
@@ -100,6 +107,7 @@ void CGitHubRepositoryStatusService::Run()
 	for (;;) {
 		std::wstring root;
 		std::uint64_t generation = 0;
+		GitOutputSink outputSink;
 		{
 			std::unique_lock lock(m_mutex);
 			m_wake.wait(lock, [this] { return m_shutdown || m_probePending; });
@@ -107,12 +115,13 @@ void CGitHubRepositoryStatusService::Run()
 			m_probePending = false;
 			root = m_root;
 			generation = m_generation;
+			outputSink = m_outputSink;
 			m_lastProbeStart = std::chrono::steady_clock::now();
 			::ResetEvent(m_stop);
 		}
 
 		GitHubRepositoryStatus status;
-		status.repository = QueryGitHubRepositoryRef(root, m_stop);
+		status.repository = QueryGitHubRepositoryRef(root, m_stop, outputSink);
 		if (!status.repository) {
 			Publish(generation, status);
 			continue;

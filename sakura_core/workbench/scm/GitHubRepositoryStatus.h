@@ -17,6 +17,8 @@
 
 namespace workbench::scm {
 
+struct GitOutputSink;
+
 //! `owner/repo` on github.com. Other hosts are not recognised: `gh` is asked for
 //! github.com only, and a remote it cannot name is simply not shown.
 struct GitHubRepositoryRef final {
@@ -63,8 +65,11 @@ struct GitHubRepositoryLabelText final {
 
 //! `git remote get-url origin` for one workspace root, as a github.com repository.
 //! Blocks; call on a worker thread. Empty when there is no such remote.
+//! The git invocation is mirrored into the "Git" Output channel through `sink`,
+//! exactly as upstream's `options.log !== false` log covers every spawned Git
+//! process; a null `sink.service` disables the mirror.
 [[nodiscard]] std::optional<GitHubRepositoryRef> QueryGitHubRepositoryRef(
-	std::wstring_view workspaceRoot, HANDLE stop);
+	std::wstring_view workspaceRoot, HANDLE stop, const GitOutputSink& sink);
 
 //!
 //! @brief Ask `gh` whether the repository is public. Blocks; call on a worker thread.

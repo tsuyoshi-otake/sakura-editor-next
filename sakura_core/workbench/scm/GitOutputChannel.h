@@ -175,4 +175,19 @@ struct GitOutputSink {
 	HANDLE stop,
 	const GitOutputSink& sink);
 
+//!
+//! @brief `RunGitLogged` with the process invocation injected.
+//!
+//! Identical contract to the overload above except the command runs through
+//! `run` rather than `RunGit` directly. `run` must name a `RunGit`-compatible
+//! invocation; an empty callable cannot spawn anything, so it returns a
+//! failed `InvalidRequest` result instead of throwing -- the logging boundary
+//! never introduces a failure mode `RunGit` does not already have.
+//!
+[[nodiscard]] GitExecutionResult RunGitLogged(
+	const GitExecutionRequest& request,
+	HANDLE stop,
+	const GitOutputSink& sink,
+	const GitRunner& run);
+
 } // namespace workbench::scm

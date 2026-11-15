@@ -3270,6 +3270,11 @@ bool CEditWnd::InitializeWorkbench()
 	m_scmTool->SetRoot(workspaceRoot);
 	m_repositoryStatusService = std::make_unique<workbench::scm::CGitHubRepositoryStatusService>(
 		[window = GetHwnd()]() { ::PostMessageW(window, MYWM_WORKBENCH_REPOSITORY_STATUS_CHANGED, 0, 0); });
+	// The repository-status probe spawns git; it logs into the same channel as
+	// every other Git invocation, so the sink must be attached before the first
+	// workspace root triggers a probe.
+	m_repositoryStatusService->SetGitOutputSink(MakeGitOutputSink(
+		m_workbenchRuntime != nullptr ? m_workbenchRuntime->Output() : nullptr));
 	m_repositoryStatusService->SetWorkspaceRoot(workspaceRoot);
 	m_searchTool->SetRoot(workspaceRoot);
 	m_searchTool->SetMatchActivationCallback([this](std::wstring_view path, std::int64_t line,
@@ -3345,6 +3350,13 @@ bool CEditWnd::InitializeWorkbench()
 		(void)TryExecuteWorkbenchStableCommand(command, handled, argumentsJson);
 		return handled;
 	});
+	// VS Code's Git extension creates its "Git" Output channel at activation,
+	// before any command runs, and logs every Git process it spawns through the
+	// same channel. The sink goes in before the provider so the tool's own
+	// startup is the moment the channel appears and so the periodic status and
+	// history refreshes log like user commands do.
+	m_scmTool->SetGitOutputSink(MakeGitOutputSink(
+		m_workbenchRuntime != nullptr ? m_workbenchRuntime->Output() : nullptr));
 	// The built-in Git repository is published through the same SCM authority an
 	// extension-contributed provider uses, so the view has one truth to render
 	// instead of a private Git model beside the service. A window with no runtime

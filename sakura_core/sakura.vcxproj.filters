@@ -1319,6 +1319,9 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmModel.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitStatusRefresh.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\GitDiffModel.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -3618,6 +3621,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmModel.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitStatusRefresh.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\GitDiffModel.cpp">

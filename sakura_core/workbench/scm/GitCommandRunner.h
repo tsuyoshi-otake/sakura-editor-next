@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -105,6 +106,16 @@ inline constexpr std::size_t kMaximumGitStandardErrorBytes = 64u * 1024u;
 //! the composed argument vector can be asserted without creating a process.
 //!
 [[nodiscard]] std::vector<std::wstring> BuildEffectiveGitArguments(const GitExecutionRequest& request);
+
+//!
+//! @brief The signature of the runner behind `RunGit`, as an injected callable.
+//!
+//! Production code passes `RunGit` itself; tests and command contexts that must
+//! observe the exact request the production path would have sent pass a fake
+//! with this signature instead of subclassing or reimplementing the runner.
+//! An empty callable must never be invoked: callers check `run` before use.
+//!
+using GitRunner = std::function<GitExecutionResult(const GitExecutionRequest&, HANDLE)>;
 
 //! Resolve `git.exe` from the search path. Empty when it is not discoverable.
 [[nodiscard]] std::wstring ResolveGitExecutable();

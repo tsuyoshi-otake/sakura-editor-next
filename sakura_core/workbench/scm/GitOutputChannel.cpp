@@ -176,8 +176,19 @@ GitExecutionResult RunGitLogged(
 	HANDLE stop,
 	const GitOutputSink& sink)
 {
+	return RunGitLogged(request, stop, sink, GitRunner(RunGit));
+}
+
+GitExecutionResult RunGitLogged(
+	const GitExecutionRequest& request,
+	HANDLE stop,
+	const GitOutputSink& sink,
+	const GitRunner& run)
+{
 	const auto start = std::chrono::steady_clock::now();
-	GitExecutionResult result = RunGit(request, stop);
+	// An empty callable is a caller error, answered with the same terminal
+	// status `RunGit` gives a structurally invalid request -- never a throw.
+	GitExecutionResult result = run ? run(request, stop) : GitExecutionResult{ .status = EGitExecutionStatus::InvalidRequest };
 
 	// Logging is strictly best-effort: nothing below this point may change the
 	// git command's own result, and any failure to log is silently swallowed.

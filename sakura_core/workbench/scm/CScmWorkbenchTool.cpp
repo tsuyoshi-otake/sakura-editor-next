@@ -12,6 +12,7 @@
 #include "workbench/scm/GitInitCloneCommands.h"
 #include "workbench/scm/GitScmMenus.h"
 #include "workbench/scm/GitScmPublisher.h"
+#include "workbench/scm/GitStatusRefresh.h"
 #include "workbench/scm/ScmViewStackLayout.h"
 #include "workbench/GitTroubleshootingGuide.h"
 #include "workbench/viewcontainer/ViewPaneChrome.h"
@@ -61,7 +62,6 @@ constexpr wchar_t kWindowClass[] = L"SakuraNativeScmTool";
 constexpr UINT kResultMessage = WM_APP + 0x5a1;
 constexpr UINT_PTR kRefreshTimer = 0x5a2;
 	constexpr UINT kRefreshMilliseconds = 5000;
-constexpr std::size_t kMaximumStatusBytes = 4u * 1024u * 1024u;
 
 //! Current VS Code stacks independent Repositories, Changes, and Graph Views
 //! inside the Source Control ViewContainer.  This native host draws matching
@@ -121,9 +121,6 @@ constexpr int kGraphCircleRadiusDip = 4;
 //! Upstream's `CIRCLE_STROKE_WIDTH`, which is also the radius of the hole it
 //! punches in the HEAD node.
 constexpr int kGraphCircleStrokeWidthDip = 2;
-//! How many commits the Graph reads.  Upstream pages its history; this reads one
-//! bounded page, because an unbounded `git log` on the refresh timer is not.
-constexpr std::size_t kGraphHistoryCount = 50;
 constexpr int kGraphControlId = 2;
 //!
 //! @brief The five swimlane colours, in `BuildScmHistoryGraph`'s own index order.
@@ -445,6 +442,9 @@ struct SharedState {
 	//! Guarded by `mutex` together with `root`, so a worker cannot observe a new
 	//! root paired with the previous generation (or the inverse).
 	std::uint64_t generation{ 1 };
+	//! Guarded by `mutex` so the worker snapshots it together with root and
+	//! generation; a null `service` inside is the explicit "log nothing" state.
+	GitOutputSink outputSink;
 	std::shared_ptr<Gate> gate = std::make_shared<Gate>();
 	HANDLE stop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
 	HANDLE wake = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -465,33 +465,6 @@ bool EnsureClass(HINSTANCE instance)
 	wc.lpfnWndProc = CScmWorkbenchTool::WindowProc;
 	wc.lpszClassName = kWindowClass;
 	return ::RegisterClassExW(&wc) != 0 || ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
-}
-
-//! The refresh query. `--branch` is what carries head/upstream/ahead/behind, and
-//! `-z` is what makes a rename's two paths unambiguous even when a path contains
-//! a quote or a newline.
-GitExecutionRequest MakeStatusRequest(const std::wstring& root)
-{
-	GitExecutionRequest request;
-	request.workingDirectory = root;
-	request.arguments = { L"status", L"--porcelain=v2", L"--branch", L"-z", L"--untracked-files=normal" };
-	request.policy = EGitRequestPolicy::PassiveRepositoryRead;
-	request.timeoutMilliseconds = 3000;
-	request.maximumOutputBytes = kMaximumStatusBytes;
-	return request;
-}
-
-//! The Graph's own query.  It is a second invocation rather than part of the
-//! status refresh because `git status` cannot report commits at all.
-GitExecutionRequest MakeHistoryRequest(const std::wstring& root)
-{
-	GitExecutionRequest request;
-	request.workingDirectory = root;
-	request.arguments = MakeGitHistoryArguments(kGraphHistoryCount);
-	request.policy = EGitRequestPolicy::PassiveRepositoryRead;
-	request.timeoutMilliseconds = 3000;
-	request.maximumOutputBytes = kMaximumStatusBytes;
-	return request;
 }
 
 //! The built-in Git provider's owner. VS Code's own extension id, because a
@@ -565,10 +538,12 @@ void WorkerMain(std::shared_ptr<SharedState> shared)
 		if (wait != WAIT_OBJECT_0 + 1 && wait != WAIT_TIMEOUT) return;
 		std::wstring root;
 		std::uint64_t generation = 0;
+		GitOutputSink outputSink;
 		{
 			std::lock_guard lock(shared->mutex);
 			root = shared->root;
 			generation = shared->generation;
+			outputSink = shared->outputSink;
 		}
 		if (root.empty()) {
 			// No repository command can run without a root. On an explicit wake,
@@ -582,28 +557,15 @@ void WorkerMain(std::shared_ptr<SharedState> shared)
 			PostResult(shared, std::move(result));
 			continue;
 		}
-		const auto execution = RunGit(MakeStatusRequest(root), shared->stop);
-		if (execution.status == EGitExecutionStatus::Cancelled) return;
+		const auto refresh = RunGitStatusRefresh(root, shared->stop, outputSink, GitRunner(RunGit));
+		if (refresh.cancelled) return;
 		auto result = std::make_unique<WorkerResult>();
 		result->generation = generation;
-		result->execution = execution.status;
-		result->failureReason = execution.standardError;
-		if (execution.Succeeded()) {
-			result->state = ParsePorcelainV2({ reinterpret_cast<const char*>(execution.standardOutput.data()),
-				execution.standardOutput.size() });
-		}
-		// Only a repository has a history to read, and a repository with no commit
-		// at all makes `git log` fail; that failure is reported as "unavailable"
-		// rather than as an empty history.
-		if (execution.Succeeded() && result->state.repository) {
-			const auto history = RunGit(MakeHistoryRequest(root), shared->stop);
-			if (history.status == EGitExecutionStatus::Cancelled) return;
-			if (history.Succeeded()) {
-				result->historyRead = true;
-				result->history = ParseGitHistory({ reinterpret_cast<const char*>(history.standardOutput.data()),
-					history.standardOutput.size() });
-			}
-		}
+		result->execution = refresh.execution;
+		result->failureReason = std::move(refresh.failureReason);
+		result->state = std::move(refresh.state);
+		result->historyRead = refresh.historyRead;
+		result->history = std::move(refresh.history);
 		PostResult(shared, std::move(result));
 	}
 }
@@ -724,6 +686,19 @@ struct CScmWorkbenchTool::Impl {
 	SourceControlService* service{};
 	//! Owns the built-in Git provider handle for as long as this tool lives.
 	std::unique_ptr<GitScmPublisher> publisher;
+	//! The Git Output channel's sink, mirrored into `shared` so the refresh
+	//! worker logs through the same channel as the UI commands without taking
+	//! the UI thread's pointer.
+	GitOutputSink outputSink;
+	//! Upstream's Git extension creates its Output channel at activation, before
+	//! any command runs. This provider starts when the publisher handle exists,
+	//! so channel creation lives beside it rather than inside the first
+	//! invocation that happens to log.
+	void EnsureGitChannel() const
+	{
+		if (!publisher || outputSink.service == nullptr) return;
+		(void)EnsureGitOutputChannel(*outputSink.service, outputSink.owner, outputSink.createOperationId);
+	}
 	//! What the list actually renders. Derived from published provider state, so
 	//! the view never reads `state` directly and cannot disagree with the service.
 	std::vector<ScmRow> rows;
@@ -3494,6 +3469,13 @@ void CScmWorkbenchTool::Close()
 	// surviving handle would keep advertising a repository nobody is watching.
 	if (m_impl->publisher) { (void)m_impl->publisher->Retract(); m_impl->publisher.reset(); }
 	m_impl->service = nullptr;
+	m_impl->outputSink.service = nullptr;
+	{
+		// A refresh already in flight may finish its log append; a refresh that
+		// picks its snapshot up after Close must observe "log nothing".
+		std::lock_guard lock(m_impl->shared->mutex);
+		m_impl->shared->outputSink.service = nullptr;
+	}
 	m_impl->rows.clear();
 	m_impl->resourceCount = 0;
 	m_impl->inputModel = {};
@@ -3635,7 +3617,23 @@ void CScmWorkbenchTool::SetSourceControlService(SourceControlService* service)
 	if (m_impl->publisher) { (void)m_impl->publisher->Retract(); m_impl->publisher.reset(); }
 	m_impl->service = service;
 	if (service) m_impl->publisher = std::make_unique<GitScmPublisher>(service, BuiltinGitOwner());
+	m_impl->EnsureGitChannel();
 	if (!m_impl->closed) m_impl->PublishAndRender();
+}
+
+void CScmWorkbenchTool::SetGitOutputSink(GitOutputSink sink)
+{
+	if (m_impl->closed) return;
+	m_impl->outputSink = std::move(sink);
+	if (m_impl->shared) {
+		// Same lock as root and generation: the worker snapshots the three of
+		// them together, so a sink never pairs with a stale generation.
+		std::lock_guard lock(m_impl->shared->mutex);
+		m_impl->shared->outputSink = m_impl->outputSink;
+	}
+	// The sink can arrive after the provider started; activation-time channel
+	// creation fires from whichever ordering happens second.
+	m_impl->EnsureGitChannel();
 }
 
 void CScmWorkbenchTool::SetVisible(bool visible) { if (m_impl->window) ::ShowWindow(m_impl->window, visible ? SW_SHOW : SW_HIDE); }

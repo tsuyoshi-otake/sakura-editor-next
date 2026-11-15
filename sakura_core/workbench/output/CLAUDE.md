@@ -206,7 +206,13 @@ are SCM-specific; this file records only that the producer exists and that it
 adds no new `OutputService` invariant. `CEditWnd` wires it into every Git
 operation it invokes: `MakeGitOutputSink(m_outputService)` feeds `RunGitLogged`
 behind each command context's `run` callback (branch, init, clone, stage,
-discard, commit, sync) and the diff/line-staging readers. The
-`CScmWorkbenchTool` background status/history poll and
-`senp/github/GhRepositorySelection.cpp` still call `RunGit` directly and do not
-log.
+discard, commit, sync) and the diff/line-staging readers. Since Issue #419 the
+channel exists as soon as the window's Source Control provider starts —
+matching upstream's `createOutputChannel` at Git extension activation — and
+the two background paths log through the same sink: `CScmWorkbenchTool`'s
+periodic status/history refresh (`GitStatusRefresh.cpp`, snapshotted with the
+worker's root and generation) and `CGitHubRepositoryStatusService`'s
+`git remote get-url origin` probe. `senp/github/GhRepositorySelection.cpp`
+still calls `RunGit` directly and does not log: it is the SENP GitHub
+extension's own provider surface, not the built-in Git integration this
+channel mirrors.

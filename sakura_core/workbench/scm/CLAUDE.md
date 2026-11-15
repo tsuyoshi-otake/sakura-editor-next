@@ -1579,11 +1579,31 @@ remains the sole owner of channel content; nothing here retains its own copy.
   background worker thread (as `CScmWorkbenchTool.cpp`'s periodic status-refresh
   thread already does), provided each call supplies its own `stop` handle and
   its own `nextAppendOperationId` sequence.
-- **Wired into `CEditWnd`'s Git operations.** Every Git command `CEditWnd.cpp`
-  runs goes through `RunGitLogged(...)` with `MakeGitOutputSink(m_outputService)`.
-  The background status/history poll in `CScmWorkbenchTool.cpp` and
-  `senp/github/GhRepositorySelection.cpp` still call raw `RunGit(...)` and do
-  not log to the Git channel.
+- **Created at provider start, matching extension activation.** Upstream's Git
+  extension runs `window.createOutputChannel('Git', { log: true })` when it
+  activates, so the channel exists in the selector before any command runs.
+  This provider starts when `CScmWorkbenchTool` creates its `GitScmPublisher`
+  handle, and `SetGitOutputSink`/`SetSourceControlService` fire
+  `EnsureGitOutputChannel` from whichever arrives second — sink first, service
+  first, or both already set all converge on one snapshot-based creation.
+  `Close` clears the shared sink under the same mutex the worker snapshots,
+  so a refresh already in flight may finish its own append while a later pass
+  observes "log nothing".
+- **Wired into every git process the Source Control spawns.** Every Git command
+  `CEditWnd.cpp` runs goes through `RunGitLogged(...)` with
+  `MakeGitOutputSink(m_outputService)`, and the two background paths now mirror
+  the same way: `CScmWorkbenchTool`'s periodic poll calls
+  `RunGitStatusRefresh` (`GitStatusRefresh.cpp`), which runs its status and
+  history invocations through `RunGitLogged` with the sink the worker snapshots
+  under `SharedState::mutex` together with root and generation; and
+  `CGitHubRepositoryStatusService` snapshots its sink under `m_mutex` for the
+  probe's whole run and passes it to `QueryGitHubRepositoryRef`, whose
+  `git remote get-url origin` call is `RunGitLogged`. The visibility probe's
+  `gh.exe` invocation is not a git process and is not logged.
+  `senp/github/GhRepositorySelection.cpp` still calls raw `RunGit(...)`: it is
+  the SENP GitHub extension's own provider surface, not the built-in Git
+  extension VS Code's channel mirrors, so it is deliberately outside this
+  channel's scope.
 
 ## Verification
 

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "workbench/scm/GitHubRepositoryStatus.h"
+#include "workbench/scm/GitOutputChannel.h"
 
 #include <Windows.h>
 
@@ -48,6 +49,9 @@ public:
 
 	//! Probe a new workspace root now. The previous status is cleared at once.
 	void SetWorkspaceRoot(std::wstring root);
+	//! The Output channel the `git remote get-url` probe logs into. Borrowed,
+	//! never owned; a null `service` inside disables the mirror.
+	void SetGitOutputSink(GitOutputSink sink);
 	//! Probe the current root again, no more often than `kMinimumRefreshInterval`.
 	void Refresh();
 	[[nodiscard]] GitHubRepositoryStatus Current() const;
@@ -68,6 +72,9 @@ private:
 	bool m_probePending = false;
 	bool m_shutdown = false;
 	std::optional<std::chrono::steady_clock::time_point> m_lastProbeStart;
+	//! Snapshotted under `m_mutex` together with the root and generation, so a
+	//! probe logs through one consistent sink for its whole run.
+	GitOutputSink m_outputSink;
 	GitHubRepositoryStatus m_status;
 	std::thread m_worker;
 };

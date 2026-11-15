@@ -13,6 +13,7 @@
 #include "platform/process/BoundedProcessRunner.h"
 #include "platform/process/WindowsExecutableResolver.h"
 #include "workbench/scm/GitCommandRunner.h"
+#include "workbench/scm/GitOutputChannel.h"
 
 #include <sakura/security/AuthenticodeSignatureVerifier.h>
 
@@ -87,7 +88,8 @@ constexpr std::size_t kGhVisibilityErrorBytes = 64u * 1024u;
 	return kEmpty;
 }
 
-[[nodiscard]] std::optional<std::string> ReadOriginUrl(std::wstring_view workspaceRoot, HANDLE stop)
+[[nodiscard]] std::optional<std::string> ReadOriginUrl(std::wstring_view workspaceRoot, HANDLE stop,
+	const GitOutputSink& sink)
 {
 	GitExecutionRequest request;
 	request.workingDirectory = std::wstring(workspaceRoot);
@@ -95,7 +97,7 @@ constexpr std::size_t kGhVisibilityErrorBytes = 64u * 1024u;
 	request.policy = EGitRequestPolicy::PassiveRepositoryRead;
 	request.timeoutMilliseconds = kGitRemoteTimeoutMilliseconds;
 	request.maximumOutputBytes = kGitRemoteOutputBytes;
-	const auto result = RunGit(request, stop);
+	const auto result = RunGitLogged(request, stop, sink);
 	if (!result.Succeeded()) return std::nullopt;
 	return Trim(std::string_view(
 		reinterpret_cast<const char*>(result.standardOutput.data()), result.standardOutput.size()));
@@ -202,10 +204,11 @@ std::wstring BuildGitHubRepositoryTooltip(
 	return tooltip;
 }
 
-std::optional<GitHubRepositoryRef> QueryGitHubRepositoryRef(const std::wstring_view workspaceRoot, const HANDLE stop)
+std::optional<GitHubRepositoryRef> QueryGitHubRepositoryRef(const std::wstring_view workspaceRoot,
+	const HANDLE stop, const GitOutputSink& sink)
 {
 	if (workspaceRoot.empty()) return std::nullopt;
-	const auto url = ReadOriginUrl(workspaceRoot, stop);
+	const auto url = ReadOriginUrl(workspaceRoot, stop, sink);
 	if (!url) return std::nullopt;
 	return ParseGitHubRemoteUrl(*url);
 }
