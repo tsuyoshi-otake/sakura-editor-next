@@ -197,6 +197,20 @@ struct ThemePalette {
 	//! its insertion gap (#416). Upstream defaults it to `icon.foreground`,
 	//! whose registered dark value is #C5C5C5 and light value #424242.
 	ThemeColor listDropBetweenBackground = { 0xC5, 0xC5, 0xC5 };
+	//! VS Code `list.dropBackground`, the wash a list paints on the row a dragged
+	//! item hovers over (#415). Upstream registers dark `#062F4A` and light
+	//! `#D6EBFF` with no High Contrast value, so High Contrast takes the system
+	//! selection/highlight color instead: a row being dragged over must stay
+	//! visible, and no chosen theme wash is guaranteed to. Dark Modern's theme
+	//! JSON overrides it with `#383B3D`.
+	ThemeColor listDropBackground = { 0x06, 0x2F, 0x4A };
+	//! VS Code `terminal.dropBackground`, the overlay a terminal paints while a
+	//! drag is over it (#415). Upstream defaults it to
+	//! `editorGroup.dropBackground` (dark `#53595D` at alpha 0.5, light `#2677CB`
+	//! at alpha 0.18). The consumer is a translucent overlay window, so like the
+	//! minimapSlider roles it keeps its alpha and the registry must not
+	//! composite it away.
+	ThemeColor terminalDropBackground = { 0x53, 0x59, 0x5D, 0x80 };
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
 
@@ -445,6 +459,10 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		palette.minimapSliderActiveBackground = { 0x00, 0x00, 0x00, 0x4C };
 		palette.editorIndentGuideBackground = { 0xD3, 0xD3, 0xD3 };
 		palette.listDropBetweenBackground = { 0x42, 0x42, 0x42 };
+		// `list.dropBackground`'s registered light default.
+		palette.listDropBackground = { 0xD6, 0xEB, 0xFF };
+		// `editorGroup.dropBackground`'s registered light default: #2677CB at 0.18.
+		palette.terminalDropBackground = { 0x26, 0x77, 0xCB, 0x2E };
 		return palette;
 	}
 	return {

@@ -44,6 +44,17 @@ public:
 	//! Return false on launch failure; an empty override restores the OS browser.
 	using LinkOpener = std::function<bool(std::wstring_view uri)>;
 	using ImeResultReader = std::function<bool(HWND window, std::wstring& result)>;
+	//! Long press on the pane body (#415 Phase 6, fork extension). A plain left
+	//! press that stays inside the system drag rectangle for
+	//! kTerminalPaneLongPressMilliseconds asks `available`; false leaves the press
+	//! as the ordinary selection or mouse-report gesture. When it answers true the
+	//! viewport first ends its own gesture (a mouse-reporting application receives
+	//! the release, a pending selection is dropped, capture is released) and then
+	//! calls `grab` with the press point in screen coordinates.
+	struct PaneGrabHandler final {
+		std::function<bool()> available;
+		std::function<void(POINT screenPoint)> grab;
+	};
 	using FrameSurfaceId = TerminalSurfaceAdapter::SurfaceId;
 	using FrameSurfaceResult = TerminalSurfaceAdapter::Result;
 	using FrameSurfaceSnapshotType = TerminalSurfaceAdapter::SnapshotType;
@@ -71,6 +82,10 @@ public:
 	void SetResizeSink( ResizeSink sink );
 	void SetFocusSink( FocusSink sink );
 	void SetLinkOpener( LinkOpener opener );
+	//! An empty handler disables the long-press grab and disarms a pending one.
+	void SetPaneGrabHandler( PaneGrabHandler handler );
+	//! Timer id of the long press, for tests that elapse it without waiting.
+	static constexpr UINT_PTR kPaneLongPressTimerId = 0x5347;
 	//! Drops input and IME state owned by the previously bound session. This must
 	//! be called before a renderer is rebound across a workspace/session boundary.
 	void ResetSessionInputState() noexcept;

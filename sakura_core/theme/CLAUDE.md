@@ -153,6 +153,22 @@ roles resolve to the VS Code Light Modern blue/neutral family. Syntax token
 colors remain the bundled Light+ syntax projection and are intentionally
 separate from Workbench surface tokens.
 
+## Drag-and-drop roles (2026-11-16, #415 Phase 6)
+
+- **`listDropBackground`** maps `list.dropBackground`, the wash on the list row
+  a dragged terminal hovers over. It has no second fallback key, because Dark
+  Modern's theme JSON sets it (`#383B3D`).
+  - Registered defaults: dark `#062F4A`, light `#D6EBFF`.
+  - High Contrast takes the system highlight color. Upstream registers no HC
+    value, and a drop target must stay visible.
+- **`terminalDropBackground`** maps `terminal.dropBackground`, falling back to
+  `editorGroup.dropBackground`. It keeps its alpha, as the scrollbar and
+  minimap slider roles do, because its consumer is a translucent overlay
+  window (`TerminalDropOverlay`) that composites it over whatever pane lies
+  below.
+  - Dark default: `#53595D` at 0.5.
+  - Light default: `#2677CB` at 0.18.
+
 ## Scrollbar colors
 
 `scrollbar.background` and the three `scrollbarSlider.*Background` roles retain

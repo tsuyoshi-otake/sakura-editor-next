@@ -179,6 +179,15 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 	// `icon.foreground` registers #FFFFFF / #292929 for the two contrast kinds,
 	// which is the system window text of each.
 	palette.listDropBetweenBackground = windowText;
+	// `list.dropBackground` registers no High Contrast value upstream, so the row
+	// a dragged item hovers over takes the system selection/highlight color to
+	// stay visible rather than an arbitrary theme wash.
+	palette.listDropBackground = highlight;
+	// Upstream defaults `terminal.dropBackground` to `editorGroup.dropBackground`,
+	// whose High Contrast value is the highlight color at 50% alpha. The role is
+	// painted by a translucent overlay window, so its alpha is kept like the
+	// minimapSlider roles rather than being composited away.
+	palette.terminalDropBackground = { highlight.red, highlight.green, highlight.blue, 0x80 };
 	return palette;
 }
 

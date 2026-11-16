@@ -552,6 +552,16 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 		// Upstream registers `list.dropBetweenBackground` as `iconForeground`.
 		palette.listDropBetweenBackground = first(palette.listDropBetweenBackground,
 			{ L"list.dropBetweenBackground", L"icon.foreground" });
+		// `list.dropBackground` registers per-kind defaults upstream and Dark
+		// Modern's theme JSON overrides it with #383B3D, so the token itself is
+		// projected with no second fallback key.
+		palette.listDropBackground = first(palette.listDropBackground,
+			{ L"list.dropBackground" });
+		// `terminal.dropBackground` defaults to `editorGroup.dropBackground`
+		// upstream, and the drop overlay is a translucent window, so the raw
+		// color keeps its alpha like the minimapSlider roles.
+		palette.terminalDropBackground = firstRaw(palette.terminalDropBackground,
+			{ L"terminal.dropBackground", L"editorGroup.dropBackground" });
 		// Unlike ordinary GDI roles, scrollbar colors remain translucent until a
 		// concrete Editor/Side Bar/Panel/Quick Input surface is known. VS Code uses
 		// the same slider tokens over all of those backgrounds.

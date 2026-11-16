@@ -15,6 +15,7 @@
 #include "terminal/window/TerminalClipboardPaste.h"
 #include "terminal/window/TerminalColorResolver.h"
 #include "terminal/window/TerminalDWriteRenderer.h"
+#include "terminal/window/TerminalDragDrop.h"
 #include "terminal/window/TerminalFontMetrics.h"
 #include "terminal/window/TerminalInput.h"
 #include "terminal/window/TerminalLink.h"
@@ -448,6 +449,13 @@ private:
 	// Ownership survives cancellation until release, so a consumed down never
 	// leaks an orphan mouse-up into a mouse-reporting terminal application.
 	bool linkGestureOwned{};
+	// The long-press pane grab (#415 Phase 6). `paneGrab` is only ever Armed or
+	// Idle here: the drag itself belongs to the terminal tool once it is handed off.
+	CTerminalWnd::PaneGrabHandler paneGrabHandler;
+	TerminalDragGesture paneGrab;
+	bool paneGrabPressReported{};
+	// True when the arm took capture itself, so the release must return it.
+	bool paneGrabOwnsCapture{};
 public:
 	CTerminalWnd::ImeResultReader imeResultReader;
 	TerminalNativeFrameBridgePtr nativeFrameBridge;
@@ -1354,6 +1362,76 @@ public:
 		if( linkGestureOwned && ::GetCapture() == window ) ::ReleaseCapture();
 	}
 
+	void SetPaneGrabHandler( CTerminalWnd::PaneGrabHandler handler ) noexcept
+	{
+		paneGrabHandler = std::move(handler);
+		if( !paneGrabHandler.available || !paneGrabHandler.grab ) DisarmPaneGrab();
+	}
+
+	//! A plain left press arms the long press. Capture keeps the release with this
+	//! viewport even off the pane, so an armed press can never outlive its button.
+	void ArmPaneGrab( POINT point, bool reported ) noexcept
+	{
+		if( !window || !paneGrabHandler.available || !paneGrabHandler.grab ) return;
+		paneGrab.Press(TerminalDragSourceKind::PaneBody, 1, point,
+			{ std::max(1, ::GetSystemMetrics(SM_CXDRAG)), std::max(1, ::GetSystemMetrics(SM_CYDRAG)) });
+		paneGrabPressReported = reported;
+		if( ::GetCapture() != window ) {
+			::SetCapture(window);
+			paneGrabOwnsCapture = true;
+		}
+		::SetTimer(window, CTerminalWnd::kPaneLongPressTimerId, kTerminalPaneLongPressMilliseconds, nullptr);
+	}
+
+	//! Stops the timer. The press stays an ordinary gesture; capture taken by the
+	//! arm is returned on the button release, not here, so a reporting
+	//! application keeps receiving its drag.
+	void DisarmPaneGrab() noexcept
+	{
+		static_cast<void>(paneGrab.Cancel());
+		if( window ) ::KillTimer(window, CTerminalWnd::kPaneLongPressTimerId);
+	}
+
+	void ReleasePaneGrabCapture() noexcept
+	{
+		if( !paneGrabOwnsCapture ) return;
+		paneGrabOwnsCapture = false;
+		if( ::GetCapture() == window ) ::ReleaseCapture();
+	}
+
+	void ElapsePaneGrab()
+	{
+		if( window ) ::KillTimer(window, CTerminalWnd::kPaneLongPressTimerId);
+		if( paneGrab.Phase() != TerminalDragPhase::Armed ) return;
+		const POINT press = paneGrab.PressPoint();
+		if( !paneGrabHandler.available || !paneGrabHandler.available() ) {
+			DisarmPaneGrab();
+			return;
+		}
+		static_cast<void>(paneGrab.LongPressElapsed());
+		static_cast<void>(paneGrab.Cancel());
+		// End this viewport's own gesture before the tool takes the pointer: the
+		// application that saw the press sees its release, and a selection that
+		// was only being started is dropped rather than left half-made.
+		if( paneGrabPressReported && pressedMouseButton == 0 ) {
+			SendMouse(TerminalMouseAction::Release, press.x, press.y, 0, 0);
+		}
+		paneGrabPressReported = false;
+		if( selecting ) {
+			selecting = false;
+			selectionMoved = false;
+			selectionAnchor = selectionActive = selectionOrigin;
+			::InvalidateRect(window, nullptr, FALSE);
+		}
+		pressedMouseButton = 3;
+		paneGrabOwnsCapture = false;
+		if( ::GetCapture() == window ) ::ReleaseCapture();
+		POINT screen = press;
+		::ClientToScreen(window, &screen);
+		const auto grab = paneGrabHandler.grab;
+		grab(screen);
+	}
+
 	bool LinkDragged( POINT point ) const noexcept
 	{
 		return std::abs(point.x - linkPressPoint.x) >= std::max(1, ::GetSystemMetrics(SM_CXDRAG)) ||
@@ -1652,6 +1730,7 @@ public:
 	void ResetSessionInputState() noexcept
 	{
 		CancelLinkGesture();
+		DisarmPaneGrab();
 		if( window ) {
 			::KillTimer(window, kInputRetryTimer);
 			if( imeComposing ) {
@@ -1704,6 +1783,10 @@ public:
 				RetryPendingInteractiveInput();
 				return 0;
 			}
+			if( wParam == CTerminalWnd::kPaneLongPressTimerId ) {
+				ElapsePaneGrab();
+				return 0;
+			}
 			return ::DefWindowProcW(window, message, wParam, lParam);
 		case WM_SETFOCUS:
 			RecreateCaret();
@@ -1714,6 +1797,7 @@ public:
 			return 0;
 		case WM_KILLFOCUS:
 			CancelLinkGesture();
+			DisarmPaneGrab();
 			if( inputAdapter ) {
 				if( const auto encoded = inputAdapter->EncodeFocus(false) ) SendReport(*encoded);
 			}
@@ -1778,6 +1862,8 @@ public:
 				CancelLinkGesture();
 				linkGestureOwned = false;
 			}
+			// Any other press, including a second button, ends a pending long press.
+			DisarmPaneGrab();
 			if( BeginScrollbarButtonPress(point, button) ) return 0;
 			::SetFocus(window);
 			if( button == 0 && (wParam & MK_CONTROL) != 0 ) {
@@ -1790,7 +1876,8 @@ public:
 				}
 			}
 			pressedMouseButton = button;
-			if( MouseReporting() && (wParam & MK_SHIFT) == 0 ) {
+			const bool reportPress = MouseReporting() && (wParam & MK_SHIFT) == 0;
+			if( reportPress ) {
 				SendMouse(TerminalMouseAction::Press, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), button, wParam);
 			} else if( message == WM_LBUTTONDBLCLK && model ) {
 				// VS Code/xterm.js double-click selects the word under the pointer.
@@ -1808,10 +1895,12 @@ public:
 				::SetCapture(window);
 				::InvalidateRect(window, nullptr, FALSE);
 			}
+			if( message == WM_LBUTTONDOWN ) ArmPaneGrab(point, reportPress);
 			return 0;
 		}
 		case WM_MOUSEMOVE: {
 			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			if( paneGrab.Move(point) == TerminalDragTransition::Disarmed ) DisarmPaneGrab();
 			if( linkGestureOwned && (wParam & MK_LBUTTON) != 0 ) {
 				if( (wParam & MK_CONTROL) == 0 || LinkDragged(point) ) pressedLink.reset();
 				return 0;
@@ -1872,8 +1961,13 @@ public:
 			if( selecting ) {
 				UpdateSelection(PointToCell(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)));
 				selecting = false;
+				paneGrabOwnsCapture = false;
 				::ReleaseCapture();
 				::InvalidateRect(window, nullptr, FALSE);
+			}
+			if( button == 0 ) {
+				DisarmPaneGrab();
+				ReleasePaneGrabCapture();
 			}
 			pressedMouseButton = 3;
 			return 0;
@@ -1887,6 +1981,8 @@ public:
 			return 0;
 		case WM_CAPTURECHANGED:
 			pressedLink.reset();
+			DisarmPaneGrab();
+			paneGrabOwnsCapture = false;
 			EndScrollbarButtonPress(false);
 			if( selecting ) {
 				selecting = false;
@@ -1897,9 +1993,11 @@ public:
 			return 0;
 		case WM_CANCELMODE:
 			CancelLinkGesture();
+			DisarmPaneGrab();
 			return ::DefWindowProcW(window, message, wParam, lParam);
 		case WM_MOUSEWHEEL: {
 			CancelLinkGesture();
+			DisarmPaneGrab();
 			const auto delta = GET_WHEEL_DELTA_WPARAM(wParam);
 			POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 			::ScreenToClient(window, &point);
@@ -2161,6 +2259,11 @@ void CTerminalWnd::SetLinkOpener( LinkOpener opener )
 	m_impl->linkOpener = std::move(opener);
 }
 
+void CTerminalWnd::SetPaneGrabHandler( PaneGrabHandler handler )
+{
+	m_impl->SetPaneGrabHandler(std::move(handler));
+}
+
 void CTerminalWnd::SetPalette( const theme::ThemePalette& palette )
 {
 	m_impl->palette = palette;
@@ -2377,6 +2480,7 @@ void CTerminalWnd::Close() noexcept
 {
 	if( !m_impl || m_impl->closed ) return;
 	m_impl->CancelLinkGesture();
+	m_impl->SetPaneGrabHandler({});
 	m_impl->closed = true;
 	m_impl->nativeFrameReadySink = {};
 	if (m_impl->nativeFrameBridge) {

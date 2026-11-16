@@ -588,6 +588,8 @@
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalDWriteRenderer.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalFontMetrics.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalHeaderLayout.h" />
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalDragDrop.h" />
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalDropOverlay.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalGroupLayout.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalPaneLayout.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalTabPresentation.h" />
@@ -1369,6 +1371,8 @@
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalClipboardPaste.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalRenderMapping.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalLink.cpp" />
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalDragDrop.cpp" />
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalDropOverlay.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalGroupLayout.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalPaneLayout.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalTabPresentation.cpp" />

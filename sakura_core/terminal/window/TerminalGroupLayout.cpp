@@ -341,6 +341,147 @@ std::optional<std::uint64_t> TerminalGroupLayout::RelativeLeaf( std::uint64_t ta
 	return ids[direction < 0 ? (index + ids.size() - 1) % ids.size() : (index + 1) % ids.size()];
 }
 
+bool TerminalGroupLayout::NodesEquivalent( const TerminalPaneGroup& left, std::size_t leftNode,
+	const TerminalPaneGroup& right, std::size_t rightNode ) noexcept
+{
+	if( leftNode >= left.nodes.size() || rightNode >= right.nodes.size() ) return false;
+	const auto& leftData = left.nodes[leftNode];
+	const auto& rightData = right.nodes[rightNode];
+	if( leftData.leafId != rightData.leafId
+		|| leftData.children.size() != rightData.children.size() ) return false;
+	if( leftData.children.empty() ) return true;
+	if( leftData.orientation != rightData.orientation
+		|| leftData.weights != rightData.weights ) return false;
+	for( std::size_t position = 0; position < leftData.children.size(); ++position ) {
+		if( !NodesEquivalent(left, leftData.children[position],
+			right, rightData.children[position]) ) return false;
+	}
+	return true;
+}
+
+bool TerminalGroupLayout::GroupsEquivalent( const TerminalPaneGroup& left,
+	const TerminalPaneGroup& right ) noexcept
+{
+	return left.tabIds == right.tabIds
+		&& NodesEquivalent(left, left.root, right, right.root);
+}
+
+bool TerminalGroupLayout::EquivalentState( const TerminalGroupLayout& other ) const noexcept
+{
+	if( m_activeGroup != other.m_activeGroup || m_groups.size() != other.m_groups.size() ) return false;
+	for( std::size_t index = 0; index < m_groups.size(); ++index ) {
+		if( !GroupsEquivalent(m_groups[index], other.m_groups[index]) ) return false;
+	}
+	return true;
+}
+
+std::optional<std::uint64_t> TerminalGroupLayout::ActiveLeaf() const noexcept
+{
+	if( !m_activeGroup || *m_activeGroup >= m_groups.size() ) return std::nullopt;
+	const auto& tabIds = m_groups[*m_activeGroup].tabIds;
+	return tabIds.empty() ? std::nullopt : std::optional<std::uint64_t>(tabIds.front());
+}
+
+void TerminalGroupLayout::RestoreActiveGroup( std::optional<std::uint64_t> activeTab ) noexcept
+{
+	if( !activeTab ) return;
+	if( const auto index = FindGroup(*activeTab) ) m_activeGroup = index;
+}
+
+TerminalLayoutEdit TerminalGroupLayout::MoveInstance( std::uint64_t sourceId, std::uint64_t targetId,
+	TerminalPaneOrientation orientation, TerminalDropSide side )
+{
+	if( sourceId == targetId || !FindGroup(sourceId) || !FindGroup(targetId) ) {
+		return TerminalLayoutEdit::Unchanged;
+	}
+	auto updated = *this;
+	if( !updated.RemoveTab(sourceId) ) return TerminalLayoutEdit::Unchanged;
+	const auto targetGroup = updated.FindGroup(targetId);
+	if( !targetGroup ) return TerminalLayoutEdit::Unchanged;
+	auto& group = updated.m_groups[*targetGroup];
+	const auto location = FindPaneLocation(group, group.root, targetId);
+	if( !location ) return TerminalLayoutEdit::Unchanged;
+
+	// The moved leaf lands immediately beside the target: inside the
+	// target's own sibling row when that row lies on the drop axis, else in
+	// a new two-child split that replaces the target leaf, as
+	// InsertPaneSplit does for a fresh split.
+	const auto leafIndex = group.nodes.size();
+	group.nodes.push_back(MakePaneLeaf(sourceId));
+	if( location->parentIndex
+		&& group.nodes[*location->parentIndex].orientation == orientation ) {
+		auto& parent = group.nodes[*location->parentIndex];
+		const auto position = location->childPosition
+			+ (side == TerminalDropSide::After ? 1 : 0);
+		parent.children.insert(parent.children.begin()
+			+ static_cast<std::ptrdiff_t>(position), leafIndex);
+		parent.weights.assign(parent.children.size(), 1000);
+	} else {
+		TerminalPaneLayoutTreeNode split;
+		split.children = side == TerminalDropSide::Before
+			? std::vector<std::size_t>{ leafIndex, location->nodeIndex }
+			: std::vector<std::size_t>{ location->nodeIndex, leafIndex };
+		split.weights = { 1000, 1000 };
+		split.orientation = orientation;
+		const auto splitIndex = group.nodes.size();
+		group.nodes.push_back(std::move(split));
+		if( location->parentIndex ) {
+			group.nodes[*location->parentIndex].children[location->childPosition] = splitIndex;
+		} else {
+			group.root = splitIndex;
+		}
+	}
+	NormalizeGroupTree(group);
+	updated.m_activeGroup = targetGroup;
+	// A drop beside the leaf the source already neighbors changes nothing.
+	if( updated.EquivalentState(*this) ) return TerminalLayoutEdit::Unchanged;
+	*this = std::move(updated);
+	return TerminalLayoutEdit::Changed;
+}
+
+TerminalLayoutEdit TerminalGroupLayout::MoveGroup( std::uint64_t sourceId, std::uint64_t targetId )
+{
+	const auto sourceGroup = FindGroup(sourceId);
+	const auto targetGroup = FindGroup(targetId);
+	if( !sourceGroup || !targetGroup || sourceId == targetId ) return TerminalLayoutEdit::Unchanged;
+	if( *sourceGroup == *targetGroup ) {
+		// A drop on a sibling row reorders inside the group: the source lands
+		// on the far side of the target in the group's leaf order.
+		const auto& tabIds = m_groups[*sourceGroup].tabIds;
+		const auto sourceAt = std::find(tabIds.begin(), tabIds.end(), sourceId);
+		const auto targetAt = std::find(tabIds.begin(), tabIds.end(), targetId);
+		const auto side = sourceAt < targetAt ? TerminalDropSide::After : TerminalDropSide::Before;
+		return MoveInstance(sourceId, targetId, PaneOrientationForTab(*sourceGroup, targetId), side);
+	}
+	// A drop on another group's row moves the whole group, tree unchanged,
+	// next to the target's group.
+	auto updated = *this;
+	const auto activeTab = updated.ActiveLeaf();
+	auto moved = std::move(updated.m_groups[*sourceGroup]);
+	updated.m_groups.erase(updated.m_groups.begin() + static_cast<std::ptrdiff_t>(*sourceGroup));
+	const auto targetIndex = *updated.FindGroup(targetId);
+	const auto insertPosition = *sourceGroup < *targetGroup ? targetIndex + 1 : targetIndex;
+	updated.m_groups.insert(updated.m_groups.begin() + static_cast<std::ptrdiff_t>(insertPosition),
+		std::move(moved));
+	updated.RestoreActiveGroup(activeTab);
+	*this = std::move(updated);
+	return TerminalLayoutEdit::Changed;
+}
+
+TerminalLayoutEdit TerminalGroupLayout::MoveGroupToEnd( std::uint64_t sourceId )
+{
+	const auto sourceGroup = FindGroup(sourceId);
+	if( !sourceGroup || *sourceGroup + 1 >= m_groups.size() ) return TerminalLayoutEdit::Unchanged;
+	auto updated = *this;
+	const auto activeTab = updated.ActiveLeaf();
+	auto moved = std::move(updated.m_groups[*sourceGroup]);
+	updated.m_groups.erase(updated.m_groups.begin() + static_cast<std::ptrdiff_t>(*sourceGroup));
+	updated.m_groups.push_back(std::move(moved));
+	updated.RestoreActiveGroup(activeTab);
+	*this = std::move(updated);
+	return TerminalLayoutEdit::Changed;
+}
+
 bool TerminalGroupLayout::InsertPaneSplit( std::size_t groupIndex, std::uint64_t primaryId,
 	std::uint64_t newId, TerminalPaneOrientation orientation )
 {

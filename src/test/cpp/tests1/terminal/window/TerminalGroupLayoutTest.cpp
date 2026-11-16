@@ -731,4 +731,338 @@ TEST(TerminalGroupLayout, RelativeLeafWrapsAndRejectsLoneOrUnknownLeaves)
 	ExpectModelInvariants(layout);
 }
 
+//! Whole-record comparison for the operations that must report Unchanged
+//! without mutating anything.
+void ExpectSameLayoutState( const terminal::TerminalGroupLayout& expected,
+	const terminal::TerminalGroupLayout& actual )
+{
+	EXPECT_EQ(expected.InstancesInOrder(), actual.InstancesInOrder());
+	EXPECT_EQ(expected.ActiveGroupIndex(), actual.ActiveGroupIndex());
+	ASSERT_EQ(expected.GroupCount(), actual.GroupCount());
+	for( std::size_t i = 0; i < expected.GroupCount(); ++i ) {
+		const auto& left = *expected.GroupAt(i);
+		const auto& right = *actual.GroupAt(i);
+		EXPECT_EQ(left.root, right.root);
+		EXPECT_EQ(left.tabIds, right.tabIds);
+		ASSERT_EQ(left.nodes.size(), right.nodes.size());
+		for( std::size_t j = 0; j < left.nodes.size(); ++j ) {
+			EXPECT_EQ(left.nodes[j].leafId, right.nodes[j].leafId);
+			EXPECT_EQ(left.nodes[j].children, right.nodes[j].children);
+			EXPECT_EQ(left.nodes[j].weights, right.nodes[j].weights);
+			EXPECT_EQ(left.nodes[j].orientation, right.nodes[j].orientation);
+		}
+	}
+}
+
+//! Upstream moveInstance ignores a drop on itself or on an unknown row.
+TEST(TerminalGroupLayout, MoveInstanceRejectsUnknownAndIdenticalTabs)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	const auto before = layout;
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged,
+		layout.MoveInstance(1, 99, terminal::TerminalPaneOrientation::Horizontal,
+			terminal::TerminalDropSide::Before));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged,
+		layout.MoveInstance(99, 1, terminal::TerminalPaneOrientation::Horizontal,
+			terminal::TerminalDropSide::Before));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged,
+		layout.MoveInstance(1, 1, terminal::TerminalPaneOrientation::Horizontal,
+			terminal::TerminalDropSide::After));
+	ExpectSameLayoutState(before, layout);
+	ExpectModelInvariants(layout);
+}
+
+//! Dropping beside the leaf the source already neighbors is a no-op.
+TEST(TerminalGroupLayout, MoveInstanceIsUnchangedWhenTheLeafAlreadyLandsThere)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	const auto before = layout;
+	// 1 already sits directly before 2 on the horizontal axis, and 2
+	// already sits directly after 1.
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged,
+		layout.MoveInstance(1, 2, terminal::TerminalPaneOrientation::Horizontal,
+			terminal::TerminalDropSide::Before));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged,
+		layout.MoveInstance(2, 1, terminal::TerminalPaneOrientation::Horizontal,
+			terminal::TerminalDropSide::After));
+	ExpectSameLayoutState(before, layout);
+	ExpectModelInvariants(layout);
+}
+
+//! A same-axis drop joins the target's sibling row and equalizes its
+//! weights, like an InsertPaneSplit on that axis.
+TEST(TerminalGroupLayout, MoveInstanceInsertsBesideTargetOnTheSameAxis)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 2, 3, terminal::TerminalPaneOrientation::Horizontal));
+	layout.AppendGroup(4);
+	// Uneven weights show the row equalization below.
+	const auto root = layout.GroupAt(0)->root;
+	ASSERT_TRUE(layout.ApplyDividerResize(0, root, 0, 250, 1000));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Changed,
+		layout.MoveInstance(4, 2, terminal::TerminalPaneOrientation::Horizontal,
+			terminal::TerminalDropSide::Before));
+	ExpectModelInvariants(layout);
+	// The singleton source group was erased; 4 joined the target's row.
+	ASSERT_EQ(1u, layout.GroupCount());
+	const auto* group = layout.GroupAt(0);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 1, 4, 2, 3 }), group->tabIds);
+	const auto& rootNode = group->nodes[group->root];
+	ASSERT_EQ(4u, rootNode.children.size());
+	EXPECT_EQ((std::vector<int>{ 1000, 1000, 1000, 1000 }), rootNode.weights);
+	EXPECT_EQ(0u, layout.ActiveGroupIndex());
+}
+
+//! An orthogonal drop replaces the target leaf with a new two-child split
+//! on the drop axis holding the pair in side order.
+TEST(TerminalGroupLayout, MoveInstanceWrapsTheTargetOnADifferentAxis)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 2, 3, terminal::TerminalPaneOrientation::Horizontal));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Changed,
+		layout.MoveInstance(1, 2, terminal::TerminalPaneOrientation::Vertical,
+			terminal::TerminalDropSide::After));
+	ExpectModelInvariants(layout);
+	const auto* group = layout.GroupAt(0);
+	// Removing 1 left [2, 3]; wrapping 2 gives root [split{2,1}, 3].
+	EXPECT_EQ((std::vector<std::uint64_t>{ 2, 1, 3 }), group->tabIds);
+	const auto& root = group->nodes[group->root];
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Horizontal, root.orientation);
+	ASSERT_EQ(2u, root.children.size());
+	const auto& wrapped = group->nodes[root.children[0]];
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Vertical, wrapped.orientation);
+	ASSERT_EQ(2u, wrapped.children.size());
+	// After keeps the target first; the weights are equal.
+	EXPECT_EQ(2u, group->nodes[wrapped.children[0]].leafId);
+	EXPECT_EQ(1u, group->nodes[wrapped.children[1]].leafId);
+	EXPECT_EQ((std::vector<int>{ 1000, 1000 }), wrapped.weights);
+}
+
+//! The same wrap with side Before puts the source in front of the target.
+TEST(TerminalGroupLayout, MoveInstanceWrapBeforePutsTheSourceFirst)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Changed,
+		layout.MoveInstance(2, 1, terminal::TerminalPaneOrientation::Vertical,
+			terminal::TerminalDropSide::Before));
+	ExpectModelInvariants(layout);
+	const auto* group = layout.GroupAt(0);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 2, 1 }), group->tabIds);
+	const auto& root = group->nodes[group->root];
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Vertical, root.orientation);
+	ASSERT_EQ(2u, root.children.size());
+	EXPECT_EQ(2u, group->nodes[root.children[0]].leafId);
+	EXPECT_EQ(1u, group->nodes[root.children[1]].leafId);
+}
+
+//! A drop across groups removes the source's emptied group and activates
+//! the group that now holds both leaves.
+TEST(TerminalGroupLayout, MoveInstanceAcrossGroupsErasesTheSourceAndActivatesTheTarget)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	layout.AppendGroup(3);
+	layout.AppendGroup(4);
+	layout.SetActiveGroup(2);
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Changed,
+		layout.MoveInstance(3, 1, terminal::TerminalPaneOrientation::Horizontal,
+			terminal::TerminalDropSide::After));
+	ExpectModelInvariants(layout);
+	ASSERT_EQ(2u, layout.GroupCount());
+	EXPECT_EQ((std::vector<std::uint64_t>{ 1, 3, 2 }), layout.GroupAt(0)->tabIds);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 4 }), layout.GroupAt(1)->tabIds);
+	// The group holding both moved terminals becomes the active group.
+	EXPECT_EQ(0u, layout.ActiveGroupIndex());
+}
+
+//! Upstream moveGroup ignores a drop on itself or on an unknown row.
+TEST(TerminalGroupLayout, MoveGroupRejectsUnknownAndIdenticalTabs)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	layout.AppendGroup(2);
+	const auto before = layout;
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged, layout.MoveGroup(1, 99));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged, layout.MoveGroup(99, 1));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged, layout.MoveGroup(1, 1));
+	ExpectSameLayoutState(before, layout);
+	ExpectModelInvariants(layout);
+}
+
+//! A drop on a sibling row reorders inside the group: dragging the first
+//! leaf onto the last wraps it around, dragging the last onto the first
+//! pulls it in front.
+TEST(TerminalGroupLayout, MoveGroupReordersInsideTheGroup)
+{
+	// One horizontal row of three leaves.
+	const auto makeRow = [] {
+		terminal::TerminalGroupLayout layout;
+		layout.EnsureGroupForTab(1);
+		static_cast<void>(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+		static_cast<void>(layout.InsertPaneSplit(0, 2, 3, terminal::TerminalPaneOrientation::Horizontal));
+		return layout;
+	};
+	// Dragging 1 onto 3 gives [2, 3, 1].
+	{
+		auto layout = makeRow();
+		EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.MoveGroup(1, 3));
+		ExpectModelInvariants(layout);
+		EXPECT_EQ((std::vector<std::uint64_t>{ 2, 3, 1 }), layout.GroupAt(0)->tabIds);
+	}
+	// Dragging 3 onto 1 gives [3, 1, 2].
+	{
+		auto layout = makeRow();
+		EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.MoveGroup(3, 1));
+		ExpectModelInvariants(layout);
+		EXPECT_EQ((std::vector<std::uint64_t>{ 3, 1, 2 }), layout.GroupAt(0)->tabIds);
+	}
+}
+
+//! A drop on another group's row moves the source's whole group beside the
+//! target's group, keeping the moved tree intact.
+TEST(TerminalGroupLayout, MoveGroupMovesTheWholeGroupBesideTheTargets)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	ASSERT_TRUE(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+	layout.AppendGroup(3);
+	layout.AppendGroup(4);
+	layout.AppendGroup(5);
+	const auto splitWeights = layout.GroupAt(0)->nodes[layout.GroupAt(0)->root].weights;
+	// A lower-indexed group dropped on a row lands right after the target's
+	// group: [[1,2],[3],[4],[5]] becomes [[3],[4],[1,2],[5]].
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.MoveGroup(1, 4));
+	ExpectModelInvariants(layout);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 3, 4, 1, 2, 5 }), layout.InstancesInOrder());
+	const auto* moved = layout.GroupAt(2);
+	ASSERT_TRUE(moved != nullptr);
+	EXPECT_EQ(2u, moved->nodes[moved->root].children.size());
+	EXPECT_EQ(splitWeights, moved->nodes[moved->root].weights);
+	// A higher-indexed group lands right before the target's group:
+	// [[3],[4],[1,2],[5]] becomes [[5],[3],[4],[1,2]].
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.MoveGroup(5, 3));
+	ExpectModelInvariants(layout);
+	EXPECT_EQ((std::vector<std::uint64_t>{ 5, 3, 4, 1, 2 }), layout.InstancesInOrder());
+}
+
+//! The active index keeps pointing at the same group through a whole-group
+//! move, wherever that group started.
+TEST(TerminalGroupLayout, MoveGroupKeepsTheActiveSelectionOnItsGroup)
+{
+	const auto makeGroups = [] {
+		terminal::TerminalGroupLayout layout;
+		layout.EnsureGroupForTab(1);
+		layout.AppendGroup(2);
+		layout.AppendGroup(3);
+		layout.AppendGroup(4);
+		return layout;
+	};
+	// The active group is the moved group.
+	{
+		auto layout = makeGroups();
+		layout.SetActiveGroup(0);
+		EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.MoveGroup(1, 3));
+		ExpectModelInvariants(layout);
+		EXPECT_EQ((std::vector<std::uint64_t>{ 2, 3, 1, 4 }), layout.InstancesInOrder());
+		EXPECT_EQ(2u, layout.ActiveGroupIndex());
+		ASSERT_TRUE(layout.ActiveGroup() != nullptr);
+		EXPECT_EQ((std::vector<std::uint64_t>{ 1 }), layout.ActiveGroup()->tabIds);
+	}
+	// The active group sits before the moved group.
+	{
+		auto layout = makeGroups();
+		layout.SetActiveGroup(0);
+		EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.MoveGroup(2, 4));
+		ExpectModelInvariants(layout);
+		EXPECT_EQ((std::vector<std::uint64_t>{ 1, 3, 4, 2 }), layout.InstancesInOrder());
+		EXPECT_EQ(0u, layout.ActiveGroupIndex());
+		EXPECT_EQ((std::vector<std::uint64_t>{ 1 }), layout.ActiveGroup()->tabIds);
+	}
+	// The active group sits after the moved group.
+	{
+		auto layout = makeGroups();
+		layout.SetActiveGroup(2);
+		EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.MoveGroup(1, 3));
+		ExpectModelInvariants(layout);
+		EXPECT_EQ((std::vector<std::uint64_t>{ 2, 3, 1, 4 }), layout.InstancesInOrder());
+		EXPECT_EQ(1u, layout.ActiveGroupIndex());
+		EXPECT_EQ((std::vector<std::uint64_t>{ 3 }), layout.ActiveGroup()->tabIds);
+	}
+}
+
+//! moveGroupToEnd reports Unchanged for an unknown id or a group that is
+//! already last, including the only group.
+TEST(TerminalGroupLayout, MoveGroupToEndRejectsUnknownAndAlreadyLast)
+{
+	terminal::TerminalGroupLayout layout;
+	layout.EnsureGroupForTab(1);
+	layout.AppendGroup(2);
+	layout.AppendGroup(3);
+	const auto before = layout;
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged, layout.MoveGroupToEnd(99));
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged, layout.MoveGroupToEnd(3));
+	terminal::TerminalGroupLayout single;
+	single.EnsureGroupForTab(9);
+	EXPECT_EQ(terminal::TerminalLayoutEdit::Unchanged, single.MoveGroupToEnd(9));
+	ExpectSameLayoutState(before, layout);
+	ExpectModelInvariants(layout);
+}
+
+//! A drop on the list's empty area moves the whole group to the end and
+//! the active index follows the group it pointed at.
+TEST(TerminalGroupLayout, MoveGroupToEndMovesTheGroupAndTracksEachActivePosition)
+{
+	const auto makeGroups = [] {
+		terminal::TerminalGroupLayout layout;
+		layout.EnsureGroupForTab(1);
+		static_cast<void>(layout.InsertPaneSplit(0, 1, 2, terminal::TerminalPaneOrientation::Horizontal));
+		layout.AppendGroup(3);
+		layout.AppendGroup(4);
+		return layout;
+	};
+	// The active group is the moved group: [[1,2],[3],[4]] -> [[3],[4],[1,2]].
+	{
+		auto layout = makeGroups();
+		layout.SetActiveGroup(0);
+		EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.MoveGroupToEnd(1));
+		ExpectModelInvariants(layout);
+		EXPECT_EQ((std::vector<std::uint64_t>{ 3, 4, 1, 2 }), layout.InstancesInOrder());
+		EXPECT_EQ(2u, layout.ActiveGroupIndex());
+		EXPECT_EQ((std::vector<std::uint64_t>{ 1, 2 }), layout.ActiveGroup()->tabIds);
+		// The moved tree is unchanged.
+		EXPECT_EQ(2u, layout.GroupAt(2)->nodes[layout.GroupAt(2)->root].children.size());
+	}
+	// The active group sits before the moved group.
+	{
+		auto layout = makeGroups();
+		layout.SetActiveGroup(0);
+		EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.MoveGroupToEnd(3));
+		ExpectModelInvariants(layout);
+		EXPECT_EQ((std::vector<std::uint64_t>{ 1, 2, 4, 3 }), layout.InstancesInOrder());
+		EXPECT_EQ(0u, layout.ActiveGroupIndex());
+		EXPECT_EQ((std::vector<std::uint64_t>{ 1, 2 }), layout.ActiveGroup()->tabIds);
+	}
+	// The active group sits after the moved group.
+	{
+		auto layout = makeGroups();
+		layout.SetActiveGroup(2);
+		EXPECT_EQ(terminal::TerminalLayoutEdit::Changed, layout.MoveGroupToEnd(1));
+		ExpectModelInvariants(layout);
+		EXPECT_EQ((std::vector<std::uint64_t>{ 3, 4, 1, 2 }), layout.InstancesInOrder());
+		EXPECT_EQ(1u, layout.ActiveGroupIndex());
+		EXPECT_EQ((std::vector<std::uint64_t>{ 4 }), layout.ActiveGroup()->tabIds);
+	}
+}
+
 } // namespace

@@ -109,9 +109,19 @@ TEST(CThemeService, LightPaletteMatchesWorkbenchTokensExactly)
 	expected.editorIndentGuideBackground = { 0xD3, 0xD3, 0xD3 };
 	// #416: `list.dropBetweenBackground` defaults to the light `icon.foreground`.
 	expected.listDropBetweenBackground = { 0x42, 0x42, 0x42 };
+	// #415: `list.dropBackground` registers #D6EBFF upstream for light themes.
+	expected.listDropBackground = { 0xD6, 0xEB, 0xFF };
+	// #415: `terminal.dropBackground` defaults to `editorGroup.dropBackground`,
+	// whose registered light value is #2677CB at 0.18 alpha; the role keeps its
+	// alpha because the consumer is a translucent overlay window.
+	expected.terminalDropBackground = { 0x26, 0x77, 0xCB, 0x2E };
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Light));
 	EXPECT_EQ((ThemeColor{ 0xC5, 0xC5, 0xC5 }),
 		CThemeService::PaletteFor(ThemeMode::Dark).listDropBetweenBackground);
+	EXPECT_EQ((ThemeColor{ 0x06, 0x2F, 0x4A }),
+		CThemeService::PaletteFor(ThemeMode::Dark).listDropBackground);
+	EXPECT_EQ((ThemeColor{ 0x53, 0x59, 0x5D, 0x80 }),
+		CThemeService::PaletteFor(ThemeMode::Dark).terminalDropBackground);
 }
 
 TEST(CThemeService, EditorWhitespaceRolesUseTheVsCodeTokenOverTheEditorCanvas)
@@ -176,6 +186,9 @@ TEST(CThemeService, HighContrastTerminalBackgroundUsesThePanelFace)
 	EXPECT_EQ(highContrast.primaryText, highContrast.editorWhitespaceForeground);
 	EXPECT_EQ(highContrast.primaryText, highContrast.editorIndentGuideBackground);
 	EXPECT_EQ(highContrast.primaryText, highContrast.listDropBetweenBackground);
+	EXPECT_EQ(highContrast.accent, highContrast.listDropBackground);
+	EXPECT_EQ((ThemeColor{ highContrast.accent.red, highContrast.accent.green,
+		highContrast.accent.blue, 0x80 }), highContrast.terminalDropBackground);
 }
 
 TEST(CThemeService, ActiveColorThemePalettePublishesEditorProjectionWithoutCopying)

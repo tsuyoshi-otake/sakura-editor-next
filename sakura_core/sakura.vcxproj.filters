@@ -1911,6 +1911,12 @@
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalHeaderLayout.h">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalDragDrop.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalDropOverlay.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalGroupLayout.h">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClInclude>
@@ -3994,6 +4000,12 @@
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalRenderPlan.cpp">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalDragDrop.cpp">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalDropOverlay.cpp">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalGroupLayout.cpp">

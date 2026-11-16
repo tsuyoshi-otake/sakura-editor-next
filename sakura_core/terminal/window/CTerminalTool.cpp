@@ -12,6 +12,8 @@
 #include "terminal/DefaultTerminalLaunchProfileService.h"
 #include "terminal/input/TerminalShortcutPreset.h"
 #include "terminal/window/TerminalClipboardPaste.h"
+#include "terminal/window/TerminalDragDrop.h"
+#include "terminal/window/TerminalDropOverlay.h"
 #include "terminal/window/TerminalGroupLayout.h"
 #include "terminal/window/TerminalHeaderLayout.h"
 #include "terminal/window/TerminalPaneLayout.h"
@@ -49,6 +51,13 @@ constexpr UINT kTopologyChangedMessage = WM_APP + 0x3a4;
 constexpr UINT_PTR kSynchronizedOutputTimer = 0x5344;
 constexpr UINT_PTR kProtocolInputRetryTimer = 0x5346;
 constexpr UINT kProtocolInputRetryMilliseconds = 30;
+//! Drag and drop of terminals (#415 Phase 6): the list-row hover activation and
+//! the list autoscroll while the pointer rests at the list's top or bottom edge.
+constexpr UINT_PTR kTerminalDropHoverTimer = 0x5348;
+constexpr UINT_PTR kTerminalDragAutoScrollTimer = 0x5349;
+constexpr UINT kTerminalDragAutoScrollMilliseconds = 100;
+//! The dragged pane is dimmed with the panel background at this alpha.
+constexpr std::uint8_t kTerminalDragSourceDimAlpha = 0x80;
 constexpr ULONGLONG kSynchronizedOutputMaximumMilliseconds = 100;
 constexpr UINT kCommandNewTerminal = 1;
 constexpr UINT kCommandRestartTerminal = 2;
@@ -425,6 +434,24 @@ struct CTerminalTool::Impl {
 	bool closed{};
 	bool protocolInputRetryScheduled{};
 	std::optional<std::size_t> draggingPaneDivider;
+	//! Where a dragged terminal would land (#415 Phase 6). Row and ListEnd are
+	//! list drops (upstream moveGroup / moveGroupToEnd), Pane is a pane edge
+	//! (upstream moveInstance).
+	enum class TerminalDropKind : std::uint8_t { None, Pane, Row, ListEnd };
+	struct TerminalDropState final {
+		TerminalDropKind kind{ TerminalDropKind::None };
+		std::optional<TerminalPaneDropTarget> pane;
+		std::uint64_t rowTabId{};
+	};
+	TerminalDragGesture terminalDrag;
+	TerminalDropState terminalDrop;
+	POINT terminalDragPoint{};
+	std::uint64_t terminalDropHoverTabId{};
+	int terminalDragAutoScroll{};
+	//! A right press cancels a drag; its release must not open the context menu.
+	bool suppressRightButtonUp{};
+	TerminalDropOverlay dragSourceOverlay;
+	TerminalDropOverlay dragTargetOverlay;
 	bool terminalTabsFocused{};
 	std::size_t terminalTabsFirstVisible{};
 	//! terminal.integrated.tabs.* presentation contract. Defaults match VS Code;
@@ -543,6 +570,7 @@ struct CTerminalTool::Impl {
 			if( !pane.window ) continue;
 			pane.window->SetNativeFrameReadySink({});
 			pane.window->SetFocusSink(nullptr);
+			pane.window->SetPaneGrabHandler({});
 			pane.window->SetInputAdapter(nullptr);
 			pane.window->SetModel(nullptr);
 			pane.window->Close();
@@ -624,6 +652,11 @@ struct CTerminalTool::Impl {
 		candidate->SetFocusSink([this, tabId] {
 			if( tabId != 0 ) OnPaneFocused(tabId);
 		});
+		if( !unboundViewport ) {
+			candidate->SetPaneGrabHandler({
+				[this] { return CanDragTerminals(); },
+				[this, tabId](POINT screenPoint) { GrabTerminalPane(tabId, screenPoint); } });
+		}
 		candidate->SetPalette(palette);
 		candidate->SetInputAdapter(unboundViewport ? nullptr : manager->InputAdapter(tabId));
 		candidate->SetModel(unboundViewport ? nullptr : manager->Model(tabId));
@@ -676,6 +709,7 @@ struct CTerminalTool::Impl {
 
 	void PrepareProjectionDetach() noexcept
 	{
+		static_cast<void>(CancelTerminalDrag());
 		if( window ) {
 			::KillTimer(window, kSynchronizedOutputTimer);
 			::KillTimer(window, kProtocolInputRetryTimer);
@@ -1059,6 +1093,11 @@ struct CTerminalTool::Impl {
 		for( std::size_t index = 0; index < count; ++index ) {
 			if( panes[index].window ) panes[index].window->Layout(paneLayout.panes[index], dpi);
 		}
+		if( terminalDrag.Phase() == TerminalDragPhase::Dragging ) {
+			// Hover activation or a runtime topology change moved the panes under
+			// the pointer; the feedback follows what is now there.
+			UpdateTerminalDrag(terminalDragPoint);
+		}
 	}
 
 	void PaintHeaderTo( HDC dc, const RECT& paintBounds, unsigned int paintDpi,
@@ -1247,7 +1286,10 @@ struct CTerminalTool::Impl {
 	void PaintTerminalTabs( HDC dc )
 	{
 		if( !dc || IsEmptyRect(paneLayout.tabsBounds) ) return;
-		FillSolidRect(dc, paneLayout.tabsBounds, palette.bottomPanel.ToColorRef());
+		// upstream list.dropBackground: the whole list when the drop would move
+		// the group to the end, else the row the pointer is over.
+		FillSolidRect(dc, paneLayout.tabsBounds, (terminalDrop.kind == TerminalDropKind::ListEnd
+			? palette.listDropBackground : palette.bottomPanel).ToColorRef());
 		if( chromeFont.Get() == nullptr || chromeFont.Dpi() != dpi ) {
 			static_cast<void>(chromeFont.Recreate(theme::ThemeFontKind::Chrome, dpi));
 		}
@@ -1263,7 +1305,11 @@ struct CTerminalTool::Impl {
 			const RECT rowRect = TerminalTabRow(index);
 			if( IsEmptyRect(rowRect) ) break;
 			const bool selected = focused && row.tab.id == *focused;
-			if( selected ) FillSolidRect(dc, rowRect, palette.raised.ToColorRef());
+			if( terminalDrop.kind == TerminalDropKind::Row && row.tab.id == terminalDrop.rowTabId ) {
+				FillSolidRect(dc, rowRect, palette.listDropBackground.ToColorRef());
+			} else if( selected ) {
+				FillSolidRect(dc, rowRect, palette.raised.ToColorRef());
+			}
 
 			RECT marker = rowRect;
 			marker.right = std::min<LONG>(rowRect.right, marker.left + markerWidth);
@@ -1848,10 +1894,12 @@ struct CTerminalTool::Impl {
 			return 0;
 		case WM_LBUTTONDOWN: {
 			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			static_cast<void>(CancelTerminalDrag());
 			if( const auto tabId = TerminalTabAtPoint(point) ) {
 				terminalTabsFocused = true;
 				static_cast<void>(SelectTerminal(*tabId, false));
 				::SetFocus(window);
+				PressTerminalListRow(*tabId, point);
 				return 0;
 			}
 			if( const auto divider = HitTestPaneDivider(point.x, point.y) ) {
@@ -1883,6 +1931,10 @@ struct CTerminalTool::Impl {
 			break;
 		}
 		case WM_MOUSEMOVE: {
+			if( terminalDrag.Phase() != TerminalDragPhase::Idle ) {
+				MoveTerminalDrag({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) }, (wParam & MK_LBUTTON) != 0);
+				return 0;
+			}
 			if( draggingPaneDivider ) {
 				SetPaneDividerFromMouse(*draggingPaneDivider, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
 				return 0;
@@ -1899,6 +1951,10 @@ struct CTerminalTool::Impl {
 			return 0;
 		}
 		case WM_LBUTTONUP: {
+			if( terminalDrag.Phase() != TerminalDragPhase::Idle ) {
+				ReleaseTerminalDrag({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+				return 0;
+			}
 			if( draggingPaneDivider ) {
 				const auto divider = *draggingPaneDivider;
 				draggingPaneDivider.reset();
@@ -1924,11 +1980,21 @@ struct CTerminalTool::Impl {
 			return 0;
 		case WM_CAPTURECHANGED:
 			draggingPaneDivider.reset();
+			if( reinterpret_cast<HWND>(lParam) != window ) static_cast<void>(CancelTerminalDrag());
 			if( pressedTarget != TerminalHeaderTarget::None ) {
 				pressedTarget = TerminalHeaderTarget::None;
 				InvalidateTabs();
 			}
 			return 0;
+		case WM_CANCELMODE:
+			static_cast<void>(CancelTerminalDrag());
+			return ::DefWindowProcW(window, message, wParam, lParam);
+		case WM_RBUTTONDOWN:
+			if( CancelTerminalDrag() ) {
+				suppressRightButtonUp = true;
+				return 0;
+			}
+			break;
 		case WM_SETCURSOR: {
 			POINT point{};
 			::GetCursorPos(&point);
@@ -1949,6 +2015,7 @@ struct CTerminalTool::Impl {
 			break;
 		}
 		case WM_KEYDOWN:
+			if( wParam == VK_ESCAPE && CancelTerminalDrag() ) return 0;
 			if( terminalTabsFocused && (wParam == VK_UP || wParam == VK_DOWN || wParam == VK_RETURN) ) {
 				const auto tabs = OrderedListTabs();
 				if( tabs.empty() ) return 0;
@@ -1978,6 +2045,7 @@ struct CTerminalTool::Impl {
 			break;
 		}
 		case WM_RBUTTONUP: {
+			if( std::exchange(suppressRightButtonUp, false) ) return 0;
 			POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 			::ClientToScreen(window, &point);
 			ShowContextMenu(point.x, point.y);
@@ -2001,6 +2069,14 @@ struct CTerminalTool::Impl {
 			}
 			if( wParam == kProtocolInputRetryTimer ) {
 				RetryPendingProtocolInput();
+				return 0;
+			}
+			if( wParam == kTerminalDropHoverTimer ) {
+				ActivateHoveredDropRow();
+				return 0;
+			}
+			if( wParam == kTerminalDragAutoScrollTimer ) {
+				AutoScrollTerminalDrag();
 				return 0;
 			}
 			return ::DefWindowProcW(window, message, wParam, lParam);
@@ -2530,6 +2606,245 @@ struct CTerminalTool::Impl {
 	//! rebuild that fails restores the previous layout and selection, as
 	//! SplitTerminal does, so a failed UI step never leaves a layout without its
 	//! panes. Keyboard focus follows only when it was already in a pane.
+	//! Drag and drop of terminals (#415 Phase 6). A list row drags after the
+	//! system drag threshold (upstream terminalTabsList); a pane body drags after
+	//! the long press CTerminalWnd reports (fork extension). The tool window holds
+	//! capture for the whole drag, so every pointer message of the drag arrives
+	//! here in tool-client coordinates.
+	[[nodiscard]] bool CanDragTerminals() const noexcept
+	{
+		if( closed || !window || manager->TabCount() < 2 ) return false;
+		// Something must be able to receive the drop: the list, or another pane.
+		const auto boundPanes = std::count_if(panes.begin(), panes.end(), [](const TerminalPane& pane) {
+			return pane.tabId != 0 && pane.window;
+		});
+		return !IsEmptyRect(paneLayout.tabsBounds) || boundPanes >= 2;
+	}
+
+	[[nodiscard]] static SIZE TerminalDragThreshold() noexcept
+	{
+		return { std::max(1, ::GetSystemMetrics(SM_CXDRAG)), std::max(1, ::GetSystemMetrics(SM_CYDRAG)) };
+	}
+
+	void PressTerminalListRow( std::uint64_t tabId, POINT point )
+	{
+		if( !CanDragTerminals() ) return;
+		terminalDrag.Press(TerminalDragSourceKind::ListRow, tabId, point, TerminalDragThreshold());
+		::SetCapture(window);
+	}
+
+	void GrabTerminalPane( std::uint64_t tabId, POINT screenPoint )
+	{
+		static_cast<void>(CancelTerminalDrag());
+		if( !CanDragTerminals() || !manager->Model(tabId) ) return;
+		POINT point = screenPoint;
+		::ScreenToClient(window, &point);
+		terminalDrag.Press(TerminalDragSourceKind::PaneBody, tabId, point, TerminalDragThreshold());
+		static_cast<void>(terminalDrag.LongPressElapsed());
+		::SetCapture(window);
+		UpdateTerminalDrag(point);
+	}
+
+	void MoveTerminalDrag( POINT point, bool leftButtonDown )
+	{
+		if( !leftButtonDown ) {
+			// The release was lost (another window took the pointer first).
+			static_cast<void>(CancelTerminalDrag());
+			return;
+		}
+		if( terminalDrag.Phase() == TerminalDragPhase::Armed ) {
+			if( terminalDrag.Move(point) != TerminalDragTransition::StartedDragging ) return;
+		}
+		UpdateTerminalDrag(point);
+	}
+
+	void ReleaseTerminalDrag( POINT point )
+	{
+		const bool dragging = terminalDrag.Phase() == TerminalDragPhase::Dragging;
+		if( dragging ) UpdateTerminalDrag(point);
+		const auto kind = terminalDrag.SourceKind();
+		const auto source = terminalDrag.SourceId();
+		const auto drop = terminalDrop;
+		static_cast<void>(CancelTerminalDrag());
+		if( dragging ) static_cast<void>(ApplyTerminalDrop(kind, source, drop));
+	}
+
+	//! Ends any drag or armed list press without applying it. True when one was
+	//! in progress. Idempotent: the capture release re-enters it through
+	//! WM_CAPTURECHANGED and finds nothing left to do.
+	bool CancelTerminalDrag() noexcept
+	{
+		const bool wasActive = terminalDrag.Cancel();
+		const bool hadFeedback = terminalDrop.kind != TerminalDropKind::None;
+		terminalDrop = {};
+		terminalDropHoverTabId = 0;
+		terminalDragAutoScroll = 0;
+		if( window ) {
+			::KillTimer(window, kTerminalDropHoverTimer);
+			::KillTimer(window, kTerminalDragAutoScrollTimer);
+		}
+		dragSourceOverlay.Hide();
+		dragTargetOverlay.Hide();
+		if( wasActive && window && ::GetCapture() == window ) ::ReleaseCapture();
+		if( hadFeedback ) InvalidateTerminalTabs();
+		return wasActive;
+	}
+
+	[[nodiscard]] std::vector<TerminalPaneBounds> PaneDropBounds() const
+	{
+		std::vector<TerminalPaneBounds> result;
+		const auto count = std::min(panes.size(), paneLayout.panes.size());
+		result.reserve(count);
+		for( std::size_t index = 0; index < count; ++index ) {
+			if( panes[index].tabId != 0 && panes[index].window ) result.push_back({ panes[index].tabId, paneLayout.panes[index] });
+		}
+		return result;
+	}
+
+	[[nodiscard]] RECT ClientToScreenRect( RECT rect ) const noexcept
+	{
+		::MapWindowPoints(window, nullptr, reinterpret_cast<POINT*>(&rect), 2);
+		return rect;
+	}
+
+	//! Resolves what is under `point` and shows it: the target pane half in
+	//! terminal.dropBackground, the target row or the whole list in
+	//! list.dropBackground, the dragged pane dimmed, and a no-drop cursor where
+	//! nothing would happen.
+	void UpdateTerminalDrag( POINT point )
+	{
+		if( terminalDrag.Phase() != TerminalDragPhase::Dragging ) return;
+		terminalDragPoint = point;
+		const auto source = terminalDrag.SourceId();
+		if( !manager->Model(source) || !groupLayout.FindGroup(source) ) {
+			// The runtime closed the dragged terminal under the pointer.
+			static_cast<void>(CancelTerminalDrag());
+			return;
+		}
+		TerminalDropState next;
+		std::optional<std::uint64_t> rowUnderPoint;
+		if( ::PtInRect(&paneLayout.tabsBounds, point) != FALSE ) {
+			rowUnderPoint = TerminalTabAtPoint(point);
+			if( !rowUnderPoint ) {
+				next.kind = TerminalDropKind::ListEnd;
+			} else if( *rowUnderPoint != source ) {
+				next.kind = TerminalDropKind::Row;
+				next.rowTabId = *rowUnderPoint;
+			}
+		} else {
+			const auto paneBounds = PaneDropBounds();
+			if( const auto target = HitTestPaneDropTarget(paneBounds, source, point) ) {
+				next.kind = TerminalDropKind::Pane;
+				next.pane = target;
+			}
+		}
+		const bool listFeedbackChanged = next.kind != terminalDrop.kind
+			|| next.rowTabId != terminalDrop.rowTabId;
+		terminalDrop = next;
+
+		if( next.kind == TerminalDropKind::Pane ) {
+			if( !dragTargetOverlay.Show(window, instance, ClientToScreenRect(next.pane->overlay), palette.terminalDropBackground) ) {
+				dragTargetOverlay.Hide();
+			}
+		} else {
+			dragTargetOverlay.Hide();
+		}
+		const auto* sourcePane = FindPane(source);
+		const auto sourceIndex = sourcePane ? static_cast<std::size_t>(sourcePane - panes.data()) : panes.size();
+		if( sourceIndex < paneLayout.panes.size() ) {
+			auto dim = palette.bottomPanel;
+			dim.alpha = kTerminalDragSourceDimAlpha;
+			if( !dragSourceOverlay.Show(window, instance, ClientToScreenRect(paneLayout.panes[sourceIndex]), dim) ) {
+				dragSourceOverlay.Hide();
+			}
+		} else {
+			dragSourceOverlay.Hide();
+		}
+		if( listFeedbackChanged ) InvalidateTerminalTabs();
+
+		// upstream: resting on a row for 500 ms activates that terminal, so its
+		// group's panes can take the drop.
+		const std::uint64_t hover = rowUnderPoint ? *rowUnderPoint : 0;
+		if( hover != terminalDropHoverTabId ) {
+			terminalDropHoverTabId = hover;
+			::KillTimer(window, kTerminalDropHoverTimer);
+			if( hover != 0 && manager->ActiveTabId() != hover ) {
+				::SetTimer(window, kTerminalDropHoverTimer, kTerminalDropHoverActivateMilliseconds, nullptr);
+			}
+		}
+
+		int scroll = 0;
+		if( rowUnderPoint || next.kind == TerminalDropKind::ListEnd ) {
+			const LONG band = std::max(1, ScaleDip(kTerminalTabsRowHeightDip, dpi) / 2);
+			if( point.y < paneLayout.tabsBounds.top + band ) scroll = -1;
+			else if( point.y >= paneLayout.tabsBounds.bottom - band ) scroll = 1;
+		}
+		if( scroll != terminalDragAutoScroll ) {
+			terminalDragAutoScroll = scroll;
+			::KillTimer(window, kTerminalDragAutoScrollTimer);
+			if( scroll != 0 ) ::SetTimer(window, kTerminalDragAutoScrollTimer, kTerminalDragAutoScrollMilliseconds, nullptr);
+		}
+
+		::SetCursor(::LoadCursor(nullptr, next.kind == TerminalDropKind::None ? IDC_NO : IDC_SIZEALL));
+	}
+
+	void ActivateHoveredDropRow()
+	{
+		::KillTimer(window, kTerminalDropHoverTimer);
+		if( terminalDrag.Phase() != TerminalDragPhase::Dragging || terminalDropHoverTabId == 0 ) return;
+		// SelectTerminal rebuilds the panes when the group changes; LayoutChildren
+		// then re-resolves the drop under the unchanged pointer.
+		static_cast<void>(SelectTerminal(terminalDropHoverTabId, false));
+	}
+
+	void AutoScrollTerminalDrag()
+	{
+		if( terminalDrag.Phase() != TerminalDragPhase::Dragging || terminalDragAutoScroll == 0 ) {
+			::KillTimer(window, kTerminalDragAutoScrollTimer);
+			return;
+		}
+		const auto capacity = TerminalTabCapacity();
+		const auto count = manager->TabCount();
+		if( capacity == 0 || count <= capacity ) return;
+		const auto before = terminalTabsFirstVisible;
+		if( terminalDragAutoScroll < 0 && terminalTabsFirstVisible > 0 ) --terminalTabsFirstVisible;
+		if( terminalDragAutoScroll > 0 && terminalTabsFirstVisible + capacity < count ) ++terminalTabsFirstVisible;
+		if( terminalTabsFirstVisible == before ) return;
+		InvalidateTerminalTabs();
+		UpdateTerminalDrag(terminalDragPoint);
+	}
+
+	//! Applies a finished drag through the group layout model. The moved
+	//! terminal is selected; a grabbed pane also takes keyboard focus, while a
+	//! row dragged in the list leaves the focus in the list.
+	bool ApplyTerminalDrop( TerminalDragSourceKind kind, std::uint64_t source, const TerminalDropState& drop )
+	{
+		if( !manager->Model(source) ) return false;
+		auto updated = groupLayout;
+		auto edit = TerminalLayoutEdit::Unchanged;
+		switch( drop.kind ) {
+		case TerminalDropKind::Pane:
+			edit = updated.MoveInstance(source, drop.pane->targetId, drop.pane->Orientation(), drop.pane->Side());
+			break;
+		case TerminalDropKind::Row:
+			edit = updated.MoveGroup(source, drop.rowTabId);
+			break;
+		case TerminalDropKind::ListEnd:
+			edit = updated.MoveGroupToEnd(source);
+			break;
+		case TerminalDropKind::None:
+			return false;
+		}
+		if( edit != TerminalLayoutEdit::Changed ) return false;
+		updated.SetActiveGroup(updated.FindGroup(source));
+		if( !CommitLayoutEdit(std::move(updated), source) ) return false;
+		if( kind == TerminalDragSourceKind::PaneBody ) {
+			terminalTabsFocused = false;
+			if( auto* pane = FindPane(source); pane && pane->window ) pane->window->Focus();
+		}
+		return true;
+	}
+
 	bool CommitLayoutEdit( TerminalGroupLayout updated, std::optional<std::uint64_t> selectId )
 	{
 		const bool hadFocus = PaneHasKeyboardFocus();
@@ -2823,6 +3138,7 @@ void CTerminalTool::Deactivate()
 {
 	// Deliberately preserve every tab, session, pipe and parser while hidden.
 	m_impl->active = false;
+	static_cast<void>(m_impl->CancelTerminalDrag());
 }
 
 void CTerminalTool::CommitGdiFrames() noexcept
@@ -2864,6 +3180,9 @@ void CTerminalTool::DetachNativeFrameRuntime() noexcept
 bool CTerminalTool::PreTranslateMessage( MSG& message )
 {
 	if( m_impl->closed ) return false;
+	// Esc ends a terminal drag wherever the keyboard focus is (a grabbed pane
+	// keeps it), and never reaches the shell.
+	if( message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE && m_impl->CancelTerminalDrag() ) return true;
 	// The preset prefix runs first. Once it is armed the second key belongs to the
 	// preset, not to a workbench keybinding that happens to use the same key.
 	if( m_impl->HandleShortcutPresetKey(message) ) return true;
@@ -2888,6 +3207,9 @@ void CTerminalTool::Close()
 		m_impl->gate->agentProcessIds.clear();
 	}
 	m_impl->agentPresenceSink = {};
+	static_cast<void>(m_impl->CancelTerminalDrag());
+	m_impl->dragSourceOverlay.Destroy();
+	m_impl->dragTargetOverlay.Destroy();
 	if( m_impl->window ) ::KillTimer(m_impl->window, kSynchronizedOutputTimer);
 	if( m_impl->window ) ::KillTimer(m_impl->window, kProtocolInputRetryTimer);
 	m_impl->DetachNativeFrameRuntime();

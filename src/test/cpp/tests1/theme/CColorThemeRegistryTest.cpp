@@ -218,5 +218,40 @@ TEST(CColorThemeRegistry, ProjectsTheListDropLineFromItsTokenOrTheIconForeground
 	EXPECT_EQ((ThemeColor{ 0x40, 0x50, 0x60 }), explicitLine.listDropBetweenBackground);
 }
 
+// #415: upstream registers per-kind `list.dropBackground` defaults and Dark
+// Modern's theme JSON overrides it, while `terminal.dropBackground` defaults to
+// `editorGroup.dropBackground` and keeps its overlay alpha.
+TEST(CColorThemeRegistry, ProjectsDropBackgroundsFromTheirTokensAndFallbacks)
+{
+	using theme::CColorThemeRegistry;
+	using theme::ColorThemeKind;
+	using theme::ThemeColor;
+
+	EXPECT_EQ((ThemeColor{ 0x06, 0x2F, 0x4A }),
+		CColorThemeRegistry::ProjectPalette(ColorThemeKind::Dark, {}).listDropBackground);
+	EXPECT_EQ((ThemeColor{ 0xD6, 0xEB, 0xFF }),
+		CColorThemeRegistry::ProjectPalette(ColorThemeKind::Light, {}).listDropBackground);
+	const auto row = CColorThemeRegistry::ProjectPalette(ColorThemeKind::Dark, {
+		{ L"list.dropBackground", ThemeColor{ 0x38, 0x3B, 0x3D } },
+	});
+	EXPECT_EQ((ThemeColor{ 0x38, 0x3B, 0x3D }), row.listDropBackground);
+
+	// `terminal.dropBackground` falls back to `editorGroup.dropBackground` and
+	// keeps its alpha for the translucent overlay window.
+	EXPECT_EQ((ThemeColor{ 0x53, 0x59, 0x5D, 0x80 }),
+		CColorThemeRegistry::ProjectPalette(ColorThemeKind::Dark, {}).terminalDropBackground);
+	EXPECT_EQ((ThemeColor{ 0x26, 0x77, 0xCB, 0x2E }),
+		CColorThemeRegistry::ProjectPalette(ColorThemeKind::Light, {}).terminalDropBackground);
+	const auto group = CColorThemeRegistry::ProjectPalette(ColorThemeKind::Dark, {
+		{ L"editorGroup.dropBackground", ThemeColor{ 0x10, 0x20, 0x30, 0x40 } },
+	});
+	EXPECT_EQ((ThemeColor{ 0x10, 0x20, 0x30, 0x40 }), group.terminalDropBackground);
+	const auto terminal = CColorThemeRegistry::ProjectPalette(ColorThemeKind::Dark, {
+		{ L"editorGroup.dropBackground", ThemeColor{ 0x10, 0x20, 0x30, 0x40 } },
+		{ L"terminal.dropBackground", ThemeColor{ 0x40, 0x50, 0x60, 0x70 } },
+	});
+	EXPECT_EQ((ThemeColor{ 0x40, 0x50, 0x60, 0x70 }), terminal.terminalDropBackground);
+}
+
 
 } // namespace

@@ -58,6 +58,9 @@ enum class TerminalSplitPosition : std::uint8_t {
 	}
 }
 
+//! Which side of the drop target the moved terminal ends on (#415 Phase 6).
+enum class TerminalDropSide : std::uint8_t { Before, After };
+
 //! Pure model of the terminal panel's group list. A terminal session belongs
 //! to exactly one group, and only the selected group owns native viewport
 //! HWNDs at a time; this type owns neither the renderers nor the sessions,
@@ -124,6 +127,13 @@ public:
 	[[nodiscard]] TerminalLayoutEdit Swap( std::uint64_t first, std::uint64_t second );
 	//! Previous or next leaf in this group, wrapping; absent for a lone leaf.
 	[[nodiscard]] std::optional<std::uint64_t> RelativeLeaf( std::uint64_t tabId, int direction ) const;
+	//! Moves `sourceId`'s leaf beside `targetId`'s leaf (upstream TerminalGroupService.moveInstance).
+	[[nodiscard]] TerminalLayoutEdit MoveInstance( std::uint64_t sourceId, std::uint64_t targetId,
+		TerminalPaneOrientation orientation, TerminalDropSide side );
+	//! Upstream TerminalGroupService.moveGroup, for a drop on a terminal list row.
+	[[nodiscard]] TerminalLayoutEdit MoveGroup( std::uint64_t sourceId, std::uint64_t targetId );
+	//! Upstream moveGroupToEnd, for a drop on the list's empty area.
+	[[nodiscard]] TerminalLayoutEdit MoveGroupToEnd( std::uint64_t sourceId );
 	//! Splits `primaryId`'s leaf in `groupIndex`'s tree on `orientation`.
 	//! When the leaf's parent already splits on that axis the new leaf is
 	//! inserted beside it and the row/column is equalized; otherwise the leaf
@@ -174,6 +184,21 @@ private:
 		std::size_t nodeIndex, std::uint64_t tabId ) noexcept;
 	static RemovePaneResult RemovePaneFromNode( TerminalPaneGroup& group, std::size_t nodeIndex,
 		std::uint64_t tabId ) noexcept;
+	//! Depth-first structural equality of two nodes and their subtrees;
+	//! leaf ids, orientations and weights must all match.
+	[[nodiscard]] static bool NodesEquivalent( const TerminalPaneGroup& left, std::size_t leftNode,
+		const TerminalPaneGroup& right, std::size_t rightNode ) noexcept;
+	//! Reachable-tree equality of two groups; dead nodes are ignored.
+	[[nodiscard]] static bool GroupsEquivalent( const TerminalPaneGroup& left,
+		const TerminalPaneGroup& right ) noexcept;
+	//! Whether the ordered groups' reachable trees and the active index
+	//! all equal `other`'s.
+	[[nodiscard]] bool EquivalentState( const TerminalGroupLayout& other ) const noexcept;
+	//! The leaf identifying the active group when the index is in range.
+	[[nodiscard]] std::optional<std::uint64_t> ActiveLeaf() const noexcept;
+	//! Repoints the active index at `activeTab`'s group after a whole-group
+	//! reorder; absent or unresolvable leaves the stored index alone.
+	void RestoreActiveGroup( std::optional<std::uint64_t> activeTab ) noexcept;
 	[[nodiscard]] TerminalPaneGroup* MutableGroupAt( std::size_t index ) noexcept;
 
 	std::vector<TerminalPaneGroup> m_groups;

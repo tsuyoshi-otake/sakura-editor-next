@@ -614,6 +614,87 @@ Surfaces:
   (`TerminalTabManager::SelectTab`), so a later external `select-pane` back to
   the previously current pane is still seen as a change.
 
+### Drag and drop of terminals (#415 Phase 6)
+
+Model operations (`TerminalGroupLayout`, one transaction each, `Unchanged`
+when nothing would move):
+
+| Drop | Operation | Result |
+|---|---|---|
+| Row of the same group | `MoveGroup` → `MoveInstance` | The leaf moves before the target when dragged up, after it when dragged down |
+| Row of another group | `MoveGroup` (upstream `moveGroup`) | The whole group, tree unchanged, lands next to the target's group |
+| List empty area | `MoveGroupToEnd` (upstream `moveGroupToEnd`) | The source's group becomes the last group |
+| Pane edge | `MoveInstance(source, target, axis, side)` (upstream `moveInstance`) | The leaf lands immediately before/after the target, joining the target's group |
+
+- Upstream's `moveInstance` index arithmetic (`indexOf + 1`, then `+ 1` again
+  for `after`) does not always leave the source beside the target. The fork
+  implements what the drop overlay promises: the source ends immediately
+  before or after the target. The leaf joins the target's sibling row when that
+  row lies on the drop axis, else a new two-child split replaces the target
+  leaf, as `InsertPaneSplit` does. This was decided from the upstream source
+  and the overlay's meaning; it has not been compared against a running
+  VS Code.
+- After a drop, the source's group becomes active and the source is selected
+  (`CommitLayoutEdit`). A grabbed pane also takes keyboard focus; a dragged
+  list row leaves focus in the list.
+
+Gesture (`TerminalDragGesture`, `TerminalDragDrop.h`, pure and tested):
+
+- A list row press arms the drag. It starts after the pointer leaves the
+  `SM_CXDRAG`/`SM_CYDRAG` rectangle, as upstream `terminalTabsList` drags.
+- **Fork extension: long-press pane grab** (owner request). A left press held
+  on a pane body for 500 ms inside the drag rectangle grabs that pane. Moving
+  first disarms it, so a normal drag still selects text. Upstream drags only
+  the list row and the header label. A grab is offered only when something can
+  take the drop (`CanDragTerminals`: at least two terminals, and either a
+  visible list or two bound panes); otherwise the press stays an ordinary
+  press. When the application had mouse reporting on and already received the
+  press, the grab sends the matching release first, so a TUI never sees an
+  unpaired press.
+- The terminal tool holds capture for the whole drag. Esc, a right press, loss
+  of capture, a lost left button, or the dragged terminal closing all cancel
+  without changing the layout.
+- Resting on a list row for 500 ms activates that terminal (upstream), so a
+  pane of another group can then take a drop. Hovering near the top or bottom
+  of a long list auto-scrolls it one row every 100 ms.
+
+Feedback:
+
+- **Fork extension: four drop zones.** A pane accepts a drop on its nearest
+  edge (`HitTestPaneDropTarget`); ties prefer left/right, upstream's horizontal
+  Panel axis. Left/right are upstream's `before`/`after`; top/bottom do the
+  same on the vertical axis. Upstream has two halves on the Panel's one axis.
+  The fork's groups nest both axes, so a two-zone pane could not express a
+  stacked drop.
+- The target half is painted by `TerminalDropOverlay`, a layered, click-through,
+  non-activating popup owned by the frame, in `terminal.dropBackground`
+  (upstream default `editorGroup.dropBackground`, alpha kept). The dragged pane
+  is dimmed by a second overlay in the panel background at alpha `0x80`
+  (fork addition, which shows what is moving).
+- The list paints `list.dropBackground` on the target row, or on the whole list
+  for a drop at the end. High Contrast uses the system highlight color, because
+  upstream registers no HC value for this role.
+- The cursor is `IDC_SIZEALL` over a valid target and `IDC_NO` elsewhere
+  (Win32 stand-in for the HTML drag cursor).
+
+Verified 2026-11-16, x64 Debug:
+
+- `TerminalDragDrop.*` covers the zone hit test and every gesture exit.
+  `TerminalGroupLayout.*` covers the three operations.
+- `TerminalTool.*` covers the row move, the list end, hover then pane edge,
+  long press then drop, the cancel paths, and the TUI release.
+- Fail-before, by disabling one part at a time: the drop (4 tests fail), the
+  TUI release and Esc cancel (2 tests fail), the long press (3 tests fail).
+- Real window, throwaway profile, posted mouse messages: long press → hover
+  over T1's row → drop on T1's left half joins the group with the moved
+  terminal on the left. The overlay is exactly the left half. No overlay or
+  capture remains afterward, and six grab+Esc cancels keep the layout.
+- Dual capture, excluding the outer 8 px (DWM border and Windows 11 rounded
+  corners, which `PrintWindow` never renders and which account for a constant
+  2.15% of the whole window):
+  - After the drop: 0.017%.
+  - All six cancels and a forced-redraw noise floor: 0.003%.
+
 The active group is a recursive split layout. Upstream VS Code keeps bottom-
 Panel splits on one axis (side-by-side); nested panes and vertical splits are
 an explicit Sakura multiplexer extension. A split on the same axis as the

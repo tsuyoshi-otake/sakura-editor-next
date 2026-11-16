@@ -2744,4 +2744,340 @@ TEST(TerminalTool, RestoredGroupLeavesNoStrayShellWhenTheActiveLeafIsAShell)
 	tool.Close();
 }
 
+// #415 Phase 6: drag and drop of terminals. Messages are sent synchronously and
+// the two timers (list hover 0x5348, pane long press) are elapsed by sending
+// WM_TIMER, so no test waits for real time.
+constexpr UINT_PTR kTestDropHoverTimer = 0x5348;
+
+POINT TerminalListRowPoint( const terminal::CTerminalTool& tool, std::size_t index )
+{
+	const RECT tabs = tool.TerminalTabsBounds();
+	return { tabs.left + 20, tabs.top + static_cast<LONG>(index) * 24 + 12 };
+}
+
+std::vector<std::uint64_t> TerminalListOrder( const terminal::CTerminalTool& tool )
+{
+	std::vector<std::uint64_t> ids;
+	for( const auto& row : tool.TerminalListRows() ) ids.push_back(row.tab.id);
+	return ids;
+}
+
+//! A pane window's rectangle in the tool's client coordinates.
+RECT PaneClientRect( const terminal::CTerminalTool& tool, HWND pane )
+{
+	RECT rect{};
+	::GetWindowRect(pane, &rect);
+	::MapWindowPoints(nullptr, tool.GetHwnd(), reinterpret_cast<POINT*>(&rect), 2);
+	return rect;
+}
+
+std::vector<HWND> VisiblePaneWindows( const terminal::CTerminalTool& tool )
+{
+	std::vector<HWND> result;
+	for( HWND child = ::FindWindowExW(tool.GetHwnd(), nullptr, L"SakuraNativeTerminalWindow", nullptr); child;
+		child = ::FindWindowExW(tool.GetHwnd(), child, L"SakuraNativeTerminalWindow", nullptr) ) {
+		result.push_back(child);
+	}
+	return result;
+}
+
+//! Visible drop overlays owned by `owner` (the test's top-level parent).
+std::size_t VisibleDropOverlays( HWND owner )
+{
+	std::size_t count = 0;
+	for( HWND overlay = ::FindWindowExW(nullptr, nullptr, L"SakuraTerminalDropOverlay", nullptr); overlay;
+		overlay = ::FindWindowExW(nullptr, overlay, L"SakuraTerminalDropOverlay", nullptr) ) {
+		if( ::GetWindow(overlay, GW_OWNER) == owner && ::IsWindowVisible(overlay) ) ++count;
+	}
+	return count;
+}
+
+LPARAM PointLParam( POINT point )
+{
+	return MAKELPARAM(point.x, point.y);
+}
+
+TEST(TerminalTool, DraggingAListRowOntoAnotherGroupsRowMovesTheWholeGroup)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 900, 320 }, 96);
+	tool.Activate();
+	const auto first = tool.ActiveTerminalId();
+	const auto second = tool.AddTerminal();
+	const auto third = tool.AddTerminal();
+	ASSERT_TRUE(first && second && third);
+	ASSERT_TRUE(tool.HasTerminalTabsList());
+	ASSERT_EQ((std::vector<std::uint64_t>{ *first, *second, *third }), TerminalListOrder(tool));
+	const HWND window = tool.GetHwnd();
+
+	// A click without movement only selects the row.
+	::SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, PointLParam(TerminalListRowPoint(tool, 0)));
+	::SendMessageW(window, WM_LBUTTONUP, 0, PointLParam(TerminalListRowPoint(tool, 0)));
+	EXPECT_EQ(*first, tool.ActiveTerminalId());
+	EXPECT_EQ((std::vector<std::uint64_t>{ *first, *second, *third }), TerminalListOrder(tool));
+
+	// Dragging the first group onto the third group's row puts it after that
+	// group (upstream moveGroup: a lower source index lands after the target).
+	::SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, PointLParam(TerminalListRowPoint(tool, 0)));
+	EXPECT_EQ(window, ::GetCapture());
+	::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, PointLParam(TerminalListRowPoint(tool, 1)));
+	::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, PointLParam(TerminalListRowPoint(tool, 2)));
+	EXPECT_EQ((std::vector<std::uint64_t>{ *first, *second, *third }), TerminalListOrder(tool));
+	::SendMessageW(window, WM_LBUTTONUP, 0, PointLParam(TerminalListRowPoint(tool, 2)));
+	EXPECT_EQ((std::vector<std::uint64_t>{ *second, *third, *first }), TerminalListOrder(tool));
+	EXPECT_EQ(*first, tool.ActiveTerminalId());
+	EXPECT_NE(window, ::GetCapture());
+
+	// Back onto the first row: a higher source index lands before the target.
+	::SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, PointLParam(TerminalListRowPoint(tool, 2)));
+	::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, PointLParam(TerminalListRowPoint(tool, 0)));
+	::SendMessageW(window, WM_LBUTTONUP, 0, PointLParam(TerminalListRowPoint(tool, 0)));
+	EXPECT_EQ((std::vector<std::uint64_t>{ *first, *second, *third }), TerminalListOrder(tool));
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, DraggingARowToTheListsEmptyAreaMovesItsGroupToTheEnd)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 900, 320 }, 96);
+	tool.Activate();
+	const auto first = tool.ActiveTerminalId();
+	const auto second = tool.AddTerminal();
+	const auto third = tool.AddTerminal();
+	ASSERT_TRUE(first && second && third);
+	const HWND window = tool.GetHwnd();
+	const POINT empty = TerminalListRowPoint(tool, 5);
+	ASSERT_LT(empty.y, tool.TerminalTabsBounds().bottom - 24);
+
+	::SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, PointLParam(TerminalListRowPoint(tool, 0)));
+	::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, PointLParam(empty));
+	::SendMessageW(window, WM_LBUTTONUP, 0, PointLParam(empty));
+	EXPECT_EQ((std::vector<std::uint64_t>{ *second, *third, *first }), TerminalListOrder(tool));
+
+	// The last group is already at the end: nothing changes.
+	::SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, PointLParam(TerminalListRowPoint(tool, 2)));
+	::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, PointLParam(empty));
+	::SendMessageW(window, WM_LBUTTONUP, 0, PointLParam(empty));
+	EXPECT_EQ((std::vector<std::uint64_t>{ *second, *third, *first }), TerminalListOrder(tool));
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, HoveringARowActivatesItsGroupAndAPaneEdgeDropJoinsIt)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 900, 320 }, 96);
+	tool.Activate();
+	const auto first = tool.ActiveTerminalId();
+	const auto second = tool.AddTerminal();
+	ASSERT_TRUE(first && second);
+	const HWND window = tool.GetHwnd();
+
+	// Drag T2's row. Its press shows T2's own group; resting on T1's row
+	// activates T1's group so T1's pane can take the drop.
+	::SendMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, PointLParam(TerminalListRowPoint(tool, 1)));
+	::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, PointLParam(TerminalListRowPoint(tool, 0)));
+	EXPECT_EQ(*second, tool.ActiveTerminalId());
+	::SendMessageW(window, WM_TIMER, kTestDropHoverTimer, 0);
+	EXPECT_EQ(*first, tool.ActiveTerminalId());
+	const auto panes = VisiblePaneWindows(tool);
+	ASSERT_EQ(1u, panes.size());
+	const RECT target = PaneClientRect(tool, panes[0]);
+	const POINT leftEdge{ target.left + 10, (target.top + target.bottom) / 2 };
+	::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, PointLParam(leftEdge));
+	// Only the target half is shown: T2's pane is not visible to dim.
+	EXPECT_EQ(1u, VisibleDropOverlays(parent));
+	::SendMessageW(window, WM_LBUTTONUP, 0, PointLParam(leftEdge));
+	EXPECT_EQ(0u, VisibleDropOverlays(parent));
+
+	const auto snapshot = tool.GroupLayoutSnapshot();
+	ASSERT_EQ(1u, snapshot.groups.size());
+	EXPECT_EQ((std::vector<std::uint64_t>{ *second, *first }), snapshot.groups[0].tabIds);
+	EXPECT_EQ(*second, snapshot.activeTabId);
+	EXPECT_EQ(2u, tool.VisiblePaneCount());
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, LongPressOnAPaneGrabsItAndDropsItOnTheNearestEdge)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 900, 320 }, 96);
+	tool.Activate();
+	const auto first = tool.ActiveTerminalId();
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	const auto second = tool.ActiveTerminalId();
+	ASSERT_TRUE(first && second);
+	auto panes = VisiblePaneWindows(tool);
+	ASSERT_EQ(2u, panes.size());
+	const HWND window = tool.GetHwnd();
+
+	// Moving past the drag rectangle before the long press keeps the press an
+	// ordinary selection: the elapsed timer grabs nothing.
+	::SendMessageW(panes[1], WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(40, 40));
+	::SendMessageW(panes[1], WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(80, 40));
+	::SendMessageW(panes[1], WM_TIMER, terminal::CTerminalWnd::kPaneLongPressTimerId, 0);
+	EXPECT_NE(window, ::GetCapture());
+	::SendMessageW(panes[1], WM_LBUTTONUP, 0, MAKELPARAM(80, 40));
+	EXPECT_EQ(0u, VisibleDropOverlays(parent));
+
+	// A held press grabs the pane: the tool takes the pointer and dims it.
+	::SendMessageW(panes[1], WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(40, 40));
+	::SendMessageW(panes[1], WM_TIMER, terminal::CTerminalWnd::kPaneLongPressTimerId, 0);
+	EXPECT_EQ(window, ::GetCapture());
+	EXPECT_EQ(1u, VisibleDropOverlays(parent));
+	const RECT target = PaneClientRect(tool, panes[0]);
+	const POINT leftEdge{ target.left + 10, (target.top + target.bottom) / 2 };
+	::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, PointLParam(leftEdge));
+	EXPECT_EQ(2u, VisibleDropOverlays(parent));
+	::SendMessageW(window, WM_LBUTTONUP, 0, PointLParam(leftEdge));
+	EXPECT_EQ(0u, VisibleDropOverlays(parent));
+	EXPECT_NE(window, ::GetCapture());
+
+	auto snapshot = tool.GroupLayoutSnapshot();
+	ASSERT_EQ(1u, snapshot.groups.size());
+	EXPECT_EQ((std::vector<std::uint64_t>{ *second, *first }), snapshot.groups[0].tabIds);
+	EXPECT_EQ(*second, snapshot.activeTabId);
+
+	// The bottom half of the other pane stacks the grabbed one below it.
+	panes = VisiblePaneWindows(tool);
+	ASSERT_EQ(2u, panes.size());
+	const HWND grabbed = panes[0];
+	::SendMessageW(grabbed, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(40, 40));
+	::SendMessageW(grabbed, WM_TIMER, terminal::CTerminalWnd::kPaneLongPressTimerId, 0);
+	const RECT other = PaneClientRect(tool, panes[1]);
+	const POINT bottomEdge{ (other.left + other.right) / 2, other.bottom - 5 };
+	::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, PointLParam(bottomEdge));
+	::SendMessageW(window, WM_LBUTTONUP, 0, PointLParam(bottomEdge));
+	snapshot = tool.GroupLayoutSnapshot();
+	ASSERT_EQ(1u, snapshot.groups.size());
+	EXPECT_EQ((std::vector<std::uint64_t>{ *first, *second }), snapshot.groups[0].tabIds);
+	const auto& root = snapshot.groups[0].nodes[snapshot.groups[0].root];
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Vertical, root.orientation);
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, EscapeRightPressAndCaptureLossCancelATerminalDrag)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 900, 320 }, 96);
+	tool.Activate();
+	const auto first = tool.ActiveTerminalId();
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	const auto second = tool.ActiveTerminalId();
+	ASSERT_TRUE(first && second);
+	const HWND window = tool.GetHwnd();
+	const auto before = tool.GroupLayoutSnapshot().groups[0].tabIds;
+
+	const auto grab = [&] {
+		const auto panes = VisiblePaneWindows(tool);
+		::SendMessageW(panes[1], WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(40, 40));
+		::SendMessageW(panes[1], WM_TIMER, terminal::CTerminalWnd::kPaneLongPressTimerId, 0);
+		const RECT target = PaneClientRect(tool, panes[0]);
+		const POINT leftEdge{ target.left + 10, (target.top + target.bottom) / 2 };
+		::SendMessageW(window, WM_MOUSEMOVE, MK_LBUTTON, PointLParam(leftEdge));
+		return leftEdge;
+	};
+
+	// Esc, wherever focus is, ends the drag and never reaches the shell.
+	auto point = grab();
+	ASSERT_EQ(2u, VisibleDropOverlays(parent));
+	MSG escape{ VisiblePaneWindows(tool)[1], WM_KEYDOWN, VK_ESCAPE, 0 };
+	EXPECT_TRUE(tool.PreTranslateMessage(escape));
+	EXPECT_EQ(0u, VisibleDropOverlays(parent));
+	EXPECT_NE(window, ::GetCapture());
+	::SendMessageW(window, WM_LBUTTONUP, 0, PointLParam(point));
+	EXPECT_EQ(before, tool.GroupLayoutSnapshot().groups[0].tabIds);
+
+	// A right press cancels, and its release does not open the context menu.
+	point = grab();
+	::SendMessageW(window, WM_RBUTTONDOWN, MK_LBUTTON | MK_RBUTTON, PointLParam(point));
+	EXPECT_EQ(0u, VisibleDropOverlays(parent));
+	::SendMessageW(window, WM_RBUTTONUP, MK_LBUTTON, PointLParam(point));
+	::SendMessageW(window, WM_LBUTTONUP, 0, PointLParam(point));
+	EXPECT_EQ(before, tool.GroupLayoutSnapshot().groups[0].tabIds);
+
+	// Losing capture (another window took the pointer) cancels.
+	point = grab();
+	ASSERT_EQ(window, ::GetCapture());
+	::ReleaseCapture();
+	EXPECT_EQ(0u, VisibleDropOverlays(parent));
+	::SendMessageW(window, WM_LBUTTONUP, 0, PointLParam(point));
+	EXPECT_EQ(before, tool.GroupLayoutSnapshot().groups[0].tabIds);
+
+	// Closing the tool mid-drag leaves no overlay behind.
+	static_cast<void>(grab());
+	ASSERT_EQ(2u, VisibleDropOverlays(parent));
+	tool.Close();
+	EXPECT_EQ(0u, VisibleDropOverlays(parent));
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, LongPressNeedsADropTargetAndReleasesAReportingApplicationsPress)
+{
+	ToolHarness harness;
+	// SGR mouse reporting: the application receives the press and the release.
+	harness.scriptedOutput = "\x1b[?1000h\x1b[?1006h";
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 900, 320 }, 96);
+	tool.Activate();
+	const HWND window = tool.GetHwnd();
+
+	// One terminal has nowhere to go: the long press stays an ordinary press.
+	auto panes = VisiblePaneWindows(tool);
+	ASSERT_EQ(1u, panes.size());
+	::SendMessageW(panes[0], WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(40, 40));
+	::SendMessageW(panes[0], WM_TIMER, terminal::CTerminalWnd::kPaneLongPressTimerId, 0);
+	EXPECT_NE(window, ::GetCapture());
+	::SendMessageW(panes[0], WM_LBUTTONUP, 0, MAKELPARAM(40, 40));
+
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	ASSERT_GE(harness.backends.size(), 2u);
+	const auto& backend = harness.backends[1];
+	ASSERT_TRUE(WaitUntil([&] {
+		PumpToolMessages(window);
+		return backend->outputOffset.load() == backend->scriptedOutput.size();
+	}, 2000ms));
+	PumpToolMessages(window);
+	panes = VisiblePaneWindows(tool);
+	ASSERT_EQ(2u, panes.size());
+	const auto baseline = backend->writtenBytes.load();
+	::SendMessageW(panes[1], WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(40, 40));
+	ASSERT_TRUE(WaitUntil([&] { return backend->writtenBytes.load() > baseline; }, 2000ms));
+	const auto afterPress = backend->writtenBytes.load();
+	::SendMessageW(panes[1], WM_TIMER, terminal::CTerminalWnd::kPaneLongPressTimerId, 0);
+	EXPECT_EQ(window, ::GetCapture());
+	// The release is the press's SGR sequence with a final 'm': the same length.
+	EXPECT_TRUE(WaitUntil([&] { return backend->writtenBytes.load() == afterPress + (afterPress - baseline); }, 2000ms));
+	::SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(40, 40));
+	EXPECT_NE(window, ::GetCapture());
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
 } // namespace
