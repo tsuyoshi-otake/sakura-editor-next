@@ -1552,18 +1552,28 @@ struct CBottomPanelTool::Impl {
 		return channel != outputs.channels.end() ? &*channel : nullptr;
 	}
 
+	//! Marks programmatic Output body changes so the selection notifications they
+	//! raise are not taken for a user caret move, and restores the previous mark.
+	class OutputTextUpdatingScope {
+	public:
+		explicit OutputTextUpdatingScope(Impl& owner) noexcept
+			: m_owner(owner), m_was(owner.outputTextUpdating) { m_owner.outputTextUpdating = true; }
+		~OutputTextUpdatingScope() { m_owner.outputTextUpdating = m_was; }
+		OutputTextUpdatingScope(const OutputTextUpdatingScope&) = delete;
+		OutputTextUpdatingScope& operator=(const OutputTextUpdatingScope&) = delete;
+
+	private:
+		Impl& m_owner;
+		const bool m_was;
+	};
+
 	//! Applies the filtered text to the control. A pure append is committed with
 	//! EM_REPLACESEL at the end so live channels do not repaint the whole body
 	//! on every produced line; any other change is a full replace.
 	void WriteOutputText(const win32::OutputViewFilteredText& filtered)
 	{
 		if (outputText == nullptr) return;
-		struct UpdatingGuard {
-			Impl* self;
-			bool was;
-			~UpdatingGuard() { self->outputTextUpdating = was; }
-		} guard{ this, outputTextUpdating };
-		outputTextUpdating = true;
+		const OutputTextUpdatingScope updating{ *this };
 		const bool append = filtered.text.size() >= outputDisplayText.size()
 			&& filtered.text.compare(0, outputDisplayText.size(), outputDisplayText) == 0;
 		if (append && !outputDisplayText.empty()) {
@@ -1581,13 +1591,26 @@ struct CBottomPanelTool::Impl {
 		}
 		outputDisplayText = filtered.text;
 		if (outputRichEditModule == nullptr) return;
-		// Base colors first, then the include-pattern match ranges as upstream's
-		// find-match highlight decorations.
+		ApplyOutputTextFormat(filtered);
+		if (!filtered.matchRanges.empty()) {
+			::SendMessageW(outputText, EM_SETSEL, outputDisplayText.size(), outputDisplayText.size());
+		}
+	}
+
+	//! Paints the displayed Output text in the palette colors: base colors
+	//! first, then the include-pattern match ranges as upstream's find-match
+	//! highlight decorations. It changes the selection and leaves restoring it
+	//! to the caller.
+	void ApplyOutputTextFormat(const win32::OutputViewFilteredText& filtered)
+	{
 		CHARFORMAT2W base{};
 		base.cbSize = sizeof(base);
 		base.dwMask = CFM_COLOR | CFM_BACKCOLOR;
 		base.crTextColor = palette.primaryText.ToColorRef();
 		base.crBackColor = palette.bottomPanel.ToColorRef();
+		// SCF_DEFAULT too, so the empty body's caret and the next insertion start
+		// in the palette color rather than the automatic system text color.
+		::SendMessageW(outputText, EM_SETCHARFORMAT, SCF_DEFAULT, reinterpret_cast<LPARAM>(&base));
 		::SendMessageW(outputText, EM_SETCHARFORMAT, SCF_ALL, reinterpret_cast<LPARAM>(&base));
 		if (!filtered.matchRanges.empty()) {
 			CHARFORMAT2W match{};
@@ -1603,18 +1626,47 @@ struct CBottomPanelTool::Impl {
 				::SendMessageW(outputText, EM_SETCHARFORMAT, SCF_SELECTION,
 					reinterpret_cast<LPARAM>(&match));
 			}
-			::SendMessageW(outputText, EM_SETSEL, outputDisplayText.size(), outputDisplayText.size());
 		}
+	}
+
+	//! Sends the panel font to the Output body and paints its text again. A
+	//! plain-text Rich Edit resets every character, and its default format, to
+	//! the automatic system text color (black) on WM_SETFONT, so without this
+	//! the body stays black until the next line arrives (#420). The text,
+	//! selection, and scroll position are unchanged.
+	void ApplyOutputFont()
+	{
+		ApplyFont(outputText);
+		if (outputText == nullptr || outputRichEditModule == nullptr) return;
+		const OutputTextUpdatingScope updating{ *this };
+		CHARRANGE selection{};
+		::SendMessageW(outputText, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&selection));
+		const auto firstVisibleLine = ::SendMessageW(outputText, EM_GETFIRSTVISIBLELINE, 0, 0);
+		// The match ranges index the text on screen; if the channel has moved on
+		// since the last render, repaint the base colors only and let the next
+		// render bring the highlights.
+		auto filtered = FilteredOutputText();
+		if (filtered.text != outputDisplayText) filtered.matchRanges.clear();
+		ApplyOutputTextFormat(filtered);
+		::SendMessageW(outputText, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&selection));
+		const auto delta = firstVisibleLine - ::SendMessageW(outputText, EM_GETFIRSTVISIBLELINE, 0, 0);
+		if (delta != 0) ::SendMessageW(outputText, EM_LINESCROLL, 0, delta);
+	}
+
+	//! The selected channel's text through the current view filter.
+	[[nodiscard]] win32::OutputViewFilteredText FilteredOutputText() const
+	{
+		const auto* channel = SelectedOutputChannel();
+		return win32::ApplyOutputViewFilter(
+			channel != nullptr ? std::wstring_view(channel->projectedText) : std::wstring_view{},
+			win32::ParseOutputViewFilterText(outputFilterText));
 	}
 
 	//! The committed render path: selected channel text through the view filter,
 	//! then reveal-last-line unless the user locked scrolling.
 	void RenderOutputText(bool forceFullReplace = false)
 	{
-		const auto* channel = SelectedOutputChannel();
-		const auto filtered = win32::ApplyOutputViewFilter(
-			channel != nullptr ? std::wstring_view(channel->projectedText) : std::wstring_view{},
-			win32::ParseOutputViewFilterText(outputFilterText));
+		const auto filtered = FilteredOutputText();
 		if (forceFullReplace) outputDisplayText.clear();
 		WriteOutputText(filtered);
 		if (!outputScrollLock) {
@@ -1975,7 +2027,7 @@ void CBottomPanelTool::Layout(const RECT& contentRect, unsigned int dpi)
 		m_impl->ApplyFont(m_impl->problemsEmptyMessage);
 		m_impl->ApplyFont(m_impl->problemsClearFilters);
 		m_impl->ApplyFont(m_impl->outputSelector);
-		m_impl->ApplyFont(m_impl->outputText);
+		m_impl->ApplyOutputFont();
 		m_impl->ApplyFont(m_impl->outputFilterEdit);
 		m_impl->ApplyFont(m_impl->outputFindEdit);
 		m_impl->ApplyFont(m_impl->outputFindCount);

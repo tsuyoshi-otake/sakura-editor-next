@@ -713,6 +713,91 @@ TEST(BottomPanelComposite, OutputBodyBackgroundFollowsThePanelRoleNotTheSystemWi
 	::DestroyWindow(parent);
 }
 
+TEST(BottomPanelComposite, OutputBodyTextKeepsThePaletteColorAcrossAFontChange)
+{
+	using namespace workbench::panel;
+
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+
+	CBottomPanelTool panel(harness.Dependencies());
+	ASSERT_TRUE(panel.Create(parent));
+	const HWND panelWindow = ::FindWindowExW(parent, nullptr, L"SakuraBottomPanel", nullptr);
+	ASSERT_NE(nullptr, panelWindow);
+	const HWND outputText = ::FindWindowExW(panelWindow, nullptr, MSFTEDIT_CLASS, nullptr);
+	ASSERT_NE(nullptr, outputText);
+
+	const auto palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+	panel.SetPalette(palette);
+	workbench::win32::OutputPanelSnapshot snapshot;
+	snapshot.revision = 1;
+	snapshot.activeChannelId = "git";
+	workbench::win32::OutputPanelChannel channel;
+	channel.channelId = "git";
+	channel.label = L"Git";
+	channel.projectedText = L"> git status\r\n> git log\r\n";
+	channel.visible = true;
+	snapshot.channels.push_back(channel);
+	panel.SetOutputSnapshot(snapshot);
+	ASSERT_TRUE(panel.ApplyActiveContainer(containerIds::Output));
+
+	// The color every character of the body is painted in, read back from the
+	// control itself; the selection is restored so the read changes nothing.
+	struct TextColor {
+		COLORREF color;
+		bool automatic;
+	};
+	const auto bodyTextColor = [outputText] {
+		CHARRANGE saved{};
+		::SendMessageW(outputText, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&saved));
+		CHARRANGE all{ 0, -1 };
+		::SendMessageW(outputText, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&all));
+		CHARFORMAT2W format{};
+		format.cbSize = sizeof(format);
+		::SendMessageW(outputText, EM_GETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&format));
+		::SendMessageW(outputText, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&saved));
+		EXPECT_NE(0u, format.dwMask & CFM_COLOR) << "the body holds more than one text color";
+		return TextColor{ format.crTextColor, (format.dwEffects & CFE_AUTOCOLOR) != 0 };
+	};
+	const auto defaultTextColor = [outputText] {
+		CHARFORMAT2W format{};
+		format.cbSize = sizeof(format);
+		::SendMessageW(outputText, EM_GETCHARFORMAT, SCF_DEFAULT, reinterpret_cast<LPARAM>(&format));
+		return TextColor{ format.crTextColor, (format.dwEffects & CFE_AUTOCOLOR) != 0 };
+	};
+	const auto expectPaletteText = [&](const char* step) {
+		const auto body = bodyTextColor();
+		EXPECT_FALSE(body.automatic) << step;
+		EXPECT_EQ(palette.primaryText.ToColorRef(), body.color) << step;
+		const auto initial = defaultTextColor();
+		EXPECT_FALSE(initial.automatic) << step;
+		EXPECT_EQ(palette.primaryText.ToColorRef(), initial.color) << step;
+	};
+	ASSERT_GT(::GetWindowTextLengthW(outputText), 0);
+	expectPaletteText("before the first layout");
+
+	// The first layout creates the panel font and a DPI change recreates it;
+	// each sends WM_SETFONT to the body with no new Output line (#420).
+	CHARRANGE caret{ 3, 3 };
+	::SendMessageW(outputText, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&caret));
+	panel.Layout({ 0, 0, 640, 320 }, 96);
+	expectPaletteText("after the first layout");
+	panel.Layout({ 0, 0, 640, 320 }, 144);
+	expectPaletteText("after a DPI change");
+	CHARRANGE after{};
+	::SendMessageW(outputText, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&after));
+	EXPECT_EQ(caret.cpMin, after.cpMin);
+	EXPECT_EQ(caret.cpMax, after.cpMax);
+
+	ASSERT_TRUE(panel.ApplyActiveContainer(containerIds::Terminal));
+	ASSERT_TRUE(panel.ApplyActiveContainer(containerIds::Output));
+	expectPaletteText("after switching back to Output");
+
+	panel.Close();
+	::DestroyWindow(parent);
+}
+
 TEST(TerminalTool, RendererInvalidatesWhenRestoredFromZeroHeight)
 {
 	const HWND parent = CreateHiddenParentWindow();
