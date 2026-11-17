@@ -16,9 +16,12 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -215,6 +218,48 @@ public:
 
 	int replaceCalls = 0;
 	config::ConfigurationBatchResult response { EConfigurationOutcome::Conflict, {}, {} };
+};
+
+//! Starts watch workers on real threads but, once armed, lets a fixed number
+//! of further starts succeed and then throws what std::thread throws when the
+//! system cannot create a thread (#397). It counts the workers still running.
+class FaultingWorkerStarter final {
+public:
+	CConfigurationFileWatchController::WorkerStarter Starter()
+	{
+		return [this](std::function<void()> body) -> std::thread {
+			{
+				std::lock_guard lock(m_mutex);
+				if (m_successesBeforeFailure) {
+					if (*m_successesBeforeFailure == 0) {
+						throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again));
+					}
+					--*m_successesBeforeFailure;
+				}
+			}
+			m_running.fetch_add(1);
+			return std::thread([this, body = std::move(body)] {
+				body();
+				m_running.fetch_sub(1);
+			});
+		};
+	}
+	void FailAfter(int successes)
+	{
+		std::lock_guard lock(m_mutex);
+		m_successesBeforeFailure = successes;
+	}
+	void Heal()
+	{
+		std::lock_guard lock(m_mutex);
+		m_successesBeforeFailure.reset();
+	}
+	int Running() const noexcept { return m_running.load(); }
+
+private:
+	std::mutex m_mutex;
+	std::optional<int> m_successesBeforeFailure;
+	std::atomic_int m_running = 0;
 };
 
 } // namespace
@@ -596,4 +641,121 @@ TEST(ConfigurationFileWatchController, RepeatedTopologyInvalidationBacksOffAndSt
 	const auto stopBegan = std::chrono::steady_clock::now();
 	EXPECT_EQ(config::EConfigurationFileWatchStatus::Stopped, controller.Stop().status);
 	EXPECT_LT(std::chrono::steady_clock::now() - stopBegan, std::chrono::milliseconds(500));
+}
+
+// A rebuild runs on the dispatcher inside noexcept code. When it cannot start
+// its workers it must not terminate the editor (#397): it joins the workers it
+// did start, reports WatchUnavailable, and retries under the rebuild backoff.
+TEST(ConfigurationFileWatchController, RebuildThatCannotStartItsWorkersReportsUnavailableJoinsThemAndRetries)
+{
+	FakeFileService files;
+	files.watchEnabled = true;
+	FaultingWorkerStarter starter;
+	// Declared before the controller, whose destructor may still run the
+	// dispatcher's last callback after an early ASSERT return.
+	std::mutex callbackMutex;
+	std::condition_variable callbackReady;
+	std::vector<EConfigurationFileWatchChange> changes;
+	CConfigurationFileWatchController controller(files, starter.Starter());
+	// Profile parent, workspace folder, and its .vscode: three workers.
+	ASSERT_EQ(config::EConfigurationFileWatchStatus::Started, controller.Start({
+		.profileSettings = Resource(),
+		.workspaceFolders = { TestWorkspaceFolder() },
+	}, [&](EConfigurationFileWatchChange change) {
+		std::lock_guard lock(callbackMutex);
+		changes.push_back(change);
+		callbackReady.notify_all();
+	}).status);
+	ASSERT_EQ(3, starter.Running());
+
+	// The rebuild starts one worker, then fails on the second.
+	starter.FailAfter(1);
+	{
+		std::lock_guard lock(files.watchMutex);
+		ASSERT_FALSE(files.watches.empty());
+		files.watches.front()->Push({ .type = EFileWatchEventType::Overflow, .uri = files.watchRoots.front() });
+	}
+	{
+		std::unique_lock lock(callbackMutex);
+		ASSERT_TRUE(callbackReady.wait_for(lock, std::chrono::seconds(2), [&] { return !changes.empty(); }));
+		EXPECT_EQ(EConfigurationFileWatchChange::WatchUnavailable, changes.front());
+		// The callback runs after the started worker was cancelled and joined.
+		EXPECT_EQ(0, starter.Running());
+	}
+
+	// Once threads can be created again, the retried rebuild watches the
+	// whole topology and announces it with FullRescan.
+	starter.Heal();
+	{
+		std::unique_lock lock(callbackMutex);
+		ASSERT_TRUE(callbackReady.wait_for(lock, std::chrono::seconds(5), [&] {
+			return changes.back() == EConfigurationFileWatchChange::FullRescan;
+		}));
+		for (std::size_t index = 0; index + 1 < changes.size(); ++index) {
+			EXPECT_EQ(EConfigurationFileWatchChange::WatchUnavailable, changes[index]);
+		}
+	}
+	EXPECT_EQ(3, starter.Running());
+
+	const auto stopBegan = std::chrono::steady_clock::now();
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::Stopped, controller.Stop().status);
+	EXPECT_LT(std::chrono::steady_clock::now() - stopBegan, std::chrono::milliseconds(500));
+	EXPECT_EQ(0, starter.Running());
+}
+
+// A rebuild that keeps failing stays bounded by the rebuild backoff instead of
+// retrying at the debounce rate, and Stop interrupts the wait.
+TEST(ConfigurationFileWatchController, RebuildThatKeepsFailingToStartWorkersBacksOffAndStopsPromptly)
+{
+	FakeFileService files;
+	files.watchEnabled = true;
+	FaultingWorkerStarter starter;
+	std::atomic_int unavailable = 0;
+	CConfigurationFileWatchController controller(files, starter.Starter());
+	ASSERT_EQ(config::EConfigurationFileWatchStatus::Started, controller.Start({ .profileSettings = Resource() },
+		[&](EConfigurationFileWatchChange change) {
+			if (change == EConfigurationFileWatchChange::WatchUnavailable) unavailable.fetch_add(1);
+		}).status);
+	starter.FailAfter(0);
+	{
+		std::lock_guard lock(files.watchMutex);
+		ASSERT_FALSE(files.watches.empty());
+		files.watches.front()->Push({ .type = EFileWatchEventType::Overflow, .uri = files.watchRoots.front() });
+	}
+	std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+	// 100 ms doubling with up to +25% jitter allows at most 5 attempts in the
+	// window (0, ~125, ~375, ~875 ms plus debounce); the 25 ms debounce alone
+	// would allow about 45. Like the existing backoff test, this is an upper
+	// bound that a slow machine only makes easier to meet.
+	EXPECT_GE(unavailable.load(), 1);
+	EXPECT_LE(unavailable.load(), 6);
+	EXPECT_EQ(0, starter.Running());
+
+	const auto stopBegan = std::chrono::steady_clock::now();
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::Stopped, controller.Stop().status);
+	EXPECT_LT(std::chrono::steady_clock::now() - stopBegan, std::chrono::milliseconds(500));
+}
+
+// Start already reports StartFailed for a worker it cannot create; it must
+// also leave no worker running and keep the controller reusable.
+TEST(ConfigurationFileWatchController, StartThatCannotStartItsWorkersFailsWithEveryStartedWorkerJoined)
+{
+	FakeFileService files;
+	files.watchEnabled = true;
+	FaultingWorkerStarter starter;
+	CConfigurationFileWatchController controller(files, starter.Starter());
+	starter.FailAfter(1);
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::StartFailed, controller.Start({
+		.profileSettings = Resource(),
+		.workspaceFolders = { TestWorkspaceFolder() },
+	}, {}).status);
+	EXPECT_EQ(0, starter.Running());
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::NotStarted, controller.Stop().status);
+
+	starter.Heal();
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::Started,
+		controller.Start({ .profileSettings = Resource() }, {}).status);
+	EXPECT_EQ(1, starter.Running());
+	EXPECT_EQ(config::EConfigurationFileWatchStatus::Stopped, controller.Stop().status);
+	EXPECT_EQ(0, starter.Running());
 }

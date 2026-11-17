@@ -155,6 +155,13 @@ CConfigurationFileWatchController::CConfigurationFileWatchController(platform::f
 {
 }
 
+CConfigurationFileWatchController::CConfigurationFileWatchController(
+	platform::filesystem::IFileService& fileService, WorkerStarter startWorker) noexcept
+	: m_fileService(fileService)
+	, m_startWorker(std::move(startWorker))
+{
+}
+
 CConfigurationFileWatchController::~CConfigurationFileWatchController()
 {
 	(void)Stop();
@@ -185,13 +192,19 @@ ConfigurationFileWatchResult CConfigurationFileWatchController::Start(Configurat
 	const auto stopped = StopLocked();
 	if (!stopped.Succeeded() && stopped.status != EConfigurationFileWatchStatus::NotStarted) return stopped;
 	try {
+		bool workersStarted = false;
 		{
 			std::lock_guard lock(m_mutex);
 			m_request = std::move(request);
 			m_callback = std::move(callback);
 			m_stopping = false;
 			m_started = true;
-			StartWorkersLocked();
+			workersStarted = StartWorkersLocked();
+		}
+		// StopLocked joins the workers that did start before Start reports.
+		if (!workersStarted) {
+			(void)StopLocked();
+			return { EConfigurationFileWatchStatus::StartFailed };
 		}
 		m_dispatcher = std::thread(&CConfigurationFileWatchController::DispatchMain, this);
 		return { EConfigurationFileWatchStatus::Started };
@@ -225,46 +238,63 @@ ConfigurationFileWatchResult CConfigurationFileWatchController::Update(Configura
 	return { EConfigurationFileWatchStatus::Updated };
 }
 
-void CConfigurationFileWatchController::StartWorkersLocked()
+bool CConfigurationFileWatchController::StartWorkersLocked() noexcept
 {
-	if (!m_request) return;
-	const auto& request = *m_request;
-	auto add = [this](EConfigurationFileWatchChange change, const Uri& root, std::optional<Uri> member, bool rebuildOnRelevantChange = false) {
-		for (const auto& existing : m_slots) {
-			if (!UriIdentityService::IsEqual(existing->root, root)) continue;
-			const auto duplicate = std::any_of(existing->targets.begin(), existing->targets.end(),
-				[change, &member, rebuildOnRelevantChange](const WatchSlot::Target& target) {
-					return target.change == change && target.rebuildOnRelevantChange == rebuildOnRelevantChange
-						&& target.member.has_value() == member.has_value()
-						&& (!target.member || UriIdentityService::IsEqual(*target.member, *member));
-				});
-			if (!duplicate) existing->targets.push_back({ change, std::move(member), rebuildOnRelevantChange });
-			return;
-		}
-		auto watched = m_fileService.Watch(root, FileWatchOptions { .recursive = false });
-		if (!watched.Succeeded() || !watched.value) return;
-		auto slot = std::make_unique<WatchSlot>(root);
-		slot->targets.push_back({ change, std::move(member), rebuildOnRelevantChange });
-		slot->watch = std::move(*watched.value);
-		m_slots.push_back(std::move(slot));
-	};
+	if (!m_request) return true;
+	try {
+		const auto& request = *m_request;
+		auto add = [this](EConfigurationFileWatchChange change, const Uri& root, std::optional<Uri> member, bool rebuildOnRelevantChange = false) {
+			for (const auto& existing : m_slots) {
+				if (!UriIdentityService::IsEqual(existing->root, root)) continue;
+				const auto duplicate = std::any_of(existing->targets.begin(), existing->targets.end(),
+					[change, &member, rebuildOnRelevantChange](const WatchSlot::Target& target) {
+						return target.change == change && target.rebuildOnRelevantChange == rebuildOnRelevantChange
+							&& target.member.has_value() == member.has_value()
+							&& (!target.member || UriIdentityService::IsEqual(*target.member, *member));
+					});
+				if (!duplicate) existing->targets.push_back({ change, std::move(member), rebuildOnRelevantChange });
+				return;
+			}
+			auto watched = m_fileService.Watch(root, FileWatchOptions { .recursive = false });
+			if (!watched.Succeeded() || !watched.value) return;
+			auto slot = std::make_unique<WatchSlot>(root);
+			slot->targets.push_back({ change, std::move(member), rebuildOnRelevantChange });
+			slot->watch = std::move(*watched.value);
+			m_slots.push_back(std::move(slot));
+		};
 
-	if (auto profileParent = ParentDirectory(request.profileSettings)) {
-		add(EConfigurationFileWatchChange::ProfileSettings, *profileParent, request.profileSettings);
-	}
-	if (request.workspaceConfiguration) {
-		if (auto workspaceParent = ParentDirectory(*request.workspaceConfiguration)) {
-			add(EConfigurationFileWatchChange::WorkspaceConfiguration, *workspaceParent, request.workspaceConfiguration);
+		if (auto profileParent = ParentDirectory(request.profileSettings)) {
+			add(EConfigurationFileWatchChange::ProfileSettings, *profileParent, request.profileSettings);
 		}
-	}
-	for (const auto& folder : request.workspaceFolders) {
-		const auto vscode = VscodeDirectory(folder);
-		const auto settings = SettingsInVscode(folder);
-		if (vscode) add(EConfigurationFileWatchChange::WorkspaceFolderSettings, folder, vscode, true);
-		if (vscode && settings) add(EConfigurationFileWatchChange::WorkspaceFolderSettings, *vscode, settings);
-	}
-	for (const auto& slot : m_slots) {
-		slot->worker = std::thread(&CConfigurationFileWatchController::WorkerMain, this, slot.get());
+		if (request.workspaceConfiguration) {
+			if (auto workspaceParent = ParentDirectory(*request.workspaceConfiguration)) {
+				add(EConfigurationFileWatchChange::WorkspaceConfiguration, *workspaceParent, request.workspaceConfiguration);
+			}
+		}
+		for (const auto& folder : request.workspaceFolders) {
+			const auto vscode = VscodeDirectory(folder);
+			const auto settings = SettingsInVscode(folder);
+			if (vscode) add(EConfigurationFileWatchChange::WorkspaceFolderSettings, folder, vscode, true);
+			if (vscode && settings) add(EConfigurationFileWatchChange::WorkspaceFolderSettings, *vscode, settings);
+		}
+		for (const auto& slot : m_slots) {
+			WatchSlot* const watched = slot.get();
+			std::function<void()> body = [this, watched] { WorkerMain(watched); };
+			slot->worker = m_startWorker ? m_startWorker(std::move(body)) : std::thread(std::move(body));
+		}
+		return true;
+	} catch (...) {
+		// Thread creation (std::system_error), a watch provider, or an
+		// allocation failed. A worker that did start must not keep a watch the
+		// controller no longer stands behind (#397): cancel them all here, and
+		// let the caller join outside m_mutex, which WorkerMain's Queue takes.
+		for (const auto& slot : m_slots) {
+			if (slot->watch) {
+				try { (void)slot->watch->Cancel(); }
+				catch (...) { }
+			}
+		}
+		return false;
 	}
 }
 
@@ -349,6 +379,8 @@ void CConfigurationFileWatchController::Queue(EConfigurationFileWatchChange chan
 	case EConfigurationFileWatchChange::WorkspaceFolderSettings: m_folderPending = true; break;
 	case EConfigurationFileWatchChange::WorkspaceConfiguration: m_workspacePending = true; break;
 	case EConfigurationFileWatchChange::FullRescan: m_profilePending = m_folderPending = m_workspacePending = true; break;
+	// Only the dispatcher announces this; no worker queues it.
+	case EConfigurationFileWatchChange::WatchUnavailable: return;
 	}
 	m_rebuildRequested = m_rebuildRequested || rebuild;
 	m_pending.notify_one();
@@ -383,17 +415,30 @@ void CConfigurationFileWatchController::WorkerMain(WatchSlot* slot) noexcept
 	}
 }
 
-void CConfigurationFileWatchController::RebuildTopology() noexcept
+bool CConfigurationFileWatchController::RebuildTopology() noexcept
 {
 	{
 		std::lock_guard lock(m_mutex);
-		if (m_stopping) return;
+		if (m_stopping) return true;
 		m_rebuilding = true;
 	}
 	CancelAndJoinWorkers();
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_stopping || StartWorkersLocked()) {
+			m_rebuilding = false;
+			return true;
+		}
+	}
+	// The new topology is incomplete (#397). Join the workers that did start;
+	// m_rebuilding stays set so their Disposed events queue no FullRescan.
+	// The retry is an ordinary rebuild request, so the dispatcher spaces it
+	// with the same bounded backoff as any consecutive rebuild.
+	CancelAndJoinWorkers();
 	std::lock_guard lock(m_mutex);
-	if (!m_stopping) StartWorkersLocked();
 	m_rebuilding = false;
+	if (!m_stopping) m_rebuildRequested = true;
+	return false;
 }
 
 void CConfigurationFileWatchController::DispatchMain() noexcept
@@ -439,11 +484,14 @@ void CConfigurationFileWatchController::DispatchMain() noexcept
 			callback = m_callback;
 		}
 		if (rebuild) {
-			RebuildTopology();
+			const bool watching = RebuildTopology();
 			rebuildBackoff.Completed(std::chrono::steady_clock::now());
 			if (callback && CanDispatch()) {
-				try { callback(EConfigurationFileWatchChange::FullRescan); }
-				catch (...) { }
+				try {
+					callback(watching
+						? EConfigurationFileWatchChange::FullRescan
+						: EConfigurationFileWatchChange::WatchUnavailable);
+				} catch (...) { }
 			}
 			continue;
 		}

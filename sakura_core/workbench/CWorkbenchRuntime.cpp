@@ -1384,6 +1384,18 @@ void CWorkbenchRuntime::OnConfigurationFileWatchChange(config::EConfigurationFil
 			if (IsStopRequested()
 				|| (m_state != EWorkbenchRuntimeState::Ready && m_state != EWorkbenchRuntimeState::ReadyWithDiagnostics)) return;
 		}
+		// #397: the controller lost every watch because its workers could not
+		// start, and retries under its rebuild backoff. Its next FullRescan means
+		// the topology is watched again.
+		if (change == config::EConfigurationFileWatchChange::WatchUnavailable) {
+			SetDiagnostic("settings.watch.workers", WorkbenchRuntimeDiagnostic {
+				.source = EWorkbenchRuntimeDiagnosticSource::WorkspaceSettings,
+				.code = EWorkbenchRuntimeDiagnosticCode::InternalFailure,
+				.message = "external settings watch workers could not start; external edits are not detected until a retry succeeds",
+			});
+			return;
+		}
+		if (change == config::EConfigurationFileWatchChange::FullRescan) SetDiagnostic("settings.watch.workers", std::nullopt);
 		if (change == config::EConfigurationFileWatchChange::ProfileSettings
 			|| change == config::EConfigurationFileWatchChange::FullRescan) {
 			ReloadProfileSettings();

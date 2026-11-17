@@ -30,6 +30,12 @@ enum class EConfigurationFileWatchChange : std::uint8_t {
 	//! An overflow, rescan, or disposed watch invalidated the topology. The
 	//! consumer must resnapshot every configured document.
 	FullRescan,
+	//! A rebuild could not start its watch workers (for example, thread
+	//! creation failed under memory pressure, #397). Every watch of the
+	//! topology is cancelled and joined, so nothing is watched until a retried
+	//! rebuild succeeds; that retry runs under the rebuild backoff and announces
+	//! FullRescan when it succeeds. The consumer should report the gap.
+	WatchUnavailable,
 };
 
 enum class EConfigurationFileWatchStatus : std::uint8_t {
@@ -67,22 +73,31 @@ struct ConfigurationFileWatchRequest final {
 //! Each requested directory watch is non-recursive. For each workspace folder,
 //! the topology is exactly two levels: folder -> `.vscode` lifecycle and, when
 //! present, `.vscode` -> `settings.json` membership.
-//! A rebuild recreates every watch and is always followed by one FullRescan
-//! notification. The first rebuild after a quiet period runs after the normal
+//! A rebuild recreates every watch and is followed by one FullRescan
+//! notification, or by one WatchUnavailable when its workers could not be
+//! started (the retry then follows under the backoff). The first rebuild after a quiet period runs after the normal
 //! debounce; consecutive rebuilds back off exponentially with jitter up to a
 //! bounded maximum, and Stop interrupts that wait.
 class CConfigurationFileWatchController final {
 public:
 	using ChangeCallback = std::function<void(EConfigurationFileWatchChange)>;
+	//! Starts one watch worker running `body`. Production uses `std::thread`.
+	//! A starter may throw, as `std::thread` throws `std::system_error` when
+	//! the system cannot create a thread; the controller contains that failure.
+	using WorkerStarter = std::function<std::thread(std::function<void()> body)>;
 
 	explicit CConfigurationFileWatchController(platform::filesystem::IFileService& fileService) noexcept;
+	//! Test seam for worker creation failure (#397).
+	CConfigurationFileWatchController(platform::filesystem::IFileService& fileService, WorkerStarter startWorker) noexcept;
 	~CConfigurationFileWatchController();
 
 	CConfigurationFileWatchController(const CConfigurationFileWatchController&) = delete;
 	CConfigurationFileWatchController& operator=(const CConfigurationFileWatchController&) = delete;
 
 	//! Replaces the complete topology. Watch failures are intentionally
-	//! best-effort capability gaps; successful watches remain active.
+	//! best-effort capability gaps; successful watches remain active. A watch
+	//! worker that cannot be started makes the whole Start fail with
+	//! `StartFailed`, every started worker joined.
 	[[nodiscard]] ConfigurationFileWatchResult Start(ConfigurationFileWatchRequest request, ChangeCallback callback) noexcept;
 	//! Replaces the topology and rebuilds it. A request whose resources have the
 	//! same URI identity, in the same order, as the current request is
@@ -99,13 +114,18 @@ public:
 private:
 	struct WatchSlot;
 
-	void StartWorkersLocked();
+	//! Creates the topology's watches and their workers. On any failure it
+	//! cancels every watch it holds and returns false; the caller joins the
+	//! workers that did start, outside `m_mutex`.
+	[[nodiscard]] bool StartWorkersLocked() noexcept;
 	[[nodiscard]] ConfigurationFileWatchResult StopLocked() noexcept;
 	void CancelAndJoinWorkers() noexcept;
 	void DispatchMain() noexcept;
 	void WorkerMain(WatchSlot* slot) noexcept;
 	void Queue(EConfigurationFileWatchChange change, bool rebuild) noexcept;
-	void RebuildTopology() noexcept;
+	//! Returns false when the new topology's workers could not be started; the
+	//! controller is then left with no watch and a rebuild requested.
+	[[nodiscard]] bool RebuildTopology() noexcept;
 	[[nodiscard]] bool CanDispatch() const noexcept;
 	[[nodiscard]] bool IsDispatcherThread() const noexcept;
 	[[nodiscard]] bool IsRelevant(const WatchSlot& slot, std::size_t targetIndex,
@@ -113,6 +133,7 @@ private:
 	[[nodiscard]] static EConfigurationFileWatchStatus ValidateRequest(const ConfigurationFileWatchRequest& request) noexcept;
 
 	platform::filesystem::IFileService& m_fileService;
+	WorkerStarter m_startWorker;
 	//! Serializes ownership-changing Start/Stop operations. State callbacks never
 	//! take this lock, so an external Stop can still join the dispatcher.
 	mutable std::mutex m_lifecycleMutex;

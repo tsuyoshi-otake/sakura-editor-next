@@ -66,6 +66,38 @@ Sakura INI serialization remains behind an adapter under `env/` until migrated.
   window's lifetime (114-170 threads/s measured). The NVIDIA D3D11 driver keeps
   ~192 B per thread ever created, so commit grew ~90-130 MiB/h per window until
   the system commit limit failed. Keep both guards; a rebuild is never free.
+- A watch worker that cannot start never ends the process (#397). Thread
+  creation fails exactly under the commit pressure #395 produced, and
+  `RebuildTopology` runs on the dispatcher inside `noexcept` code, so before
+  this an exception there called `std::terminate` and lost unsaved work for an
+  advisory watch.
+  - `StartWorkersLocked` is `noexcept` and returns false on any failure:
+    thread creation, a throwing watch provider, or an allocation. It cancels
+    every watch it holds, and its caller joins the workers that did start
+    outside `m_mutex`, because `WorkerMain` takes that lock in `Queue`.
+  - `Start` keeps its contract: `StartFailed`, every started worker joined,
+    and the controller reusable.
+  - A failed rebuild leaves no watch, announces `WatchUnavailable` instead of
+    `FullRescan`, and requests another rebuild. That retry is an ordinary
+    consecutive rebuild, so it waits under the same backoff (100 ms doubling
+    to 30 s). The first retry that succeeds announces `FullRescan`. A
+    per-resource change consumed by the failed iteration is not announced
+    separately; that later `FullRescan` covers it.
+  - Residual gap: `CWin32FileWatch::Start` contains its own reader-thread
+    failure and returns `Failed`, and `add()` treats every failed `Watch` as
+    a capability gap, as it must for the `NotFound` of a missing `.vscode`.
+    Under commit pressure a rebuild can therefore succeed with a partial
+    topology and set no diagnostic. Telling a resource failure apart from a
+    missing directory needs a typed provider status first.
+  - `CWorkbenchRuntime` reports `WatchUnavailable` as the
+    `settings.watch.workers` diagnostic and clears it on the next
+    `FullRescan`.
+  - Worker creation goes through the `WorkerStarter` seam. Production leaves
+    it empty and uses `std::thread`; the tests inject a starter that throws
+    `std::system_error` (`ConfigurationFileWatchController.*CannotStartItsWorkers*`
+    and `*KeepsFailingToStartWorkers*`).
+  - `CWorkspaceArtifactDocumentSourceController` already contained the same
+    failure for its own workers.
 - `CSettingsWritebackCoordinator` owns one bounded JSONC writeback transaction:
   it performs a versioned read and conditional atomic replace through
   `CJsoncConfigurationEditor`, replays a CAS conflict at most once, then
