@@ -197,9 +197,9 @@ TEST(SessionLogs, NeverProducesAFileNameWindowsRefuses)
 	EXPECT_EQ(std::filesystem::path(L"_NUL .x.log"), OutputLogRelativePath("core.x", "NUL .x"));
 	EXPECT_EQ(std::filesystem::path(L"_conin$.log"), OutputLogRelativePath("core.x", "conin$"));
 	// UTF-8 "COM" + SUPERSCRIPT ONE and "LPT" + SUPERSCRIPT THREE.
-	EXPECT_EQ(std::filesystem::path(L"_COM¹.log"), OutputLogRelativePath("core.x", "COM\xC2\xB9"));
-	EXPECT_EQ(std::filesystem::path(L"_lpt³.txt.log"), OutputLogRelativePath("core.x", "lpt\xC2\xB3.txt"));
-	EXPECT_EQ(std::filesystem::path(L"COM¹x.log"), OutputLogRelativePath("core.x", "COM\xC2\xB9x"));
+	EXPECT_EQ(std::filesystem::path(L"_COM\u00B9.log"), OutputLogRelativePath("core.x", "COM\xC2\xB9"));
+	EXPECT_EQ(std::filesystem::path(L"_lpt\u00B3.txt.log"), OutputLogRelativePath("core.x", "lpt\xC2\xB3.txt"));
+	EXPECT_EQ(std::filesystem::path(L"COM\u00B9x.log"), OutputLogRelativePath("core.x", "COM\xC2\xB9x"));
 }
 
 TEST(SessionLogs, NoChannelFileCanBeAnotherChannelsRotationBackup)

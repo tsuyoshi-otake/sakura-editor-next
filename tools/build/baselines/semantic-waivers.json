@@ -4039,8 +4039,7 @@
         "sakura_core/workbench/logs/OutputLogFiles.h": "sha256:acc074b8791fa2b6027065bf27b421e99b8f8b2d619e78ce69b3f1ad0f968d4d",
         "sakura_core/workbench/logs/ProblemsSnapshotFile.cpp": "sha256:c5791351fa089abcf8f94781a3e4e4f56ad6121d0418093a71244fd1f852364a",
         "sakura_core/workbench/logs/ProblemsSnapshotFile.h": "sha256:062dd3ec9590bc7bf7fdeb9622f8124f529f0592e2d58f312f68c901ceeb3b9f",
-        "src/test/cpp/tests1/workbench/CWorkbenchRuntimeTest.cpp": "sha256:e0be13cedde2ca876c3e23fea7cc4c2ace52282ba2941b453b32c25b843cf68c",
-        "src/test/cpp/tests1/workbench/SessionLogsTest.cpp": "sha256:a51bbe55431e27a3fd4b1c66a72afa708f27144d58d8f39abc74ceff967b6c55"
+        "src/test/cpp/tests1/workbench/CWorkbenchRuntimeTest.cpp": "sha256:e0be13cedde2ca876c3e23fea7cc4c2ace52282ba2941b453b32c25b843cf68c"
       },
       "new_findings": [
         {
@@ -4261,13 +4260,6 @@
           "rule_id": "state.mutable_member"
         },
         {
-          "column": 2,
-          "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49",
-          "line": 133,
-          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
-          "rule_id": "state.mutable_member"
-        },
-        {
           "column": 50,
           "evidence_sha256": "sha256:742727a1bf9a7d9845433e2ccd3fe1069cc4c32e771d4feaf17d05c0e5bf1de0",
           "line": 91,
@@ -4363,48 +4355,6 @@
           "evidence_sha256": "sha256:7ef98ac223775a09e59c84a732e3fc824c3b3c812639a8e62ee04774d4ae5855",
           "line": 88,
           "path": "sakura_core/workbench/logs/ProblemsSnapshotFile.h",
-          "rule_id": "state.public_mutable_field"
-        },
-        {
-          "column": 21,
-          "evidence_sha256": "sha256:7cd05b6228cccd2664882d615a89d1b29ad4aa352416c0e7f13f4759f1b709a2",
-          "line": 133,
-          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
-          "rule_id": "state.public_mutable_field"
-        },
-        {
-          "column": 25,
-          "evidence_sha256": "sha256:44d5ad19f3d208c72d8eaf675d171645ef25c6966278476f758bbfad554f4e33",
-          "line": 134,
-          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
-          "rule_id": "state.public_mutable_field"
-        },
-        {
-          "column": 38,
-          "evidence_sha256": "sha256:871812a52d0e2bd3565bc7f28fc49a8586169c201d38b305f055e7bfb91700f6",
-          "line": 135,
-          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
-          "rule_id": "state.public_mutable_field"
-        },
-        {
-          "column": 28,
-          "evidence_sha256": "sha256:9ee43bd13bfaf2cdebd88523a2e3d409dd060bf7b6f85cacd22d69524695dd87",
-          "line": 136,
-          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
-          "rule_id": "state.public_mutable_field"
-        },
-        {
-          "column": 14,
-          "evidence_sha256": "sha256:7f15d31a724558c2e34e35fc096c1326948ce8cda70c58a91f7d3b3bbf4c1862",
-          "line": 419,
-          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
-          "rule_id": "state.public_mutable_field"
-        },
-        {
-          "column": 27,
-          "evidence_sha256": "sha256:cb7f5da03555e98658e25e524ab3038db349821e968ac5ae952cfe6e59e5d581",
-          "line": 420,
-          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
           "rule_id": "state.public_mutable_field"
         }
       ],
@@ -5023,6 +4973,69 @@
           "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp"
         }
       ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "The #421 session logs (workbench/logs: Log channel files, retention, and problems.json), their composition in CWorkbenchRuntime and CNormalProcess, and Open in Editor for Log channels in CEditWnd and the Output panel menu touch existing runtime and editor-window debt. Each new finding was reviewed: catch-alls are noexcept containment at the file-system seam, the writer and problems.json worker loops, their Start/Stop paths, and the command boundary, so a log I/O failure never fails an Output or Marker operation; the stop-required acquisitions are the two worker threads, which Stop joins and the destructors call; public fields are plain value structs (session layout, limits, writer status, runtime dependencies) and test fakes; mutable members are the writer's status mutex and a test fake's counter; Win32 types are the Output panel's own menu and the window's open path. Reducing unrelated debt would widen this change. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "tracking_issue": 389,
+      "created": "2026-11-17",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "src/test/cpp/tests1/workbench/SessionLogsTest.cpp": "sha256:a51bbe55431e27a3fd4b1c66a72afa708f27144d58d8f39abc74ceff967b6c55"
+      },
+      "new_findings": [
+        {
+          "column": 2,
+          "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49",
+          "line": 133,
+          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
+          "rule_id": "state.mutable_member"
+        },
+        {
+          "column": 21,
+          "evidence_sha256": "sha256:7cd05b6228cccd2664882d615a89d1b29ad4aa352416c0e7f13f4759f1b709a2",
+          "line": 133,
+          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 25,
+          "evidence_sha256": "sha256:44d5ad19f3d208c72d8eaf675d171645ef25c6966278476f758bbfad554f4e33",
+          "line": 134,
+          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 38,
+          "evidence_sha256": "sha256:871812a52d0e2bd3565bc7f28fc49a8586169c201d38b305f055e7bfb91700f6",
+          "line": 135,
+          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 28,
+          "evidence_sha256": "sha256:9ee43bd13bfaf2cdebd88523a2e3d409dd060bf7b6f85cacd22d69524695dd87",
+          "line": 136,
+          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 14,
+          "evidence_sha256": "sha256:7f15d31a724558c2e34e35fc096c1326948ce8cda70c58a91f7d3b3bbf4c1862",
+          "line": 419,
+          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 27,
+          "evidence_sha256": "sha256:cb7f5da03555e98658e25e524ab3038db349821e968ac5ae952cfe6e59e5d581",
+          "line": 420,
+          "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
+          "rule_id": "state.public_mutable_field"
+        }
+      ],
+      "missing_touched_reductions": []
     }
   ]
 }
