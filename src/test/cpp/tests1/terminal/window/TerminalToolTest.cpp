@@ -497,6 +497,52 @@ TEST(TerminalTool, BottomPanelLayoutNeverInvertsContentWhileShrinking)
 	EXPECT_EQ(166, page.contentBounds.bottom);
 }
 
+TEST(BottomPanelComposite, OutputViewTitleKeepsUpstreamOrderAndFilterWidth)
+{
+	using workbench::panel::CalculateOutputViewTitleLayout;
+	using workbench::panel::OutputViewTitlePreferredWidth;
+	const workbench::panel::OutputViewTitleMetrics metrics{
+		.actionWidth = 28, .actionCount = 3, .selectorWidth = 200, .selectorGap = 4,
+		.filterMinimumWidth = 150, .filterMaximumWidth = 200, .filterMargin = 10 };
+	EXPECT_EQ(84 + 4 + 200 + 10 + 200, OutputViewTitlePreferredWidth(metrics, true));
+	EXPECT_EQ(84 + 4 + 200, OutputViewTitlePreferredWidth(metrics, false));
+
+	// Wide enough: [filter 200][10][selector 200][4][3 actions], right-aligned.
+	const auto wide = CalculateOutputViewTitleLayout(100, 1000, metrics, true);
+	EXPECT_EQ(916, wide.actionsLeft);
+	EXPECT_EQ(200, wide.selectorWidth);
+	EXPECT_EQ(712, wide.selectorLeft);
+	EXPECT_EQ(200, wide.filterWidth);
+	EXPECT_EQ(502, wide.filterLeft);
+	EXPECT_LT(wide.filterLeft + wide.filterWidth, wide.selectorLeft);
+
+	// Focused: the filter takes its 400px maximum when there is room.
+	auto focusedMetrics = metrics;
+	focusedMetrics.filterMaximumWidth = 400;
+	const auto focused = CalculateOutputViewTitleLayout(100, 1000, focusedMetrics, true);
+	EXPECT_EQ(400, focused.filterWidth);
+	EXPECT_EQ(302, focused.filterLeft);
+
+	// Narrow: the filter shrinks to the room left, and below its minimum it is hidden.
+	const auto narrow = CalculateOutputViewTitleLayout(0, 450, metrics, true);
+	EXPECT_EQ(181, narrow.selectorWidth);
+	EXPECT_EQ(171, narrow.filterWidth);
+	EXPECT_EQ(0, narrow.filterLeft);
+	const auto hidden = CalculateOutputViewTitleLayout(0, 400, metrics, true);
+	EXPECT_EQ(156, hidden.selectorWidth);
+	EXPECT_EQ(0, hidden.filterWidth);
+
+	// The filter in the body row leaves the title without it.
+	const auto body = CalculateOutputViewTitleLayout(100, 1000, metrics, false);
+	EXPECT_EQ(0, body.filterWidth);
+	EXPECT_EQ(712, body.selectorLeft);
+
+	// An inverted region never yields a negative width.
+	const auto inverted = CalculateOutputViewTitleLayout(500, 100, metrics, true);
+	EXPECT_EQ(0, inverted.filterWidth);
+	EXPECT_EQ(0, inverted.selectorWidth);
+}
+
 TEST(BottomPanelComposite, UsesCanonicalContainerIdsAndKeepsUserRequestsSeparateFromApply)
 {
 	using namespace workbench::panel;
@@ -804,6 +850,68 @@ TEST(BottomPanelComposite, OutputBodyTextKeepsThePaletteColorAcrossAFontChange)
 	expectPaletteText("after another owner's WM_SETFONT");
 	panel.Layout({ 0, 0, 640, 320 }, 144);
 	expectPaletteText("after the layout that follows it");
+
+	panel.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(BottomPanelComposite, OutputBodyIsAWrappedEditorSurfaceWithTheUpstreamMargin)
+{
+	using namespace workbench::panel;
+
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+
+	CBottomPanelTool panel(harness.Dependencies());
+	ASSERT_TRUE(panel.Create(parent));
+	const HWND panelWindow = ::FindWindowExW(parent, nullptr, L"SakuraBottomPanel", nullptr);
+	ASSERT_NE(nullptr, panelWindow);
+	const HWND outputText = ::FindWindowExW(panelWindow, nullptr, MSFTEDIT_CLASS, nullptr);
+	ASSERT_NE(nullptr, outputText);
+
+	workbench::win32::OutputPanelSnapshot snapshot;
+	snapshot.revision = 1;
+	snapshot.activeChannelId = "git";
+	workbench::win32::OutputPanelChannel channel;
+	channel.channelId = "git";
+	channel.label = L"Git";
+	channel.projectedText = L"> git " + std::wstring(400, L'x') + L"\r\n";
+	channel.visible = true;
+	snapshot.channels.push_back(channel);
+	panel.SetOutputSnapshot(snapshot);
+	ASSERT_TRUE(panel.ApplyActiveContainer(containerIds::Output));
+	panel.Layout({ 0, 0, 640, 320 }, 96);
+
+	const auto defaultFace = [outputText] {
+		CHARFORMAT2W format{};
+		format.cbSize = sizeof(format);
+		::SendMessageW(outputText, EM_GETCHARFORMAT, SCF_DEFAULT, reinterpret_cast<LPARAM>(&format));
+		return std::wstring(format.szFaceName);
+	};
+	const std::wstring editorFace = theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Editor);
+	const std::wstring chromeFace = theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Chrome);
+	ASSERT_NE(editorFace, chromeFace);
+	EXPECT_EQ(editorFace, defaultFace()) << "the Output view is a read-only editor (#422)";
+
+	// The panel host sends its chrome font to every descendant before each
+	// tool layout; the body keeps the editor font.
+	const auto foreignFont = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
+	ASSERT_NE(nullptr, foreignFont);
+	::SendMessageW(outputText, WM_SETFONT, reinterpret_cast<WPARAM>(foreignFont), TRUE);
+	EXPECT_EQ(editorFace, defaultFace()) << "after another owner's WM_SETFONT";
+
+	// lineDecorationsWidth: 20 puts the text 20 DIP in; wordWrap: 'on' wraps
+	// the 400-character line at the window edge.
+	RECT formatting{};
+	::SendMessageW(outputText, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&formatting));
+	EXPECT_GE(formatting.left, 20);
+	EXPECT_GT(::SendMessageW(outputText, EM_GETLINECOUNT, 0, 0), 2);
+
+	panel.Layout({ 0, 0, 640, 320 }, 144);
+	::SendMessageW(outputText, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&formatting));
+	EXPECT_GE(formatting.left, 30) << "the margin follows the DPI";
+	EXPECT_EQ(editorFace, defaultFace()) << "after a DPI change";
 
 	panel.Close();
 	::DestroyWindow(parent);

@@ -125,6 +125,61 @@ struct BottomPanelPageLayout final {
 	};
 }
 
+//! Device-pixel metrics of the Output view title (#422). Upstream sizes the
+//! title filter with `.panel > .title .viewpane-filter-container`: 150-200px,
+//! 400px while focused, `margin-right: 10px`.
+struct OutputViewTitleMetrics final {
+	int actionWidth = 0;
+	int actionCount = 0;
+	int selectorWidth = 0;
+	int selectorGap = 0;
+	int filterMinimumWidth = 0;
+	int filterMaximumWidth = 0;
+	int filterMargin = 0;
+};
+
+//! Horizontal placement inside the view-title region; a zero width hides the
+//! control.
+struct OutputViewTitleLayout final {
+	int filterLeft = 0;
+	int filterWidth = 0;
+	int selectorLeft = 0;
+	int selectorWidth = 0;
+	int actionsLeft = 0;
+};
+
+//! The width the title needs for every control at its preferred size.
+[[nodiscard]] constexpr int OutputViewTitlePreferredWidth(const OutputViewTitleMetrics& metrics, bool filterInHeader) noexcept
+{
+	return metrics.actionWidth * metrics.actionCount + metrics.selectorGap + metrics.selectorWidth
+		+ (filterInHeader ? metrics.filterMargin + metrics.filterMaximumWidth : 0);
+}
+
+//! Right-aligned in upstream's ViewTitle order: the filter widget first
+//! (FilterViewPane unshifts it before the menu actions), then Switch Output
+//! (order 1), then the actions. The selector keeps at most half of what the
+//! actions leave; the filter takes up to its maximum from the rest and is
+//! hidden when even its minimum does not fit.
+[[nodiscard]] constexpr OutputViewTitleLayout CalculateOutputViewTitleLayout(
+	int left, int right, const OutputViewTitleMetrics& metrics, bool filterInHeader) noexcept
+{
+	right = (std::max)(left, right);
+	OutputViewTitleLayout layout{};
+	layout.actionsLeft = (std::max)(left, right - metrics.actionWidth * metrics.actionCount);
+	const int selectorRight = (std::max)(left, layout.actionsLeft - metrics.selectorGap);
+	layout.selectorWidth = (std::max)(0, (std::min)(metrics.selectorWidth, (selectorRight - left) / 2));
+	layout.selectorLeft = selectorRight - layout.selectorWidth;
+	if (filterInHeader) {
+		const int filterRight = layout.selectorLeft - metrics.filterMargin;
+		const int available = filterRight - left;
+		if (available >= metrics.filterMinimumWidth && available > 0) {
+			layout.filterWidth = (std::min)(available, metrics.filterMaximumWidth);
+			layout.filterLeft = filterRight - layout.filterWidth;
+		}
+	}
+	return layout;
+}
+
 class CBottomPanelTool final : public IWorkbenchTool {
 public:
 	using ProblemActivationCallback = std::function<void(const win32::ProblemsPanelEntry&)>;

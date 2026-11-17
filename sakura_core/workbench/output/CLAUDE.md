@@ -247,3 +247,32 @@ worker's root and generation) and `CGitHubRepositoryStatusService`'s
 still calls `RunGit` directly and does not log: it is the SENP GitHub
 extension's own provider surface, not the built-in Git integration this
 channel mirrors.
+
+## Output view pixel parity (#422)
+
+Checked 2026-11-17 against upstream `outputView.ts` and `views.css`.
+
+- **Body font.** The Output body is a read-only text editor upstream, so it
+  uses `ThemeFontKind::Editor`, not the chrome font. The panel host sends its
+  chrome font to every descendant before each tool layout, so the body's
+  subclass replaces any `WM_SETFONT` font with the editor font, then restores
+  the margin and the colors (#420).
+- **Wrap and margin.** Upstream sets `wordWrap: 'on'` and
+  `lineDecorationsWidth: 20` with line numbers, glyph margin and folding off.
+  The Rich Edit uses `EM_SETTARGETDEVICE(0, 0)` (wrap at the window edge; `1`
+  turns wrapping off) and a 20 DIP left margin through `EM_SETMARGINS`.
+- **View title.** Upstream right-aligns the title actions and
+  `FilterViewPane` puts the filter first: filter, Switch Output, Clear Output,
+  the scroll lock, `...`. `.panel > .title .viewpane-filter-container` is
+  150-200px wide, 400px while focused, with a 10px right margin.
+  `CalculateOutputViewTitleLayout` is that rule; the region grows to
+  `OutputViewTitlePreferredWidth` instead of the terminal toolbar's 260 DIP,
+  which had left the filter about 70 DIP. The placeholder is cut at 200px as
+  upstream's is.
+- **Open: log line timestamps.** Upstream's view of a Log channel shows the
+  log file's `YYYY-MM-DD HH:MM:SS.mmm [info]` lines; this view still projects
+  `[Info] message` without a time. The stored log entry has no timestamp, and
+  the Rust authority (`output_shadow.rs`), its C ABI and snapshot codec, and
+  the C++ provider must all gain one together. Tracked in #422.
+- Tests: `BottomPanelComposite.OutputViewTitleKeepsUpstreamOrderAndFilterWidth`
+  and `BottomPanelComposite.OutputBodyIsAWrappedEditorSurfaceWithTheUpstreamMargin`.

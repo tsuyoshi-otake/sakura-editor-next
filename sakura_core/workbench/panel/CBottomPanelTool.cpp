@@ -69,6 +69,16 @@ constexpr int kProblemsFilterHeightDipThreshold = 100;
 //! reuse the Problems view's upstream thresholds and row heights.
 constexpr int kOutputFindRowHeightDip = 30;
 constexpr int kOutputSelectorWidthDip = 200;
+//! Upstream's panel-title filter: `.panel > .title .viewpane-filter-container`
+//! is 150-200px wide, 400px while it has focus, with a 10px right margin.
+constexpr int kOutputTitleFilterMinimumWidthDip = 150;
+constexpr int kOutputTitleFilterMaximumWidthDip = 200;
+constexpr int kOutputTitleFilterFocusedWidthDip = 400;
+constexpr int kOutputTitleFilterMarginDip = 10;
+constexpr int kOutputViewActionWidthDip = 28;
+constexpr int kOutputViewActionCount = 3;
+//! Upstream's output editor `lineDecorationsWidth`.
+constexpr int kOutputTextLeftMarginDip = 20;
 
 bool IsPanelTabId(UINT_PTR id) noexcept
 {
@@ -326,6 +336,9 @@ struct CBottomPanelTool::Impl {
 	unsigned int dpi = kDefaultDpi;
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	theme::CThemeFont font;
+	//! The Output body is a read-only text editor in VS Code, so it uses the
+	//! editor font, not the chrome font (#422).
+	theme::CThemeFont editorFont;
 	HBRUSH panelBrush = nullptr;
 	HBRUSH raisedBrush = nullptr;
 	rendering::CGdiBackBuffer backBuffer;
@@ -362,6 +375,8 @@ struct CBottomPanelTool::Impl {
 	bool outputSmartScroll = true;
 	bool outputFindVisible = false;
 	bool outputFilterInHeader = true;
+	//! The title filter widens to its focused width while it has focus.
+	bool outputFilterFocused = false;
 	//! Set while the tool itself rewrites a control, so the resulting
 	//! EN_CHANGE / EN_SELCHANGE is not mistaken for user input.
 	bool outputFilterUpdating = false;
@@ -691,6 +706,20 @@ struct CBottomPanelTool::Impl {
 		return EBottomPanelPageDetachStatus::Detached;
 	}
 
+	[[nodiscard]] OutputViewTitleMetrics OutputTitleMetrics() const noexcept
+	{
+		return {
+			.actionWidth = Scale(kOutputViewActionWidthDip, dpi),
+			.actionCount = kOutputViewActionCount,
+			.selectorWidth = Scale(kOutputSelectorWidthDip, dpi),
+			.selectorGap = Scale(4, dpi),
+			.filterMinimumWidth = Scale(kOutputTitleFilterMinimumWidthDip, dpi),
+			.filterMaximumWidth = Scale(outputFilterFocused ? kOutputTitleFilterFocusedWidthDip
+				: kOutputTitleFilterMaximumWidthDip, dpi),
+			.filterMargin = Scale(kOutputTitleFilterMarginDip, dpi),
+		};
+	}
+
 	void LayoutChildren()
 	{
 		if (!window) return;
@@ -751,7 +780,11 @@ struct CBottomPanelTool::Impl {
 		constexpr std::array desiredTabWidthsDip{ 82, 70, 78 };
 		constexpr int desiredTabWidthDipTotal = 230;
 		const int minimumTabArea = std::min(commonActionLeft, Scale(250, dpi));
-		const int desiredToolbarWidth = Scale(260, dpi);
+		// The Output view title needs its filter, selector and actions at their
+		// upstream sizes (#422); a 260 DIP region left the filter about 70 DIP.
+		const int desiredToolbarWidth = outputActivePage
+			? OutputViewTitlePreferredWidth(OutputTitleMetrics(), outputFilterInHeader)
+			: Scale(260, dpi);
 		const int toolbarWidth = std::min(desiredToolbarWidth,
 			std::max(0, commonActionLeft - minimumTabArea));
 		const int toolbarLeft = std::max(0, commonActionLeft - toolbarWidth);
@@ -875,29 +908,28 @@ struct CBottomPanelTool::Impl {
 		// actions while the pane is wide enough.
 		if (outputActivePage && !::IsRectEmpty(&outputHeaderBounds)) {
 			const int headerLeft = static_cast<int>(outputHeaderBounds.left);
-			int actionRight = static_cast<int>(outputHeaderBounds.right);
-			const int outputActionWidth = Scale(28, dpi);
+			const int headerRight = static_cast<int>(outputHeaderBounds.right);
+			const auto metrics = OutputTitleMetrics();
+			const auto title = CalculateOutputViewTitleLayout(headerLeft, headerRight, metrics, outputFilterInHeader);
+			int actionRight = headerRight;
 			const auto placeViewAction = [&](HWND button) {
-				place(button, std::max(headerLeft, actionRight - outputActionWidth), 0,
-					std::min(outputActionWidth, actionRight - headerLeft), headerHeight, true);
-				actionRight -= outputActionWidth;
+				place(button, std::max(headerLeft, actionRight - metrics.actionWidth), 0,
+					std::min(metrics.actionWidth, actionRight - headerLeft), headerHeight, true);
+				actionRight -= metrics.actionWidth;
 			};
 			placeViewAction(outputMoreActionsButton);
 			placeViewAction(outputScrollLockButton);
 			placeViewAction(outputClearButton);
-			const int selectorWidth = std::min(Scale(kOutputSelectorWidthDip, dpi),
-				std::max(0, (actionRight - headerLeft) / 2));
 			const int selectorEditHeight = Scale(22, dpi);
 			// A dropdown combo's window height bounds its dropped list, not the
 			// edit field; the field top-aligns inside the rect.
-			place(outputSelector, headerLeft + Scale(4, dpi),
-				std::max(0, (headerHeight - selectorEditHeight) / 2), selectorWidth,
-				std::max(selectorEditHeight, Scale(240, dpi)), true);
-			if (outputFilterInHeader) {
+			place(outputSelector, title.selectorLeft,
+				std::max(0, (headerHeight - selectorEditHeight) / 2), title.selectorWidth,
+				std::max(selectorEditHeight, Scale(240, dpi)), title.selectorWidth > 0);
+			if (outputFilterInHeader && title.filterWidth > 0) {
 				const int editHeight = Scale(24, dpi);
-				const int editLeft = headerLeft + Scale(4, dpi) + selectorWidth + Scale(8, dpi);
-				place(outputFilterEdit, editLeft, std::max(0, (headerHeight - editHeight) / 2),
-					std::max(0, actionRight - editLeft - Scale(4, dpi)), editHeight, true);
+				place(outputFilterEdit, title.filterLeft, std::max(0, (headerHeight - editHeight) / 2),
+					title.filterWidth, editHeight, true);
 			} else {
 				place(outputFilterEdit, 0, 0, 0, 0, false);
 			}
@@ -1630,6 +1662,15 @@ struct CBottomPanelTool::Impl {
 		}
 	}
 
+	//! Upstream's output editors set `lineDecorationsWidth: 20` with line
+	//! numbers, glyph margin and folding off, so the text starts 20px in.
+	void ApplyOutputTextMargins() const noexcept
+	{
+		if (outputText == nullptr) return;
+		::SendMessageW(outputText, EM_SETMARGINS, EC_LEFTMARGIN,
+			MAKELPARAM(Scale(kOutputTextLeftMarginDip, dpi), 0));
+	}
+
 	//! Paints the Output body's text again after its font changed. A plain-text
 	//! Rich Edit resets every character, and its default format, to the
 	//! automatic system text color (black) on WM_SETFONT, so without this the
@@ -1662,9 +1703,18 @@ struct CBottomPanelTool::Impl {
 			::RemoveWindowSubclass(hwnd, OutputTextSubclassProc, subclassId);
 			return ::DefSubclassProc(hwnd, message, wParam, lParam);
 		}
-		const LRESULT result = ::DefSubclassProc(hwnd, message, wParam, lParam);
-		if (message == WM_SETFONT) reinterpret_cast<Impl*>(data)->RestoreOutputTextFormat();
-		return result;
+		if (message == WM_SETFONT) {
+			// The body is an editor surface: whatever font a sender passes (the
+			// panel host sends its chrome font to every descendant before each
+			// layout), it keeps the editor font (#422).
+			auto& impl = *reinterpret_cast<Impl*>(data);
+			if (const HFONT editor = impl.editorFont.Get()) wParam = reinterpret_cast<WPARAM>(editor);
+			const LRESULT result = ::DefSubclassProc(hwnd, message, wParam, lParam);
+			impl.ApplyOutputTextMargins();
+			impl.RestoreOutputTextFormat();
+			return result;
+		}
+		return ::DefSubclassProc(hwnd, message, wParam, lParam);
 	}
 
 	//! The selected channel's text through the current view filter.
@@ -2046,12 +2096,18 @@ void CBottomPanelTool::Layout(const RECT& contentRect, unsigned int dpi)
 		m_impl->ApplyFont(m_impl->problemsEmptyMessage);
 		m_impl->ApplyFont(m_impl->problemsClearFilters);
 		m_impl->ApplyFont(m_impl->outputSelector);
-		m_impl->ApplyFont(m_impl->outputText);
 		m_impl->ApplyFont(m_impl->outputFilterEdit);
 		m_impl->ApplyFont(m_impl->outputFindEdit);
 		m_impl->ApplyFont(m_impl->outputFindCount);
 		m_impl->ApplyFont(m_impl->maximizeButton);
 		m_impl->ApplyFont(m_impl->closeButton);
+	}
+	if (m_impl->editorFont.Dpi() != m_impl->dpi) {
+		(void)m_impl->editorFont.Recreate(theme::ThemeFontKind::Editor, m_impl->dpi);
+		if (m_impl->outputText && m_impl->editorFont.Get()) {
+			::SendMessageW(m_impl->outputText, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->editorFont.Get()), FALSE);
+		}
+		m_impl->ApplyOutputTextMargins();
 	}
 	m_impl->LayoutChildren();
 }
@@ -2491,7 +2547,10 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 		if (impl.outputText != nullptr && impl.outputRichEditModule != nullptr) {
 			::SendMessageW(impl.outputText, EM_SETTEXTMODE, TM_PLAINTEXT | TM_SINGLELEVELUNDO, 0);
 			::SendMessageW(impl.outputText, EM_SETEVENTMASK, 0, ENM_SELCHANGE);
-			::SendMessageW(impl.outputText, EM_SETTARGETDEVICE, 0, 1);
+			// A null device with a zero line width wraps at the window edge, as
+			// upstream's output editors do (`wordWrap: 'on'`); 1 would turn
+			// wrapping off.
+			::SendMessageW(impl.outputText, EM_SETTARGETDEVICE, 0, 0);
 			// Any WM_SETFONT resets the body to the automatic text color; the
 			// subclass repaints the palette colors after each one (#420).
 			::SetWindowSubclass(impl.outputText, Impl::OutputTextSubclassProc,
@@ -2592,6 +2651,15 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 			}
 			return 0;
 		case kOutputFilterEdit:
+			if (HIWORD(wParam) == EN_SETFOCUS || HIWORD(wParam) == EN_KILLFOCUS) {
+				// Upstream widens the title filter to 400px while it has focus.
+				const bool focused = HIWORD(wParam) == EN_SETFOCUS;
+				if (impl.outputFilterFocused != focused) {
+					impl.outputFilterFocused = focused;
+					if (impl.outputFilterInHeader) impl.LayoutChildren();
+				}
+				return 0;
+			}
 			if (HIWORD(wParam) == EN_CHANGE && !impl.outputFilterUpdating) {
 				const int length = ::GetWindowTextLengthW(impl.outputFilterEdit);
 				std::wstring text(static_cast<std::size_t>(std::max(0, length)), L'\0');
