@@ -12,12 +12,15 @@
 #include <CommCtrl.h>
 #include <winioctl.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <functional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "workbench/explorer/CExplorerTool.h"
 
@@ -723,6 +726,237 @@ TEST(ExplorerTool, ProductionWorkerRejectsOldRootsAndDebouncesDirectoryChanges)
 		return tool.GetWorkerState() == workbench::explorer::ExplorerWorkerState::Stopped;
 	}, std::chrono::seconds(2)));
 	EXPECT_EQ(workbench::explorer::ExplorerWorkerState::Stopped, tool.GetWorkerState());
+	::DestroyWindow(parent);
+}
+
+//! Client pixels of `window` as PrintWindow renders them, top-down BGRA.
+std::vector<std::uint32_t> CaptureClient(HWND window, int& width, int& height)
+{
+	RECT client{};
+	if (!::GetClientRect(window, &client)) return {};
+	width = client.right;
+	height = client.bottom;
+	BITMAPINFO info{};
+	info.bmiHeader.biSize = sizeof(info.bmiHeader);
+	info.bmiHeader.biWidth = width;
+	info.bmiHeader.biHeight = -height;
+	info.bmiHeader.biPlanes = 1;
+	info.bmiHeader.biBitCount = 32;
+	void* bits = nullptr;
+	const HDC screen = ::GetDC(nullptr);
+	const HDC memory = ::CreateCompatibleDC(screen);
+	const HBITMAP bitmap = ::CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+	std::vector<std::uint32_t> pixels;
+	if (bitmap != nullptr && bits != nullptr) {
+		const auto previous = ::SelectObject(memory, bitmap);
+		(void)::PrintWindow(window, memory, PW_CLIENTONLY | PW_RENDERFULLCONTENT);
+		::GdiFlush();
+		const auto* first = static_cast<const std::uint32_t*>(bits);
+		pixels.assign(first, first + static_cast<std::size_t>(width) * height);
+		::SelectObject(memory, previous);
+		::DeleteObject(bitmap);
+	}
+	::DeleteDC(memory);
+	::ReleaseDC(nullptr, screen);
+	return pixels;
+}
+
+// #205: a folder row paints its own label one icon width left of where the
+// control puts a row's text, so the control's rename box must move with it.
+// Otherwise the painted name shows beside the box as a doubled name.
+TEST(ExplorerTool, FolderRenameBoxCoversThePaintedLabelLikeAFileRow)
+{
+	TemporaryDirectory root;
+	ASSERT_TRUE(std::filesystem::create_directory(root.Path() / L"child"));
+	CreateEmptyFile(root.Path() / L"first.txt");
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	CExplorerTool tool;
+	tool.SetRoot(root.Path().wstring());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 400, 300 }, 96);
+	::ShowWindow(parent, SW_SHOWNOACTIVATE);
+	::UpdateWindow(parent);
+	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
+	ASSERT_NE(nullptr, tree);
+	ASSERT_TRUE(PumpMessagesUntil([&] {
+		return FindDirectChild(tree, kWorkspaceLevel, L"child") != nullptr
+			&& FindDirectChild(tree, kWorkspaceLevel, L"first.txt") != nullptr;
+	}, std::chrono::seconds(2)));
+
+	struct Placement { long textLeft = 0; long editLeft = 0; };
+	auto beginRename = [&](const wchar_t* name, Placement& placement) -> HWND {
+		const auto item = FindDirectChild(tree, kWorkspaceLevel, name);
+		RECT text{};
+		EXPECT_TRUE(TreeView_GetItemRect(tree, item, &text, TRUE));
+		EXPECT_TRUE(tool.BeginRenameEntry((root.Path() / name).wstring()));
+		(void)PumpMessagesUntil([] { return false; }, std::chrono::milliseconds(200));
+		const HWND edit = TreeView_GetEditControl(tree);
+		if (edit == nullptr) return nullptr;
+		RECT bounds{};
+		::GetWindowRect(edit, &bounds);
+		::MapWindowPoints(nullptr, tree, reinterpret_cast<POINT*>(&bounds), 2);
+		placement = { text.left, bounds.left };
+		return edit;
+	};
+	auto endRename = [&] {
+		(void)TreeView_EndEditLabelNow(tree, TRUE);
+		(void)PumpMessagesUntil([] { return false; }, std::chrono::milliseconds(100));
+	};
+
+	Placement file;
+	ASSERT_NE(nullptr, beginRename(L"first.txt", file));
+	endRename();
+
+	Placement folder;
+	const HWND edit = beginRename(L"child", folder);
+	ASSERT_NE(nullptr, edit);
+	// A file's box starts at its label; a folder's label is drawn one 16 DIP
+	// icon slot further left (96 DPI here), and its box starts the same way.
+	constexpr long kIconSlot = 16;
+	EXPECT_EQ(file.editLeft - file.textLeft, folder.editLeft - (folder.textLeft - kIconSlot));
+
+	// The box is drawn on top: the tree's capture over the box equals the
+	// box's own rendering, so the row paint did not cover it. PrintWindow now
+	// and then returns a blank frame, so a mismatch is captured again; a
+	// covered box never matches however often it is captured.
+	auto matchingPercent = [&]() -> std::size_t {
+		int treeWidth = 0;
+		int treeHeight = 0;
+		const auto treePixels = CaptureClient(tree, treeWidth, treeHeight);
+		int editWidth = 0;
+		int editHeight = 0;
+		const auto editPixels = CaptureClient(edit, editWidth, editHeight);
+		if (treePixels.empty() || editPixels.empty()) return 0;
+		// A blank frame would match a blank tree; the box shows its text.
+		const auto firstColor = editPixels.front() & 0x00FFFFFFu;
+		if (std::all_of(editPixels.begin(), editPixels.end(),
+				[firstColor](std::uint32_t pixel) { return (pixel & 0x00FFFFFFu) == firstColor; })) {
+			return 0;
+		}
+		POINT origin{ 0, 0 };
+		::MapWindowPoints(edit, tree, &origin, 1);
+		std::size_t matching = 0;
+		std::size_t total = 0;
+		for (int y = 0; y < editHeight; ++y) {
+			for (int x = 0; x < editWidth; ++x) {
+				const int tx = origin.x + x;
+				const int ty = origin.y + y;
+				if (tx < 0 || ty < 0 || tx >= treeWidth || ty >= treeHeight) continue;
+				++total;
+				const auto treePixel = treePixels[static_cast<std::size_t>(ty) * treeWidth + tx] & 0x00FFFFFFu;
+				const auto editPixel = editPixels[static_cast<std::size_t>(y) * editWidth + x] & 0x00FFFFFFu;
+				if (treePixel == editPixel) ++matching;
+			}
+		}
+		return total == 0 ? 0 : matching * 100 / total;
+	};
+	auto expectBoxVisible = [&](const char* when) {
+		std::size_t percent = 0;
+		for (int attempt = 0; attempt < 5 && percent < 95; ++attempt) {
+			if (attempt > 0) (void)PumpMessagesUntil([] { return false; }, std::chrono::milliseconds(100));
+			percent = matchingPercent();
+		}
+		EXPECT_GE(percent, 95u) << "percent of the box's pixels visible in the tree " << when;
+	};
+	expectBoxVisible("when the rename starts");
+
+	// Hover, focus and selection changes repaint the row while the box is up;
+	// the box must still be on top afterwards.
+	{
+		RECT row{};
+		ASSERT_TRUE(TreeView_GetItemRect(tree, FindDirectChild(tree, kWorkspaceLevel, L"child"), &row, FALSE));
+		::InvalidateRect(tree, &row, TRUE);
+		::UpdateWindow(tree);
+	}
+	expectBoxVisible("after the row repainted");
+
+	// The control moves the box again as the text grows; it must not drift.
+	::SetWindowTextW(edit, L"child-renamed-to-a-longer-name");
+	(void)PumpMessagesUntil([] { return false; }, std::chrono::milliseconds(200));
+	RECT grown{};
+	::GetWindowRect(edit, &grown);
+	::MapWindowPoints(nullptr, tree, reinterpret_cast<POINT*>(&grown), 2);
+	EXPECT_EQ(folder.editLeft, grown.left);
+
+	expectBoxVisible("after the text grew");
+	endRename();
+
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+// #205: scrolling moves the box vertically only. The shift that aligns it
+// with the painted label must not be applied again on every scroll step.
+TEST(ExplorerTool, FolderRenameBoxKeepsItsColumnWhileTheTreeScrolls)
+{
+	TemporaryDirectory root;
+	for (int index = 0; index < 5; ++index) {
+		ASSERT_TRUE(std::filesystem::create_directory(root.Path() / (L"a" + std::to_wstring(index))));
+	}
+	ASSERT_TRUE(std::filesystem::create_directory(root.Path() / L"child"));
+	for (int index = 0; index < 40; ++index) {
+		CreateEmptyFile(root.Path() / (L"f" + std::to_wstring(100 + index) + L".txt"));
+	}
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	CExplorerTool tool;
+	tool.SetRoot(root.Path().wstring());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 400, 300 }, 96);
+	::ShowWindow(parent, SW_SHOWNOACTIVATE);
+	::UpdateWindow(parent);
+	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
+	ASSERT_NE(nullptr, tree);
+	ASSERT_TRUE(PumpMessagesUntil([&] {
+		return FindDirectChild(tree, kWorkspaceLevel, L"child") != nullptr
+			&& FindDirectChild(tree, kWorkspaceLevel, L"f139.txt") != nullptr;
+	}, std::chrono::seconds(2)));
+
+	// Each gesture the view can scroll by: a scrollbar line (and the wheel,
+	// which sends the same WM_VSCROLL), and the overlay scrollbar, which sets
+	// the first visible row directly. The control dismisses the box on
+	// WM_VSCROLL and keeps it on TVGN_FIRSTVISIBLE; when it keeps it, the box
+	// keeps its column. (It does not follow its row vertically on that path,
+	// for files as well; that is #424, not this shift.)
+	enum class Gesture { Line, Wheel, FirstVisible };
+	for (const auto gesture : { Gesture::Line, Gesture::Wheel, Gesture::FirstVisible }) {
+		const char* name = gesture == Gesture::Line ? "line" : gesture == Gesture::Wheel ? "wheel" : "first-visible";
+		(void)TreeView_SelectSetFirstVisible(tree, TreeView_GetRoot(tree));
+		ASSERT_TRUE(tool.BeginRenameEntry((root.Path() / L"child").wstring())) << name;
+		(void)PumpMessagesUntil([] { return false; }, std::chrono::milliseconds(200));
+		const HWND edit = TreeView_GetEditControl(tree);
+		ASSERT_NE(nullptr, edit) << name;
+		auto editLeft = [&] {
+			RECT bounds{};
+			::GetWindowRect(edit, &bounds);
+			::MapWindowPoints(nullptr, tree, reinterpret_cast<POINT*>(&bounds), 2);
+			return bounds.left;
+		};
+		const long before = editLeft();
+		const auto firstVisible = TreeView_GetFirstVisible(tree);
+		for (int step = 0; step < 3; ++step) {
+			if (gesture == Gesture::Line) {
+				(void)::SendMessageW(tree, WM_VSCROLL, MAKEWPARAM(SB_LINEDOWN, 0), 0);
+			} else if (gesture == Gesture::Wheel) {
+				(void)::SendMessageW(tree, WM_MOUSEWHEEL, MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA)), 0);
+			} else {
+				(void)TreeView_SelectSetFirstVisible(tree, TreeView_GetNextVisible(tree, TreeView_GetFirstVisible(tree)));
+			}
+			(void)PumpMessagesUntil([] { return false; }, std::chrono::milliseconds(50));
+		}
+		ASSERT_NE(firstVisible, TreeView_GetFirstVisible(tree)) << "the tree did not scroll by " << name;
+		if (::IsWindow(edit) && TreeView_GetEditControl(tree) == edit) {
+			EXPECT_EQ(before, editLeft()) << "after three scroll steps by " << name;
+			::SetWindowTextW(edit, L"child-renamed-to-a-longer-name");
+			(void)PumpMessagesUntil([] { return false; }, std::chrono::milliseconds(200));
+			EXPECT_EQ(before, editLeft()) << "after the text grew, scrolled by " << name;
+			(void)TreeView_EndEditLabelNow(tree, TRUE);
+			(void)PumpMessagesUntil([] { return false; }, std::chrono::milliseconds(100));
+		}
+	}
+
+	tool.Close();
 	::DestroyWindow(parent);
 }
 

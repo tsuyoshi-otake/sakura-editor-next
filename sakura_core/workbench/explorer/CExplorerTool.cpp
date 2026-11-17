@@ -60,6 +60,8 @@ constexpr UINT kWorkerResultMessage = WM_APP + 0x571;
 constexpr UINT kDirectoryChangedMessage = WM_APP + 0x572;
 constexpr UINT kActivateFileMessage = WM_APP + 0x573;
 constexpr UINT_PTR kRefreshTimer = 1;
+//! Subclass on a folder row's rename box; see DirectoryLabelEditSubclassProc.
+constexpr UINT_PTR kDirectoryLabelEditSubclassId = 1;
 constexpr unsigned int kDefaultDpi = 96;
 //! Explorer and Source Control are Views in the same Primary Side Bar. Keep
 //! their ViewPane headers at the same VS Code-like 30 DIP density.
@@ -1046,6 +1048,31 @@ struct CExplorerTool::Impl {
 		UpdateOverlayScrollbar();
 	}
 
+	/*!
+		Keeps a folder row's rename box over the label PaintDirectoryRow drew.
+		The control places its label edit at the item's text rectangle, which
+		still starts after the icon slot a folder row does not paint (#205).
+		Without this the hand-drawn name stays visible to the left of the box
+		and the two read as one doubled name. The control moves the edit again
+		whenever the text grows, always to the same unshifted origin, so every
+		move is shifted by the same `shift`, never accumulated.
+	*/
+	static LRESULT CALLBACK DirectoryLabelEditSubclassProc(HWND hwnd, UINT message, WPARAM wParam,
+		LPARAM lParam, UINT_PTR subclassId, DWORD_PTR shift)
+	{
+		if (message == WM_NCDESTROY) {
+			::RemoveWindowSubclass(hwnd, DirectoryLabelEditSubclassProc, subclassId);
+			return ::DefSubclassProc(hwnd, message, wParam, lParam);
+		}
+		if (message == WM_WINDOWPOSCHANGING) {
+			auto* position = reinterpret_cast<WINDOWPOS*>(lParam);
+			if (position != nullptr && (position->flags & SWP_NOMOVE) == 0) {
+				position->x -= static_cast<int>(shift);
+			}
+		}
+		return ::DefSubclassProc(hwnd, message, wParam, lParam);
+	}
+
 	static LRESULT CALLBACK TreeSubclassProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam,
 		UINT_PTR subclassId, DWORD_PTR referenceData)
 	{
@@ -1325,6 +1352,7 @@ struct CExplorerTool::Impl {
 			labelEditPath.clear();
 			return false;
 		}
+		if (isDirectory) AlignDirectoryLabelEdit(edit);
 		// VS Code preselects a file's base name without its extension (a
 		// leading dot is not an extension separator); a folder selects fully.
 		LPARAM selectionEnd = -1;
@@ -1334,6 +1362,23 @@ struct CExplorerTool::Impl {
 		}
 		(void)::SendMessageW(edit, EM_SETSEL, 0, selectionEnd);
 		return true;
+	}
+
+	//! Moves a folder row's rename box left by the icon slot the row does not
+	//! paint, so it covers the hand-drawn label (see PaintDirectoryRow). The
+	//! subclass shifts the move made here and every later one the control makes.
+	void AlignDirectoryLabelEdit(HWND edit) const
+	{
+		const int shift = IconSizeForDpi(dpi);
+		if (!::SetWindowSubclass(edit, DirectoryLabelEditSubclassProc, kDirectoryLabelEditSubclassId,
+				static_cast<DWORD_PTR>(shift))) {
+			return;
+		}
+		RECT editRect{};
+		if (!::GetWindowRect(edit, &editRect)) return;
+		::MapWindowPoints(nullptr, tree, reinterpret_cast<POINT*>(&editRect), 2);
+		(void)::SetWindowPos(edit, nullptr, editRect.left, editRect.top, 0, 0,
+			SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 	}
 
 	bool BeginCreate(std::wstring_view parentDirectory, bool directory)

@@ -132,6 +132,37 @@ Recorded divergences of this flow (omit, don't fake):
     width at the new left edge, so a selected folder and a selected file match.
   - A file row is a leaf and carries no twistie, so this hand-drawn chevron is
     the only disclosure glyph in the view; no row is left without one.
+  - **A folder's rename box follows the hand-drawn label (#205).** The control
+    places its label edit at the item's text rectangle, which still starts
+    after the icon slot the folder row does not paint. Left there, the box
+    covered only the right part of the name and the hand-drawn name showed to
+    its left, so the two read as one doubled name. `AlignDirectoryLabelEdit`
+    subclasses the edit (`DirectoryLabelEditSubclassProc`) and shifts every
+    move left by `IconSizeForDpi(dpi)`. The control moves the edit again each
+    time the text grows, always to the same unshifted origin, so the shift is
+    applied per move and never accumulates. File rows and the create row
+    (lParam 0, painted by the control) keep the control's own placement.
+    - Tried and not kept, because disabling each left the regression test
+      green: clipping the edit out of `PaintDirectoryRow`, and
+      `SWP_NOCOPYBITS` on the shifted move.
+    - Scrolling never re-applies the shift. The control dismisses the box on
+      `WM_VSCROLL` (the scrollbar and the wheel, which sends the same
+      message) and keeps it on `TVGN_FIRSTVISIBLE` (the overlay scrollbar)
+      without moving it horizontally, so no move arrives that the subclass
+      could shift twice. Measured 2026-11-17 on x64 Debug. On that overlay
+      path the box also stays at its old row vertically, for file rows as
+      well; that is #424, not this shift.
+    - Residual: the shift is the DPI at rename start. A DPI change while the
+      box is up leaves it one icon-width difference off until the rename ends.
+    - Tests: `ExplorerTool.FolderRenameBoxCoversThePaintedLabelLikeAFileRow`
+      checks that the folder box's offset from the painted label equals a file
+      row's, and that the tree's rendering over the box equals the box's own
+      after the row repaints and after the text grows. It fails with the
+      alignment disabled. The pixel check uses PrintWindow only, with a
+      blank-frame guard and bounded retries: a unit test cannot take the
+      foreground, so a screen capture would read whatever window is on top.
+      `ExplorerTool.FolderRenameBoxKeepsItsColumnWhileTheTreeScrolls` covers
+      the three scroll gestures above.
 - **The tree's top level is the open folder's children, not the folder itself
   (2026-08-20).** VS Code renders a root row only for a multi-root workspace, one
   row per root folder; with a single open folder the file view's pane header names
