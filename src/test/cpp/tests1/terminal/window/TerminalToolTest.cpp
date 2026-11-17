@@ -794,6 +794,17 @@ TEST(BottomPanelComposite, OutputBodyTextKeepsThePaletteColorAcrossAFontChange)
 	ASSERT_TRUE(panel.ApplyActiveContainer(containerIds::Output));
 	expectPaletteText("after switching back to Output");
 
+	// The panel host sends its own chrome font to every descendant before each
+	// tool layout (CWorkbenchPanelHost::LayoutTool), with no new Output line and
+	// no font change the tool itself made. The body's colors must survive a
+	// WM_SETFONT from any sender.
+	const auto foreignFont = static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
+	ASSERT_NE(nullptr, foreignFont);
+	::SendMessageW(outputText, WM_SETFONT, reinterpret_cast<WPARAM>(foreignFont), TRUE);
+	expectPaletteText("after another owner's WM_SETFONT");
+	panel.Layout({ 0, 0, 640, 320 }, 144);
+	expectPaletteText("after the layout that follows it");
+
 	panel.Close();
 	::DestroyWindow(parent);
 }

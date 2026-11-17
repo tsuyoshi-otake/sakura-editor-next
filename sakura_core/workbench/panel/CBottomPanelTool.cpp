@@ -37,6 +37,7 @@ constexpr UINT_PTR kOutputButton = 102;
 constexpr UINT_PTR kProblemsTree = 105;
 constexpr UINT_PTR kOutputSelector = 106;
 constexpr UINT_PTR kOutputText = 107;
+constexpr UINT_PTR kOutputTextSubclassId = 1;
 constexpr UINT_PTR kPanelMaximizeButton = 108;
 constexpr UINT_PTR kPanelCloseButton = 109;
 constexpr UINT_PTR kProblemsFilterEdit = 110;
@@ -1629,15 +1630,16 @@ struct CBottomPanelTool::Impl {
 		}
 	}
 
-	//! Sends the panel font to the Output body and paints its text again. A
-	//! plain-text Rich Edit resets every character, and its default format, to
-	//! the automatic system text color (black) on WM_SETFONT, so without this
-	//! the body stays black until the next line arrives (#420). The text,
-	//! selection, and scroll position are unchanged.
-	void ApplyOutputFont()
+	//! Paints the Output body's text again after its font changed. A plain-text
+	//! Rich Edit resets every character, and its default format, to the
+	//! automatic system text color (black) on WM_SETFONT, so without this the
+	//! body stays black until the next line arrives (#420). The body's own
+	//! subclass calls it after every WM_SETFONT, whoever sent it: the panel
+	//! host also sends its chrome font to every descendant before each tool
+	//! layout. The text, selection, and scroll position are unchanged.
+	void RestoreOutputTextFormat()
 	{
-		ApplyFont(outputText);
-		if (outputText == nullptr || outputRichEditModule == nullptr) return;
+		if (closed || outputText == nullptr || outputRichEditModule == nullptr) return;
 		const OutputTextUpdatingScope updating{ *this };
 		CHARRANGE selection{};
 		::SendMessageW(outputText, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&selection));
@@ -1651,6 +1653,18 @@ struct CBottomPanelTool::Impl {
 		::SendMessageW(outputText, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&selection));
 		const auto delta = firstVisibleLine - ::SendMessageW(outputText, EM_GETFIRSTVISIBLELINE, 0, 0);
 		if (delta != 0) ::SendMessageW(outputText, EM_LINESCROLL, 0, delta);
+	}
+
+	static LRESULT CALLBACK OutputTextSubclassProc(HWND hwnd, UINT message, WPARAM wParam,
+		LPARAM lParam, UINT_PTR subclassId, DWORD_PTR data)
+	{
+		if (message == WM_NCDESTROY) {
+			::RemoveWindowSubclass(hwnd, OutputTextSubclassProc, subclassId);
+			return ::DefSubclassProc(hwnd, message, wParam, lParam);
+		}
+		const LRESULT result = ::DefSubclassProc(hwnd, message, wParam, lParam);
+		if (message == WM_SETFONT) reinterpret_cast<Impl*>(data)->RestoreOutputTextFormat();
+		return result;
 	}
 
 	//! The selected channel's text through the current view filter.
@@ -2027,7 +2041,7 @@ void CBottomPanelTool::Layout(const RECT& contentRect, unsigned int dpi)
 		m_impl->ApplyFont(m_impl->problemsEmptyMessage);
 		m_impl->ApplyFont(m_impl->problemsClearFilters);
 		m_impl->ApplyFont(m_impl->outputSelector);
-		m_impl->ApplyOutputFont();
+		m_impl->ApplyFont(m_impl->outputText);
 		m_impl->ApplyFont(m_impl->outputFilterEdit);
 		m_impl->ApplyFont(m_impl->outputFindEdit);
 		m_impl->ApplyFont(m_impl->outputFindCount);
@@ -2473,6 +2487,10 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 			::SendMessageW(impl.outputText, EM_SETTEXTMODE, TM_PLAINTEXT | TM_SINGLELEVELUNDO, 0);
 			::SendMessageW(impl.outputText, EM_SETEVENTMASK, 0, ENM_SELCHANGE);
 			::SendMessageW(impl.outputText, EM_SETTARGETDEVICE, 0, 1);
+			// Any WM_SETFONT resets the body to the automatic text color; the
+			// subclass repaints the palette colors after each one (#420).
+			::SetWindowSubclass(impl.outputText, Impl::OutputTextSubclassProc,
+				kOutputTextSubclassId, reinterpret_cast<DWORD_PTR>(&impl));
 		} else {
 			::FreeLibrary(impl.outputRichEditModule);
 			impl.outputRichEditModule = nullptr;

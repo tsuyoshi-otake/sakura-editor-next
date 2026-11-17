@@ -62,6 +62,36 @@ owner as extension-like; and `workbench.action.openActiveLogOutputFile`
 returns a typed unsupported terminal because channels are service-owned text,
 not file resources — there is no honest on-disk target to open.
 
+## The Output body keeps its colors across any WM_SETFONT (#420)
+
+- **Symptom:** the Output body's text was black on the dark panel right after
+  the user switched to Output. It turned light only when the next line
+  arrived.
+- **Cause:** the body is a plain-text Rich Edit (`CBottomPanelTool`). On every
+  `WM_SETFONT`, a plain-text Rich Edit resets all characters, and its default
+  format, to `CFE_AUTOCOLOR`, which is black.
+- **Two senders reset it:**
+  - The tool itself, on its first layout and on a DPI change. The first fix
+    (868dbccdd, 7919) covered only this sender.
+  - `CWorkbenchPanelHost::LayoutTool`, which sends the host's chrome font to
+    every descendant before each tool layout. This one kept the defect alive
+    in 7921.
+- **Fix:** the body owns its colors. A window subclass
+  (`OutputTextSubclassProc`) calls `RestoreOutputTextFormat` after every
+  `WM_SETFONT`, whoever sent it. It reapplies the palette colors (SCF_DEFAULT
+  and SCF_ALL) and the filter-match highlights. The selection and the first
+  visible line are kept.
+- **Rule:** do not fix this by repainting from one known sender. Any parent
+  may broadcast a font.
+- **Test:** `BottomPanelComposite.OutputBodyTextKeepsThePaletteColorAcrossAFontChange`
+  reads the colors back with `EM_GETCHARFORMAT` after each of these:
+  - the tool's own layout;
+  - a DPI change;
+  - a tab switch;
+  - a `WM_SETFONT` sent straight to the body.
+
+  The last step fails without the subclass.
+
 ## Rust Migration Boundary
 
 Issue #270's first Rust candidate is replay-only and test-owned. It receives
