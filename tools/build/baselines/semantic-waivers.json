@@ -175,25 +175,10 @@
       "expires": "2027-02-03",
       "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
       "files": {
-        "sakura_core/config/ConfigurationFileWatchController.cpp": "sha256:5ffc1ea123ed6803b8d53f0d9028f985af1ecc263733976cc9f8ac53f861c0b4",
-        "sakura_core/config/ConfigurationFileWatchController.h": "sha256:be7135c1578be0ae38254800d95ff025a6ec55818235823bfa79965f6a310548",
-        "src/test/cpp/tests1/config/ConfigurationFileSourceControllerTest.cpp": "sha256:ea7329ba456aae4f7b21dd94124c1189a2106477b3ff585149ec5e64a6fb9ebc",
         "src/test/cpp/tests1/workbench/CWorkbenchRuntimeTest.cpp": "sha256:a46cafa1032227e83790f29414a9623714a118103e791620e6fdaa3fb04c666f"
       },
       "new_findings": [],
       "missing_touched_reductions": [
-        {
-          "path": "sakura_core/config/ConfigurationFileWatchController.cpp",
-          "baseline_finding_count": 17
-        },
-        {
-          "path": "sakura_core/config/ConfigurationFileWatchController.h",
-          "baseline_finding_count": 6
-        },
-        {
-          "path": "src/test/cpp/tests1/config/ConfigurationFileSourceControllerTest.cpp",
-          "baseline_finding_count": 10
-        },
         {
           "path": "src/test/cpp/tests1/workbench/CWorkbenchRuntimeTest.cpp",
           "baseline_finding_count": 19
@@ -1154,8 +1139,7 @@
       "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
       "files": {
         "sakura_core/debug/StartupTrace.cpp": "sha256:fce3506a8c63e4188df577e66784c6e7ec5fd3ca4dbb5a40feae29e8a56aacae",
-        "sakura_core/senp/SenpLanguageService.cpp": "sha256:b2c18fde1a99b7add6fb286bc88deff83947d5c6710b8c88d8ba8d1944278060",
-        "sakura_core/workbench/CWorkbenchRuntime.cpp": "sha256:a180e66e4eec3356883f8d8b60a32c9d6df12b15d62cfac27e8559332e2dce72"
+        "sakura_core/senp/SenpLanguageService.cpp": "sha256:b2c18fde1a99b7add6fb286bc88deff83947d5c6710b8c88d8ba8d1944278060"
       },
       "new_findings": [],
       "missing_touched_reductions": [
@@ -1166,10 +1150,6 @@
         {
           "path": "sakura_core/senp/SenpLanguageService.cpp",
           "baseline_finding_count": 7
-        },
-        {
-          "path": "sakura_core/workbench/CWorkbenchRuntime.cpp",
-          "baseline_finding_count": 23
         }
       ]
     },
@@ -4336,6 +4316,78 @@
         {
           "baseline_finding_count": 49,
           "path": "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp"
+        }
+      ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#397 contains a watch-worker start failure instead of letting it reach std::terminate. The reviewed new findings are the containment itself: StartWorkersLocked's catch-all (thread creation, a throwing watch provider, or an allocation) with its guarded watch Cancel, and the dispatcher's guarded WatchUnavailable/FullRescan callback; plus the WorkerStarter seam's std::thread, which the controller still joins through CancelAndJoinWorkers/StopLocked, and the fault-injection test helper's std::thread, joined the same way. The missing reductions are earlier configuration-watch, runtime and test-fixture debt in the touched files.",
+      "tracking_issue": 389,
+      "created": "2026-11-17",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/config/ConfigurationFileWatchController.cpp": "sha256:0b197e98d0eb147aed2e223f6afe643b74edd4621a0a9bafe41a02ec5d4891fa",
+        "sakura_core/config/ConfigurationFileWatchController.h": "sha256:2f0c9f1c932c84c0250f553b2715384182d9fb5482dbd0ee1091d0de7963caf4",
+        "sakura_core/workbench/CWorkbenchRuntime.cpp": "sha256:cb48ee89a1bf11b718f5b0fc7104ef58929f95016f190d152415bec4edafb322",
+        "src/test/cpp/tests1/config/ConfigurationFileSourceControllerTest.cpp": "sha256:41a8a9a15e7647687d353f50123104842287ebfa770bad39edcfe883dcdfa333"
+      },
+      "new_findings": [
+        {
+          "column": 4,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+          "line": 286,
+          "path": "sakura_core/config/ConfigurationFileWatchController.cpp",
+          "rule_id": "error.catch_all"
+        },
+        {
+          "column": 5,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+          "line": 294,
+          "path": "sakura_core/config/ConfigurationFileWatchController.cpp",
+          "rule_id": "error.catch_all"
+        },
+        {
+          "column": 7,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+          "line": 494,
+          "path": "sakura_core/config/ConfigurationFileWatchController.cpp",
+          "rule_id": "error.catch_all"
+        },
+        {
+          "column": 68,
+          "evidence_sha256": "sha256:098f63ea1f79029b04e2f60dc47727e4d38a44f4c5618ac1950972a4bb1c02e6",
+          "line": 283,
+          "path": "sakura_core/config/ConfigurationFileWatchController.cpp",
+          "rule_id": "resource.stop_required_acquisition"
+        },
+        {
+          "column": 38,
+          "evidence_sha256": "sha256:098f63ea1f79029b04e2f60dc47727e4d38a44f4c5618ac1950972a4bb1c02e6",
+          "line": 87,
+          "path": "sakura_core/config/ConfigurationFileWatchController.h",
+          "rule_id": "resource.stop_required_acquisition"
+        },
+        {
+          "column": 11,
+          "evidence_sha256": "sha256:098f63ea1f79029b04e2f60dc47727e4d38a44f4c5618ac1950972a4bb1c02e6",
+          "line": 241,
+          "path": "src/test/cpp/tests1/config/ConfigurationFileSourceControllerTest.cpp",
+          "rule_id": "resource.stop_required_acquisition"
+        }
+      ],
+      "missing_touched_reductions": [
+        {
+          "baseline_finding_count": 6,
+          "path": "sakura_core/config/ConfigurationFileWatchController.h"
+        },
+        {
+          "baseline_finding_count": 23,
+          "path": "sakura_core/workbench/CWorkbenchRuntime.cpp"
+        },
+        {
+          "baseline_finding_count": 10,
+          "path": "src/test/cpp/tests1/config/ConfigurationFileSourceControllerTest.cpp"
         }
       ]
     }
