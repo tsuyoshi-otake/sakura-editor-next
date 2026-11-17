@@ -18,6 +18,9 @@
 #include "workbench/layout/WorkbenchContributionRegistry.h"
 #include "workbench/layout/IWorkbenchLayoutMementoStore.h"
 #include "workbench/layout/WorkbenchLayoutStateService.h"
+#include "workbench/logs/LogFileSystem.h"
+#include "workbench/logs/OutputLogFiles.h"
+#include "workbench/logs/ProblemsSnapshotFile.h"
 #include "workbench/output/OutputProviderFactory.h"
 #include "workbench/output/OutputServiceRustCandidate.h"
 #include "workbench/problems/MarkerService.h"
@@ -97,6 +100,14 @@ struct WorkbenchRuntimeDependencies final {
 	//! falls back to C++ when its creator is unavailable or fails.
 	output::EOutputProviderKind outputProviderKind{ output::DefaultOutputProviderKind() };
 	output::OutputProviderFactoryDependencies outputProviderFactory;
+	//! #421: the session logs folder. Production names the logs root; without
+	//! it (tests), no Log channel is file-backed and no problems.json exists.
+	struct SessionLogs final {
+		std::filesystem::path root;
+		std::shared_ptr<logs::ILogFileSystem> files;
+		std::uint32_t processId{};
+	};
+	std::optional<SessionLogs> sessionLogs;
 };
 
 class CWorkbenchRuntime final : public IWorkbenchRuntime {
@@ -150,6 +161,9 @@ public:
 	[[nodiscard]] output::IOutputService* Output() noexcept override;
 	[[nodiscard]] const output::IOutputService* Output() const noexcept override;
 	[[nodiscard]] output::OutputProviderHealthSnapshot OutputProviderHealth() const noexcept override;
+	[[nodiscard]] std::optional<std::filesystem::path> OutputLogFile(
+		std::string_view ownerId, std::string_view channelId) const override;
+	[[nodiscard]] std::optional<std::filesystem::path> ProblemsSnapshotFile() const override;
 	//! Concrete-runtime diagnostics for the observational Rust candidate. The
 	//! candidate remains outside IWorkbenchRuntime and never becomes an output
 	//! provider or mutation authority.
@@ -223,6 +237,13 @@ private:
 	[[nodiscard]] bool IsStopRequested() const noexcept;
 	[[nodiscard]] bool IsReadyForServiceAccessLocked() const noexcept;
 	[[nodiscard]] bool InitializeOutputProvider() noexcept;
+	//! #421: creates this process's session folder and starts the Log-file and
+	//! problems.json writers. A failure leaves both off and sets a diagnostic;
+	//! it never fails Start.
+	void StartSessionLogs() noexcept;
+	//! The Output service handed to borrowers: the file-backed decorator when
+	//! session logs run, else the provider itself.
+	[[nodiscard]] output::IOutputService* BorrowedOutputLocked() const noexcept;
 	//! Projects only enabled, integrity-pinned built-in host Views into the
 	//! process-local contribution registry before native pages are created.
 	[[nodiscard]] bool RegisterExtensionWorkbenchContributions(
@@ -302,6 +323,12 @@ private:
 	//! Rust-authority runtimes never construct a live C++ authority/candidate.
 	std::unique_ptr<output::OutputServiceRustCandidate> m_outputCandidate;
 	output::OutputServiceRustCandidateDiagnostics m_outputCandidateFallbackDiagnostics{};
+	//! #421 session logs. Composed once in Start, before Ready; kept until
+	//! destruction so a borrowed decorator never dangles.
+	std::optional<WorkbenchRuntimeDependencies::SessionLogs> m_sessionLogs;
+	std::unique_ptr<logs::COutputLogFileWriter> m_outputLogWriter;
+	std::unique_ptr<logs::CFileBackedOutputService> m_fileBackedOutput;
+	std::unique_ptr<logs::CProblemsSnapshotFileWriter> m_problemsSnapshotFile;
 	scm::SourceControlService m_scm;
 	std::optional<config::WorkspaceContextSnapshot> m_workspaceArtifactTopology;
 	std::shared_ptr<std::atomic_bool> m_stopRequested;

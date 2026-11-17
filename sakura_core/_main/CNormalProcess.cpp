@@ -628,6 +628,17 @@ bool CNormalProcess::InitializeProcess()
 	}
 	workbenchDependencies.senpManagementService =
 		std::make_unique<senp::CWin32SenpManagementService>(*extensionProfileHome.value);
+	// #421: VS Code keeps `logs/` beside the user data, not per profile, so the
+	// session folders live under the Control profile's home. Without a local
+	// path the Output and Problems stay in memory only; startup continues.
+	if (const auto logsHome = bootstrap.context->ControlProfile().Resources().ProfileHome().ToWindowsPath();
+		logsHome) {
+		workbenchDependencies.sessionLogs = workbench::WorkbenchRuntimeDependencies::SessionLogs{
+			.root = std::filesystem::path(*logsHome.value) / L"logs",
+			.files = workbench::logs::CreateWin32LogFileSystem(),
+			.processId = static_cast<std::uint32_t>(::GetCurrentProcessId()),
+		};
+	}
 	auto workingCopyStore = std::make_unique<CControlPlatformWorkingCopyPersistenceStore>(
 		*m_editorControlPlatformRuntime, platformIdentity->profileId);
 	// Only this composition root holds the frozen control-platform authority

@@ -210,6 +210,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\SessionLogsTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceProviderConformanceTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>

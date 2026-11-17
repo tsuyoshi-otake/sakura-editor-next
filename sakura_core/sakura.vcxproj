@@ -664,6 +664,10 @@
 	<ClInclude Include="..\sakura_core\workbench\problems\MarkerNavigationModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.h" />
 	<ClInclude Include="..\sakura_core\workbench\problems\MarkerService.h" />
+	<ClInclude Include="..\sakura_core\workbench\logs\LogFileSystem.h" />
+	<ClInclude Include="..\sakura_core\workbench\logs\LogSession.h" />
+	<ClInclude Include="..\sakura_core\workbench\logs\OutputLogFiles.h" />
+	<ClInclude Include="..\sakura_core\workbench\logs\ProblemsSnapshotFile.h" />
 	<ClInclude Include="..\sakura_core\workbench\problems\ProblemsStatusbarProjection.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\IOutputService.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputProviderFactory.h" />
@@ -1434,6 +1438,10 @@
 	<ClCompile Include="..\sakura_core\workbench\problems\MarkerNavigationModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\problems\MarkerService.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\logs\LogFileSystem.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\logs\LogSession.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\logs\OutputLogFiles.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\logs\ProblemsSnapshotFile.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\problems\ProblemsStatusbarProjection.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\output\OutputProviderFactory.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\output\OutputService.cpp" />

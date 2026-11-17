@@ -338,7 +338,7 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 			output::IOutputService* output = nullptr;
 			{
 				std::lock_guard lock(m_stateMutex);
-				output = m_outputProvider.get();
+				output = BorrowedOutputLocked();
 			}
 			if (output == nullptr) return {};
 			return tasks::MakeTaskRunObserverFactory(m_markers, *output, m_taskMarkerGenerations)(runId, definition);
@@ -348,6 +348,7 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	})
 	, m_outputProviderKind(dependencies.outputProviderKind)
 	, m_outputProviderFactory(std::move(dependencies.outputProviderFactory))
+	, m_sessionLogs(std::move(dependencies.sessionLogs))
 	, m_scm(scm::SourceControlServiceLimits {
 		.maximumOwners = 128U,
 		.maximumProviders = 128U,
@@ -652,7 +653,96 @@ const problems::MarkerService* CWorkbenchRuntime::Markers() const noexcept
 output::IOutputService* CWorkbenchRuntime::Output() noexcept
 {
 	std::lock_guard lock(m_stateMutex);
-	return IsReadyForServiceAccessLocked() ? m_outputProvider.get() : nullptr;
+	return IsReadyForServiceAccessLocked() ? BorrowedOutputLocked() : nullptr;
+}
+
+output::IOutputService* CWorkbenchRuntime::BorrowedOutputLocked() const noexcept
+{
+	if (m_fileBackedOutput) return m_fileBackedOutput.get();
+	return m_outputProvider.get();
+}
+
+std::optional<std::filesystem::path> CWorkbenchRuntime::OutputLogFile(
+	std::string_view ownerId, std::string_view channelId) const
+{
+	std::lock_guard lock(m_stateMutex);
+	if (!IsReadyForServiceAccessLocked() || !m_fileBackedOutput) return std::nullopt;
+	return m_fileBackedOutput->LogFileFor(ownerId, channelId);
+}
+
+std::optional<std::filesystem::path> CWorkbenchRuntime::ProblemsSnapshotFile() const
+{
+	std::lock_guard lock(m_stateMutex);
+	if (!IsReadyForServiceAccessLocked() || !m_problemsSnapshotFile) return std::nullopt;
+	return m_problemsSnapshotFile->File();
+}
+
+void CWorkbenchRuntime::StartSessionLogs() noexcept
+{
+	if (!m_sessionLogs || !m_sessionLogs->files || !m_outputProvider || m_outputLogWriter || m_problemsSnapshotFile) return;
+	const auto failed = [this](std::string key, std::string message) {
+		SetDiagnostic(std::move(key), WorkbenchRuntimeDiagnostic {
+			.source = EWorkbenchRuntimeDiagnosticSource::SessionLogs,
+			.code = EWorkbenchRuntimeDiagnosticCode::InternalFailure,
+			.message = std::move(message),
+		});
+	};
+	try {
+		const logs::LogSessionLayout layout{
+			.root = m_sessionLogs->root,
+			.sessionName = logs::FormatLogSessionFolderName(logs::CurrentLocalLogTimestamp(), m_sessionLogs->processId),
+		};
+		const auto files = m_sessionLogs->files;
+		if (!files->CreateDirectories(layout.WindowFolder())) {
+			failed("logs.session", "the session logs folder could not be created; Output and Problems stay in memory only");
+			return;
+		}
+		const auto gate = m_listenerGate;
+		const auto reportFailing = [gate](std::string key, std::string message) {
+			return [gate, key = std::move(key), message = std::move(message)](bool failing) {
+				CWorkbenchRuntime::DispatchListener(gate, [&](CWorkbenchRuntime& owner) {
+					if (!failing) {
+						owner.SetDiagnostic(key, std::nullopt);
+						return;
+					}
+					owner.SetDiagnostic(key, WorkbenchRuntimeDiagnostic {
+						.source = EWorkbenchRuntimeDiagnosticSource::SessionLogs,
+						.code = EWorkbenchRuntimeDiagnosticCode::InternalFailure,
+						.message = message,
+					});
+				});
+			};
+		};
+		auto writer = std::make_unique<logs::COutputLogFileWriter>(layout.WindowFolder(), files,
+			logs::OutputLogFileWriterLimits{},
+			reportFailing("logs.output", "a Log channel's file could not be written; the channel itself is unaffected"));
+		// Retention deletes old session folders; do that I/O on the writer's
+		// worker, not on the starting thread, and give it up once Stop begins.
+		std::unique_ptr<logs::CFileBackedOutputService> fileBacked;
+		if (writer->Start([files, layout](const std::function<bool()>& stopRequested) {
+				(void)logs::PrepareLogSession(*files, layout, logs::IsLogSessionProcessRunning, stopRequested);
+			})) {
+			fileBacked = std::make_unique<logs::CFileBackedOutputService>(*m_outputProvider, *writer);
+		} else {
+			writer.reset();
+			failed("logs.output", "the Log file writer could not start; Log channels stay in memory only");
+		}
+		// problems.json does not depend on the Log writer.
+		auto problemsFile = std::make_unique<logs::CProblemsSnapshotFileWriter>(m_markers,
+			layout.WindowFolder() / std::wstring(logs::kProblemsSnapshotFileName), files,
+			std::chrono::milliseconds(200), logs::ProblemsSnapshotFileLimits{},
+			reportFailing("logs.problems", "problems.json could not be written; the Problems view is unaffected"));
+		if (!problemsFile->Start()) {
+			problemsFile.reset();
+			failed("logs.problems", "the problems.json writer could not start");
+		}
+		std::lock_guard lock(m_stateMutex);
+		m_outputLogWriter = std::move(writer);
+		m_fileBackedOutput = std::move(fileBacked);
+		m_problemsSnapshotFile = std::move(problemsFile);
+	} catch (...) {
+		failed("logs.session", "session logs could not start; Output and Problems stay in memory only");
+	}
 }
 
 config::WorkspaceContextResult CWorkbenchRuntime::SwitchToWorkspaceConfiguration(
@@ -709,7 +799,7 @@ workspace::WorkspaceConfigurationParseResult CWorkbenchRuntime::InspectWorkspace
 const output::IOutputService* CWorkbenchRuntime::Output() const noexcept
 {
 	std::lock_guard lock(m_stateMutex);
-	return IsReadyForServiceAccessLocked() ? m_outputProvider.get() : nullptr;
+	return IsReadyForServiceAccessLocked() ? BorrowedOutputLocked() : nullptr;
 }
 
 output::OutputProviderHealthSnapshot CWorkbenchRuntime::OutputProviderHealth() const noexcept
@@ -1944,6 +2034,8 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 			? "Output provider initialization failed"
 			: m_outputProviderInitializationFailure);
 	}
+	// Before any producer can append, so the first Git line reaches its file.
+	StartSessionLogs();
 
 	try {
 		bool extensionManagementReady = false;
@@ -2149,6 +2241,13 @@ bool CWorkbenchRuntime::StopOwnedServices() noexcept
 		outputStopped = outputStopAccepted && !outputStop.callbackDrainDeferred;
 		if (outputStopped && m_outputCandidate) m_outputCandidate->ShutdownAfterOutputServiceStop();
 	}
+	// The provider accepts no more appends. Quiesce waits for an append the
+	// provider already accepted to reach the writer; Stop then writes what is
+	// queued and joins.
+	if (m_fileBackedOutput) m_fileBackedOutput->Quiesce();
+	if (m_outputLogWriter) m_outputLogWriter->Stop();
+	// Unsubscribe before the marker service stops; the last file stays.
+	if (m_problemsSnapshotFile) m_problemsSnapshotFile->Stop();
 	const auto markerStop = m_markers.Stop();
 	const auto scmStop = m_scm.Stop();
 	return outputStopped && !markerStop.callbackDrainDeferred &&

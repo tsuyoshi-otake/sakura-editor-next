@@ -1126,6 +1126,9 @@ private:
 	//! `workbench.action.saveActiveLogOutputAs`: a real save dialog plus a UTF-8
 	//! write of the active channel's projected text. Cancel is `Succeeded`.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult SaveActiveOutputAs();
+	//! `workbench.action.openActiveLogOutputFile`: opens the active Log
+	//! channel's session log file (#421) as an ordinary document.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult OpenActiveLogOutputFile();
 	//! Applies one supported value of VS Code's workbench.activityBar.location.
 	//! Hidden is deliberately absent from the type and from every native surface.
 	[[nodiscard]] bool SetActivityBarLocation(workbench::ActivityBarLocation location,

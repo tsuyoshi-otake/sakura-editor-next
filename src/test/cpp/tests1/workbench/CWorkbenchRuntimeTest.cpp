@@ -15,6 +15,7 @@
 #include "workbench/CWorkbenchRuntime.h"
 #include "workbench/layout/IWorkbenchLayoutMementoStore.h"
 #include "workbench/layout/WorkbenchIds.h"
+#include "workbench/logs/LogFileSystem.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/output/OutputServiceRustProvider.h"
 #include "workbench/problems/MarkerService.h"
@@ -26,6 +27,9 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <future>
 #include <functional>
 #include <map>
@@ -783,6 +787,84 @@ TEST(CWorkbenchRuntime, OwnsMarkerAndOutputServicesOnlyWhileRunning)
 	EXPECT_EQ(1U, markerCallbacks);
 	EXPECT_EQ(2U, outputCallbacks);
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}
+
+// #421: with session logs composed, the borrowed Output service mirrors Log
+// channels to the session folder and the marker service feeds problems.json;
+// both answer nothing once the runtime stops.
+TEST(CWorkbenchRuntime, SessionLogsMirrorLogChannelsAndMarkersToTheSessionFolder)
+{
+	const auto root = std::filesystem::temp_directory_path()
+		/ (L"sakura-runtime-session-logs-" + std::to_wstring(::GetCurrentProcessId()) + L"-"
+			+ std::to_wstring(::GetTickCount64()));
+	std::error_code error;
+	std::filesystem::remove_all(root, error);
+	const auto readAll = [](const std::filesystem::path& file) {
+		std::ifstream stream(file, std::ios::binary);
+		return std::string(std::istreambuf_iterator<char>(stream), {});
+	};
+	{
+		WorkbenchRuntimeDependencies dependencies;
+		dependencies.fileService = std::make_unique<FakeFileService>();
+		dependencies.sessionLogs = WorkbenchRuntimeDependencies::SessionLogs{
+			.root = root,
+			.files = workbench::logs::CreateWin32LogFileSystem(),
+			.processId = 4242,
+		};
+		CWorkbenchRuntime runtime(Bootstrap(), config::BuiltinConfigurationDescriptors(), std::move(dependencies));
+		EXPECT_FALSE(runtime.ProblemsSnapshotFile());
+		ASSERT_TRUE(runtime.Start().IsUsable());
+		auto* output = runtime.Output();
+		ASSERT_NE(nullptr, output);
+		const outputModel::OutputOwner git{ .ownerId = "workbench.scm.git", .generation = 1 };
+		ASSERT_TRUE(output->CreateChannel({
+			.operation = { .operationId = "runtime.logs.create" },
+			.owner = git,
+			.channelId = "git",
+			.label = "Git",
+			.kind = outputModel::EOutputChannelKind::Log,
+		}).Succeeded());
+		ASSERT_TRUE(output->AppendLog({
+			.operation = { .operationId = "runtime.logs.append" },
+			.owner = git,
+			.channelId = "git",
+			.entries = { { .level = outputModel::EOutputLogLevel::Info, .message = "> git status" } },
+		}).Succeeded());
+		const auto logFile = runtime.OutputLogFile("workbench.scm.git", "git");
+		ASSERT_TRUE(logFile);
+		EXPECT_EQ(L"Git.log", logFile->filename().wstring());
+		EXPECT_EQ(L"vscode.git", logFile->parent_path().filename().wstring());
+		EXPECT_EQ(L"window1", logFile->parent_path().parent_path().parent_path().filename().wstring());
+		EXPECT_TRUE(logFile->parent_path().parent_path().parent_path().parent_path().filename().wstring().ends_with(L"-4242"));
+		EXPECT_FALSE(runtime.OutputLogFile("workbench.scm.git", "missing"));
+
+		const auto problemsFile = runtime.ProblemsSnapshotFile();
+		ASSERT_TRUE(problemsFile);
+		EXPECT_EQ(logFile->parent_path().parent_path().parent_path() / L"problems.json", *problemsFile);
+		const problems::MarkerCollectionIdentity collection{
+			.owner = { .id = "runtime.marker-owner", .generation = 1 }, .id = "runtime.collection" };
+		ASSERT_EQ(problems::EMarkerOperationStatus::Replaced, runtime.Markers()->Replace({
+			.collection = collection,
+			.resource = Parse(L"file:///C:/Runtime/marker.cpp"),
+			.markers = { { .range = { .endLine = 1 }, .message = "runtime marker in file" } },
+		}).status);
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+		while (readAll(*problemsFile).find("runtime marker in file") == std::string::npos
+			&& std::chrono::steady_clock::now() < deadline) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		EXPECT_NE(std::string::npos, readAll(*problemsFile).find("runtime marker in file"));
+
+		EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, runtime.Stop().code);
+		EXPECT_FALSE(runtime.OutputLogFile("workbench.scm.git", "git"));
+		EXPECT_FALSE(runtime.ProblemsSnapshotFile());
+		// Stop wrote what the writer still held.
+		const auto logText = readAll(*logFile);
+		EXPECT_TRUE(logText.ends_with(" [info] > git status\n")) << logText;
+		// The last problems.json stays for a reader after the window closed.
+		EXPECT_NE(std::string::npos, readAll(*problemsFile).find("runtime marker in file"));
+	}
+	std::filesystem::remove_all(root, error);
 }
 
 TEST(CWorkbenchRuntime, CapturesTheCppOutputSelectionBeforeReadyAndBuildsItOnce)

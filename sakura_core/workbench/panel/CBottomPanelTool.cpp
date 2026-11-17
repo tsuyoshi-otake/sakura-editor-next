@@ -1814,16 +1814,21 @@ struct CBottomPanelTool::Impl {
 	{
 		HMENU menu = ::CreatePopupMenu();
 		if (menu == nullptr) return;
-		const auto appendItem = [&](UINT id, UINT textId) {
+		const auto appendItem = [&](UINT id, UINT textId, bool enabled) {
 			MENUITEMINFOW itemInfo{};
 			itemInfo.cbSize = sizeof(itemInfo);
-			itemInfo.fMask = MIIM_ID | MIIM_STRING;
+			itemInfo.fMask = MIIM_ID | MIIM_STRING | MIIM_STATE;
 			itemInfo.wID = id;
+			itemInfo.fState = enabled ? MFS_ENABLED : MFS_DISABLED;
 			itemInfo.dwTypeData = const_cast<wchar_t*>(LS(textId));
 			::InsertMenuItemW(menu, static_cast<UINT>(-1), TRUE, &itemInfo);
 		};
-		appendItem(1, STR_WORKBENCH_PANEL_OUTPUT_OPEN_IN_EDITOR);
-		appendItem(2, STR_WORKBENCH_PANEL_OUTPUT_SAVE_AS);
+		// Upstream's precondition is a file-backed active channel
+		// (CONTEXT_ACTIVE_FILE_OUTPUT); here only Log channels have a file (#421).
+		const auto* active = SelectedOutputChannel();
+		appendItem(1, STR_WORKBENCH_PANEL_OUTPUT_OPEN_IN_EDITOR,
+			active != nullptr && active->kind == output::EOutputChannelKind::Log);
+		appendItem(2, STR_WORKBENCH_PANEL_OUTPUT_SAVE_AS, true);
 		RECT buttonRect{};
 		::GetWindowRect(outputMoreActionsButton, &buttonRect);
 		const UINT flags = TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON;

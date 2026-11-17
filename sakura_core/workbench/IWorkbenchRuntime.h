@@ -20,7 +20,9 @@
 #include "workbench/workspace/WorkspaceEditingService.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -97,6 +99,8 @@ enum class EWorkbenchRuntimeDiagnosticSource : std::uint8_t {
 	WorkspaceArtifacts,
 	Layout,
 	Extensions,
+	//! #421: the session logs folder, its Log files, and problems.json.
+	SessionLogs,
 };
 
 enum class EWorkbenchRuntimeDiagnosticCode : std::uint8_t {
@@ -216,6 +220,18 @@ public:
 	[[nodiscard]] virtual const problems::MarkerService* Markers() const noexcept = 0;
 	[[nodiscard]] virtual output::IOutputService* Output() noexcept = 0;
 	[[nodiscard]] virtual const output::IOutputService* Output() const noexcept = 0;
+	//! #421: the file backing a Log channel (VS Code's "Open Output in
+	//! Editor" target). Nothing when session logs are off or the channel is
+	//! not a live Log channel.
+	[[nodiscard]] virtual std::optional<std::filesystem::path> OutputLogFile(
+		std::string_view ownerId, std::string_view channelId) const
+	{
+		(void)ownerId;
+		(void)channelId;
+		return std::nullopt;
+	}
+	//! #421: this window's problems.json, when session logs are on.
+	[[nodiscard]] virtual std::optional<std::filesystem::path> ProblemsSnapshotFile() const { return std::nullopt; }
 	//! Payload-free copied health for the one-shot Output authority selection.
 	//! Narrow test runtimes may retain the not-attempted default.
 	[[nodiscard]] virtual output::OutputProviderHealthSnapshot OutputProviderHealth() const noexcept

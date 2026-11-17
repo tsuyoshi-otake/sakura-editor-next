@@ -9391,12 +9391,9 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteOutputView
 			? Result{ Status::Succeeded, {} }
 			: Result{ Status::Failed, "output channel quick pick failed" };
 	}
-	// Upstream opens the channel's backing log file. This fork's channels are
-	// service-owned text, not file resources, so there is no honest route; the
-	// command reports its typed unsupported terminal instead of faking one.
-	if (commandId == "workbench.action.openActiveLogOutputFile") {
-		return Result{ Status::Unsupported, "no file-backed output channel" };
-	}
+	// Upstream opens the active Log channel's backing file (#421). Only Log
+	// channels are file-backed, and only once session logs are composed.
+	if (commandId == "workbench.action.openActiveLogOutputFile") return OpenActiveLogOutputFile();
 	return Result{ Status::Unsupported, "unknown output view command" };
 }
 
@@ -9520,6 +9517,48 @@ bool CEditWnd::ShowTerminalJoinQuickPick(const std::vector<std::uint64_t>& candi
 	}
 	catch (...) {
 		return false;
+	}
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::OpenActiveLogOutputFile()
+{
+	using Status = workbench::commands::EWorkbenchCommandExecutionStatus;
+	using Result = workbench::commands::WorkbenchCommandExecutionResult;
+	if (m_outputService == nullptr || m_workbenchRuntime == nullptr || GetHwnd() == nullptr) {
+		return Result{ Status::Unsupported, "no output service" };
+	}
+	try {
+		const auto snapshot = m_outputService->Snapshot();
+		if (!snapshot.activeChannelId) return Result{ Status::NotApplicable, "no active channel" };
+		const auto channel = std::ranges::find(snapshot.channels, *snapshot.activeChannelId,
+			&workbench::output::OutputChannelSnapshot::channelId);
+		if (channel == snapshot.channels.end()) {
+			return Result{ Status::NotApplicable, "active channel missing" };
+		}
+		if (channel->kind != workbench::output::EOutputChannelKind::Log) {
+			return Result{ Status::NotApplicable, "active channel is not a log channel" };
+		}
+		const auto file = m_workbenchRuntime->OutputLogFile(channel->owner.ownerId, channel->channelId);
+		if (!file) return Result{ Status::Unsupported, "session logs are not available" };
+		// The writer creates the file with its first line; the queue may still
+		// hold it, so a missing file is "nothing written yet", not an error.
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(*file, error)) {
+			return Result{ Status::NotApplicable, "the log file has no lines yet" };
+		}
+		// The legacy open takes a _MAX_PATH buffer; a longer path cannot open.
+		if (file->native().size() >= _MAX_PATH) return Result{ Status::Failed, "log file path too long to open" };
+		GetActiveView().GetCommander().Command_FILEOPEN(file->c_str());
+		// The open can land in this or another window, or be refused; only an
+		// open document is success.
+		HWND owner = nullptr;
+		if (!CShareData::getInstance()->IsPathOpened(file->c_str(), &owner) || owner == nullptr) {
+			return Result{ Status::Failed, "log file did not open" };
+		}
+		return Result{ Status::Succeeded, {} };
+	}
+	catch (...) {
+		return Result{ Status::Failed, "open log file threw" };
 	}
 }
 

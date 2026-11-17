@@ -28,6 +28,8 @@
   [`problems/CLAUDE.md`](problems/CLAUDE.md),
   [`output/CLAUDE.md`](output/CLAUDE.md),
   [`tasks/CLAUDE.md`](tasks/CLAUDE.md)
+- Session log files for Log channels and `problems.json` (#421):
+  [`logs/CLAUDE.md`](logs/CLAUDE.md)
 
 ## Stable Boundary
 

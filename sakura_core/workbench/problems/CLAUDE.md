@@ -175,3 +175,12 @@ Pure value projection for the native `status.problems` (LEFT, priority 50),
   `workbench.action.openSettings`, but the registered settings executor opens
   the native settings dialog and does not consume `@id:` queries — there is no
   settings-search surface to apply it to.
+
+## problems.json (#421, fork extension)
+
+`logs::CProblemsSnapshotFileWriter` subscribes to the runtime's
+`MarkerService` and keeps `<session>\window1\problems.json` equal to it, so an
+agent CLI can read the current Problems from disk. It is a reader of this
+service, never a second marker authority, and the file carries the Problems
+view's Copy objects. VS Code has no such file. The format, the bounds, and the
+lifecycle are in [`../logs/CLAUDE.md`](../logs/CLAUDE.md).

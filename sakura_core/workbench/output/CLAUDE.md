@@ -58,9 +58,10 @@ channel selector, text filter, find, and smart-scroll chrome. Two recorded
 approximations: upstream groups the channel selector by extension/core/user
 origin, but this service has no separate user-channel metadata, so
 `GroupOutputViewChannels` treats `core.*` owner IDs as core and every other
-owner as extension-like; and `workbench.action.openActiveLogOutputFile`
-returns a typed unsupported terminal because channels are service-owned text,
-not file resources — there is no honest on-disk target to open.
+owner as extension-like. `workbench.action.openActiveLogOutputFile` was a
+typed unsupported terminal until #421 gave Log channels a session log file;
+it now opens that file, and stays `NotApplicable` for plain Output channels
+(see [`../logs/CLAUDE.md`](../logs/CLAUDE.md)).
 
 ## The Output body keeps its colors across any WM_SETFONT (#420)
 
