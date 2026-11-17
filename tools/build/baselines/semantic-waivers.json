@@ -4982,7 +4982,7 @@
       "expires": "2027-02-07",
       "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
       "files": {
-        "src/test/cpp/tests1/workbench/SessionLogsTest.cpp": "sha256:a51bbe55431e27a3fd4b1c66a72afa708f27144d58d8f39abc74ceff967b6c55"
+        "src/test/cpp/tests1/workbench/SessionLogsTest.cpp": "sha256:296628720ca5634cce32c32dbb43988acff80e759e88ed55fbecfcdb164ec845"
       },
       "new_findings": [
         {
