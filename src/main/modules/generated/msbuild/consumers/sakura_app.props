@@ -8,6 +8,7 @@
     <ClCompile Remove="..\sakura_core\platform\filesystem\FileSystemFactory.cpp" />
     <ClCompile Remove="..\sakura_core\platform\security\AuthenticodeSignatureVerifier.cpp" />
     <ClCompile Remove="..\sakura_core\platform\serialization\JsoncDocument.cpp" />
+    <ClCompile Remove="..\sakura_core\platform\uri\UnicodeLowercase.cpp" />
     <ClCompile Remove="..\sakura_core\platform\uri\UriIdentity.cpp" />
   </ItemGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">

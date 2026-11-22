@@ -39,6 +39,7 @@ list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxCli.
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxCommandDispatcher.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxFormatEvaluator.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/terminal/tmux/TmuxTargetResolver.cpp")
+list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/uri/UnicodeLowercase.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/platform/uri/UriIdentity.cpp")
 list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/sakura_core/window/Win32EditorFrameAdapter.cpp")
 
@@ -384,8 +385,11 @@ endif()
 if(NOT TARGET sakura_uri)
   add_library(sakura_uri STATIC
     "${CMAKE_SOURCE_DIR}/sakura_core/platform/uri/UriIdentity.cpp"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/uri/UnicodeLowercase.cpp"
     "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/uri/UriIdentity.h"
     "${CMAKE_SOURCE_DIR}/sakura_core/platform/uri/UriIdentityInternal.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/uri/UnicodeLowercase.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/platform/uri/UnicodeLowercaseData.h"
   )
   target_include_directories(sakura_uri PUBLIC "${CMAKE_SOURCE_DIR}/sakura_core/include")
   target_include_directories(sakura_uri PRIVATE "${CMAKE_SOURCE_DIR}/sakura_core/platform/uri")

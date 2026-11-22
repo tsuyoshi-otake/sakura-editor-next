@@ -14,10 +14,8 @@
 #include <array>
 #include <clocale>
 #include <cstdint>
-#include <iomanip>
 #include <initializer_list>
 #include <iostream>
-#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -34,12 +32,6 @@ std::wstring CodeUnits(std::initializer_list<std::uint32_t> values)
 }
 
 constexpr wchar_t kComparisonKeySeparator = static_cast<wchar_t>(0x1f);
-
-#if defined(_MSC_VER) || defined(_UCRT)
-constexpr bool kUsesUcrt = true;
-#else
-constexpr bool kUsesUcrt = false;
-#endif
 
 class ScopedLocale final {
 public:
@@ -261,68 +253,34 @@ bool NonFileCasePolicyIsExplicit()
 		&& UriIdentityService::IsEqual(*first.value, *second.value, ENonFileUriCasePolicy::CaseInsensitive);
 }
 
-bool FreezesJapaneseLocaleCaseSentinels()
+bool FreezesUnicodeLowercaseSentinels()
 {
 	ScopedLocale locale("Japanese");
 	if (!locale.IsSet()) return false;
 
-	const auto dottedCapital = CodeUnits({0x0130});
 	const auto deseretCapital = CodeUnits({0xd801, 0xdc00});
 	const auto deseretSmall = CodeUnits({0xd801, 0xdc28});
-	auto dotted = Uri::FromComponents(L"demo", dottedCapital, L"/path", std::nullopt, std::nullopt, true);
-	auto asciiI = Uri::FromComponents(L"demo", L"i", L"/path", std::nullopt, std::nullopt, true);
-	auto deseretUpper = Uri::FromComponents(L"demo", L"Host", std::wstring{L"/"} + deseretCapital, std::nullopt, std::nullopt, true);
-	auto deseretLower = Uri::FromComponents(L"demo", L"host", std::wstring{L"/"} + deseretSmall, std::nullopt, std::nullopt, true);
+	const auto dotted = Uri::FromComponents(L"demo", L"\u0130", L"/path", std::nullopt, std::nullopt, true);
+	const auto dottedLower = Uri::FromComponents(L"demo", L"i\u0307", L"/path", std::nullopt, std::nullopt, true);
+	const auto asciiI = Uri::FromComponents(L"demo", L"i", L"/path", std::nullopt, std::nullopt, true);
+	const auto deseretUpper = Uri::FromComponents(L"demo", L"Host", std::wstring{L"/"} + deseretCapital, std::nullopt, std::nullopt, true);
+	const auto deseretLower = Uri::FromComponents(L"demo", L"host", std::wstring{L"/"} + deseretSmall, std::nullopt, std::nullopt, true);
 
-	bool passed = dotted && asciiI && deseretUpper && deseretLower
-		&& !UriIdentityService::IsEqual(*dotted.value, *asciiI.value, ENonFileUriCasePolicy::CaseInsensitive)
-		&& !UriIdentityService::IsEqual(*deseretUpper.value, *deseretLower.value, ENonFileUriCasePolicy::CaseInsensitive);
-	if (passed) {
-		std::wstring expectedDotted;
-		expectedDotted.append(L"4:demo");
-		expectedDotted.push_back(kComparisonKeySeparator);
-		expectedDotted.append(L"1");
-		expectedDotted.push_back(kComparisonKeySeparator);
-		expectedDotted.append(L"1:");
-		expectedDotted.append(dottedCapital);
-		expectedDotted.push_back(kComparisonKeySeparator);
-		expectedDotted.append(L"5:/path");
-		expectedDotted.push_back(kComparisonKeySeparator);
-		expectedDotted.append(L"0");
-		expectedDotted.push_back(kComparisonKeySeparator);
-		expectedDotted.append(L"0:");
-		expectedDotted.push_back(kComparisonKeySeparator);
-		expectedDotted.append(L"0");
-		expectedDotted.push_back(kComparisonKeySeparator);
-		expectedDotted.append(L"0:");
-		expectedDotted.push_back(kComparisonKeySeparator);
-		std::wstring expectedDeseret;
-		expectedDeseret.append(L"4:demo");
-		expectedDeseret.push_back(kComparisonKeySeparator);
-		expectedDeseret.append(L"1");
-		expectedDeseret.push_back(kComparisonKeySeparator);
-		expectedDeseret.append(L"4:host");
-		expectedDeseret.push_back(kComparisonKeySeparator);
-		expectedDeseret.append(L"3:/");
-		expectedDeseret.append(deseretCapital);
-		expectedDeseret.push_back(kComparisonKeySeparator);
-		expectedDeseret.append(L"0");
-		expectedDeseret.push_back(kComparisonKeySeparator);
-		expectedDeseret.append(L"0:");
-		expectedDeseret.push_back(kComparisonKeySeparator);
-		expectedDeseret.append(L"0");
-		expectedDeseret.push_back(kComparisonKeySeparator);
-		expectedDeseret.append(L"0:");
-		expectedDeseret.push_back(kComparisonKeySeparator);
-		passed = UriIdentityService::MakeComparisonKey(*dotted.value, ENonFileUriCasePolicy::CaseInsensitive) == expectedDotted
-			&& UriIdentityService::MakeComparisonKey(*deseretUpper.value, ENonFileUriCasePolicy::CaseInsensitive) == expectedDeseret;
-	}
+	constexpr auto policy = ENonFileUriCasePolicy::CaseInsensitive;
+	const bool passed = dotted && dottedLower && asciiI && deseretUpper && deseretLower
+		&& UriIdentityService::IsEqual(*dotted.value, *dottedLower.value, policy)
+		&& !UriIdentityService::IsEqual(*dotted.value, *asciiI.value, policy)
+		&& UriIdentityService::IsEqual(*deseretUpper.value, *deseretLower.value, policy)
+		&& UriIdentityService::MakeComparisonKey(*dotted.value, policy) == ExpectedKey({
+			L"4:demo", L"1", L"2:i\u0307", L"5:/path", L"0", L"0:", L"0", L"0:"})
+		&& UriIdentityService::MakeComparisonKey(*deseretUpper.value, policy) == ExpectedKey({
+			L"4:demo", L"1", L"4:host", std::wstring{L"3:/"} + deseretSmall, L"0", L"0:", L"0", L"0:"});
 
 	const bool restored = locale.Restore();
 	return passed && restored;
 }
 
-bool FreezesFileAndNonFileKeyFieldsUnderProductionLocale()
+bool FreezesFileAndNonFileKeyFields()
 {
 	ScopedLocale locale("Japanese");
 	if (!locale.IsSet()) return false;
@@ -340,119 +298,152 @@ bool FreezesFileAndNonFileKeyFieldsUnderProductionLocale()
 		&& UriIdentityService::MakeComparisonKey(*nonFile.value, ENonFileUriCasePolicy::CaseInsensitive) == ExpectedKey({
 			L"4:demo", L"1", L"4:host", L"5:/path", L"1", L"5:query", L"1", L"4:frag"});
 
-	if constexpr (kUsesUcrt) {
-		const auto cyrillic = Uri::Parse(L"file:///C:/\u0414.txt");
-		const auto latinCapital = Uri::Parse(L"file:///C:/\u00c9.txt");
-		const auto latinSmall = Uri::Parse(L"file:///C:/\u00e9.txt");
-		passed = passed && cyrillic && latinCapital && latinSmall
-			&& UriIdentityService::MakeComparisonKey(*cyrillic.value) == ExpectedKey({
-				L"4:file", L"1", L"0:", L"9:/c:/\u0434.txt", L"0", L"0:", L"0", L"0:"})
-			&& UriIdentityService::MakeComparisonKey(*latinCapital.value) == ExpectedKey({
-				L"4:file", L"1", L"0:", L"9:/c:/\u00c9.txt", L"0", L"0:", L"0", L"0:"})
-			&& !UriIdentityService::IsEqual(*latinCapital.value, *latinSmall.value); // #436
-	}
+	const auto cyrillic = Uri::Parse(L"file:///C:/\u0414.txt");
+	const auto latinCapital = Uri::Parse(L"file:///C:/\u00c9.txt");
+	const auto latinSmall = Uri::Parse(L"file:///C:/\u00e9.txt");
+	passed = passed && cyrillic && latinCapital && latinSmall
+		&& UriIdentityService::MakeComparisonKey(*cyrillic.value) == ExpectedKey({
+			L"4:file", L"1", L"0:", L"9:/c:/\u0434.txt", L"0", L"0:", L"0", L"0:"})
+		&& UriIdentityService::MakeComparisonKey(*latinCapital.value) == ExpectedKey({
+			L"4:file", L"1", L"0:", L"9:/c:/\u00e9.txt", L"0", L"0:", L"0", L"0:"})
+		&& UriIdentityService::IsEqual(*latinCapital.value, *latinSmall.value);
 
 	const bool restored = locale.Restore();
 	return passed && restored;
 }
 
-void PrintFoldProbe(const char* localeName, std::wstring_view input, std::wstring_view output)
-{
-	std::ostringstream line;
-	line << "[  PROBE   ] crt=other locale=" << localeName << std::uppercase << std::hex << std::setfill('0');
-	const auto appendUnits = [&line](std::wstring_view units) {
-		if (units.size() == 2 && units[0] >= 0xd800 && units[0] <= 0xdbff
-			&& units[1] >= 0xdc00 && units[1] <= 0xdfff) {
-			const auto scalar = 0x10000u + (units[0] - 0xd800u) * 0x400u + (units[1] - 0xdc00u);
-			line << " U+" << std::setw(4) << scalar;
-			return;
-		}
-		for (const auto unit : units) line << " U+" << std::setw(4) << static_cast<std::uint32_t>(unit);
-	};
-	appendUnits(input);
-	line << " ->";
-	appendUnits(output);
-	std::cout << line.str() << '\n';
-}
-
-bool CheckNonFilePathFold(const char* localeName, std::wstring_view input, std::wstring_view expectedFold)
+bool CheckNonFilePathFold(std::wstring_view input, std::wstring_view expectedFold)
 {
 	const auto uri = Uri::Parse(std::wstring{L"demo://host/"}.append(input));
 	if (!uri) return false;
 	const auto key = UriIdentityService::MakeComparisonKey(*uri.value, ENonFileUriCasePolicy::CaseInsensitive);
-	const auto keyPrefix = ExpectedKey({L"4:demo", L"1", L"4:host"}) + (input.size() == 1 ? L"2:/" : L"3:/");
-	const auto keySuffix = kComparisonKeySeparator + ExpectedKey({L"0", L"0:", L"0", L"0:"});
-	if constexpr (kUsesUcrt) {
-		return key == std::wstring{keyPrefix}.append(expectedFold).append(keySuffix);
-	} else {
-		// The exact length also catches expansion of U+0130.
-		if (key.size() != keyPrefix.size() + input.size() + keySuffix.size()
-			|| !key.starts_with(keyPrefix) || !key.ends_with(keySuffix)) return false;
-		const auto folded = std::wstring_view{key}.substr(keyPrefix.size(), input.size());
-		PrintFoldProbe(localeName, input, folded);
-		if (input.front() <= 0x7f) return folded == expectedFold;
-		if (input.size() == 2) return folded == input;
-		return true;
-	}
+	const auto pathField = (std::to_wstring(1 + expectedFold.size()) + L":/").append(expectedFold);
+	return key == ExpectedKey({L"4:demo", L"1", L"4:host", pathField, L"0", L"0:", L"0", L"0:"});
 }
 
-bool FreezesProductionLocaleCodeUnitFoldTable()
+using Fold = std::array<std::wstring_view, 2>;
+
+bool FreezesUnicodeLowercaseFoldTable()
 {
-	constexpr char localeName[] = "Japanese";
-	ScopedLocale locale(localeName);
+	ScopedLocale locale("Japanese");
 	if (!locale.IsSet()) return false;
 
-	struct Fold {
-		const std::uint32_t input;
-		const std::uint32_t expected;
-	};
-	constexpr std::array folds{
-		Fold{0x0049, 0x0069},
-		Fold{0x0178, 0x00ff},
-		Fold{0x0391, 0x03b1},
-		Fold{0x03a3, 0x03c3},
-		Fold{0x0401, 0x0451},
-		Fold{0x0414, 0x0434},
-		Fold{0x2160, 0x2170},
-		Fold{0x24b6, 0x24d0},
-		Fold{0x10a0, 0x2d00},
-		Fold{0xff21, 0xff41},
-		Fold{0xff3a, 0xff5a},
-		Fold{0x00c0, 0x00c0},
-		Fold{0x00c9, 0x00c9},
-		Fold{0x00d6, 0x00d6},
-		Fold{0x00de, 0x00de},
-		Fold{0x00df, 0x00df},
-		Fold{0x0130, 0x0130},
-		Fold{0x1e9e, 0x1e9e},
-		Fold{0x2126, 0x2126},
-		Fold{0x212a, 0x212a},
+	const auto deseretCapital = CodeUnits({0xd801, 0xdc00});
+	const auto deseretSmall = CodeUnits({0xd801, 0xdc28});
+	const std::array folds{
+		Fold{L"I", L"i"},
+		Fold{L"\u0178", L"\u00ff"},
+		Fold{L"\u0391", L"\u03b1"},
+		Fold{L"\u03a3", L"\u03c3"}, // The preceding slash is not Cased.
+		Fold{L"\u0401", L"\u0451"},
+		Fold{L"\u0414", L"\u0434"},
+		Fold{L"\u2160", L"\u2170"},
+		Fold{L"\u24b6", L"\u24d0"},
+		Fold{L"\u10a0", L"\u2d00"},
+		Fold{L"\uff21", L"\uff41"},
+		Fold{L"\uff3a", L"\uff5a"},
+		Fold{L"\u00c0", L"\u00e0"},
+		Fold{L"\u00c9", L"\u00e9"},
+		Fold{L"\u00d6", L"\u00f6"},
+		Fold{L"\u00de", L"\u00fe"},
+		Fold{L"\u00df", L"\u00df"},
+		Fold{L"\u0130", L"i\u0307"},
+		Fold{L"\u1e9e", L"\u00df"},
+		Fold{L"\u2126", L"\u03c9"},
+		Fold{L"\u212a", L"k"},
+		Fold{L"\u01c5", L"\u01c6"},
+		Fold{L"\u13a0", L"\uab70"},
+		Fold{L"\uab70", L"\uab70"},
+		Fold{L"\u1c90", L"\u10d0"},
+		Fold{deseretCapital, deseretSmall},
 	};
 	bool passed = true;
-	for (const auto& fold : folds) {
-		if (!CheckNonFilePathFold(localeName, CodeUnits({fold.input}), CodeUnits({fold.expected}))) passed = false;
+	for (const auto& [input, expected] : folds) {
+		if (!CheckNonFilePathFold(input, expected)) passed = false;
 	}
-	const auto deseretCapital = CodeUnits({0xd801, 0xdc00});
-	if (!CheckNonFilePathFold(localeName, deseretCapital, deseretCapital)) passed = false;
 
 	const bool restored = locale.Restore();
 	return passed && restored;
 }
 
-bool RecordsCLocaleFoldDifference()
+bool FoldIgnoresTheProcessLocale()
 {
-	constexpr char localeName[] = "C";
-	ScopedLocale locale(localeName);
-	if (!locale.IsSet()) return false;
+	constexpr std::array folds{
+		Fold{L"I", L"i"},
+		Fold{L"\u0178", L"\u00ff"},
+		Fold{L"\u0414", L"\u0434"},
+		Fold{L"\uff21", L"\uff41"},
+		Fold{L"\u00c9", L"\u00e9"},
+	};
 
-	bool passed = CheckNonFilePathFold(localeName, L"I", L"i");
-	for (const auto unit : {0x0178u, 0x0414u, 0xff21u}) {
-		const auto value = CodeUnits({unit});
-		if (!CheckNonFilePathFold(localeName, value, value)) passed = false;
+	for (const auto* localeName : {"C", "Japanese"}) {
+		ScopedLocale locale(localeName);
+		if (!locale.IsSet()) return false;
+		bool passed = true;
+		for (const auto& [input, expected] : folds) {
+			if (!CheckNonFilePathFold(input, expected)) passed = false;
+		}
+		const bool restored = locale.Restore();
+		if (!passed || !restored) return false;
+	}
+	return true;
+}
+
+bool AppliesFinalSigmaContextLikeVsCode()
+{
+	constexpr std::array folds{
+		Fold{L"/\u0391\u03a3", L"/\u03b1\u03c2"},
+		Fold{L"/\u0391\u03a3.txt", L"/\u03b1\u03c3.txt"},
+		Fold{L"/\u0391\u03a3/x", L"/\u03b1\u03c2/x"},
+		Fold{L"/\u03a3", L"/\u03c3"},
+		Fold{L"/\u0391\u03a3\u0391", L"/\u03b1\u03c3\u03b1"},
+		Fold{L"/\u0391'\u03a3", L"/\u03b1'\u03c2"},
+		Fold{L"/\u0391\u0301\u03a3", L"/\u03b1\u0301\u03c2"},
+		Fold{L"/\u0391\u03a3\u0301\u0391", L"/\u03b1\u03c3\u0301\u03b1"},
+		Fold{L"/\u0391\u03a3\u0301", L"/\u03b1\u03c2\u0301"},
+	};
+	for (const auto& [path, expected] : folds) {
+		const auto uri = Uri::FromComponents(L"demo", L"host", std::wstring{path}, std::nullopt, std::nullopt, true);
+		if (!uri) return false;
+		const auto pathField = (std::to_wstring(expected.size()) + L":").append(expected);
+		const auto key = UriIdentityService::MakeComparisonKey(*uri.value, ENonFileUriCasePolicy::CaseInsensitive);
+		if (key != ExpectedKey({L"4:demo", L"1", L"4:host", pathField, L"0", L"0:", L"0", L"0:"})) return false;
 	}
 
-	const bool restored = locale.Restore();
-	return passed && restored;
+	const auto file = Uri::Parse(L"file:///C:/\u0391\u03a3.txt");
+	return file && UriIdentityService::MakeComparisonKey(*file.value) == ExpectedKey({
+		L"4:file", L"1", L"0:", L"10:/c:/\u03b1\u03c3.txt", L"0", L"0:", L"0", L"0:"});
+}
+
+bool FileIdentityFoldsLatin1AndSupplementaryCapitals()
+{
+	// VS Code ExtUri.getComparisonKey uses uri.path.toLowerCase() (microsoft/vscode 733a99842b0e).
+	const auto parseFile = [](std::wstring_view name) {
+		return Uri::Parse(std::wstring{L"file:///C:/"}.append(name).append(L".txt"));
+	};
+	const auto deseretCapital = CodeUnits({0xd801, 0xdc00});
+	const auto deseretSmall = CodeUnits({0xd801, 0xdc28});
+	const std::array folds{
+		Fold{L"\u00c9", L"\u00e9"},
+		Fold{L"\u212a", L"k"},
+		Fold{L"\u2126", L"\u03c9"},
+		Fold{deseretCapital, deseretSmall},
+		Fold{L"\u0130", L"i\u0307"},
+		Fold{L"\u1e9e", L"\u00df"},
+	};
+	for (const auto& [input, expected] : folds) {
+		const auto upper = parseFile(input);
+		const auto lower = parseFile(expected);
+		if (!upper || !lower || !UriIdentityService::IsEqual(*upper.value, *lower.value)) return false;
+	}
+
+	const auto dotted = parseFile(L"\u0130");
+	const auto asciiI = parseFile(L"i");
+	const auto capitalSharpS = parseFile(L"\u1e9e");
+	const auto doubleS = parseFile(L"ss");
+	return dotted && asciiI && capitalSharpS && doubleS
+		&& !UriIdentityService::IsEqual(*dotted.value, *asciiI.value)
+		&& !UriIdentityService::IsEqual(*capitalSharpS.value, *doubleS.value);
 }
 
 bool RejectsInvalidComponentConstructionExplicitly()
@@ -505,10 +496,12 @@ constexpr std::array kTests{
 	TestCase{"LocalhostAndAuthoritySyntaxShareLocalFileIdentity", LocalhostAndAuthoritySyntaxShareLocalFileIdentity},
 	TestCase{"ComparisonKeyIsByteExactAndTracksComponentPresence", ComparisonKeyIsByteExactAndTracksComponentPresence},
 	TestCase{"NonFileCasePolicyIsExplicit", NonFileCasePolicyIsExplicit},
-	TestCase{"FreezesJapaneseLocaleCaseSentinels", FreezesJapaneseLocaleCaseSentinels},
-	TestCase{"FreezesFileAndNonFileKeyFieldsUnderProductionLocale", FreezesFileAndNonFileKeyFieldsUnderProductionLocale},
-	TestCase{"FreezesProductionLocaleCodeUnitFoldTable", FreezesProductionLocaleCodeUnitFoldTable},
-	TestCase{"RecordsCLocaleFoldDifference", RecordsCLocaleFoldDifference},
+	TestCase{"FreezesUnicodeLowercaseSentinels", FreezesUnicodeLowercaseSentinels},
+	TestCase{"FreezesFileAndNonFileKeyFields", FreezesFileAndNonFileKeyFields},
+	TestCase{"FreezesUnicodeLowercaseFoldTable", FreezesUnicodeLowercaseFoldTable},
+	TestCase{"FoldIgnoresTheProcessLocale", FoldIgnoresTheProcessLocale},
+	TestCase{"AppliesFinalSigmaContextLikeVsCode", AppliesFinalSigmaContextLikeVsCode},
+	TestCase{"FileIdentityFoldsLatin1AndSupplementaryCapitals", FileIdentityFoldsLatin1AndSupplementaryCapitals},
 	TestCase{"RejectsInvalidComponentConstructionExplicitly", RejectsInvalidComponentConstructionExplicitly},
 	TestCase{"RejectsInvalidUriAndWindowsPathInputsExplicitly", RejectsInvalidUriAndWindowsPathInputsExplicitly},
 };

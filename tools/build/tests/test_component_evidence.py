@@ -85,6 +85,8 @@ class ComponentEvidenceTests(unittest.TestCase):
 
         self.assertEqual(
             (
+                "sakura_uri:unicodelowercase.cpp.obj",
+                "sakura_uri:unicodelowercase.obj",
                 "sakura_uri:uriidentity.cpp.obj",
                 "sakura_uri:uriidentity.obj",
             ),

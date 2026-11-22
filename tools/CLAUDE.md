@@ -38,6 +38,7 @@ The public entry scripts live at the repository root; run them from there.
 
 - Before starting CI for any change, run `py -3 tools/build/sakura_build.py --format json lint checkout-invariance` from the repository root and require exit code 0. This is mandatory, not an optional diagnostic.
 - After editing `src/main/dependencies/dependencies.json`, run `py -3 tools/dependency_ledger.py generate` then `py -3 tools/dependency_ledger.py check`. Architecture-gates runs the same check.
+- To regenerate the URI lowercase table, download `UnicodeData.txt`, `SpecialCasing.txt`, and `DerivedCoreProperties.txt` for the pinned Unicode version into an empty task directory. Run `py -3 -I tools/generate-unicode-lowercase-table.py --ucd-dir <dir>`, then repeat the command with `--check`. The generator rejects inputs whose SHA-256 differs from `PINNED_SHA256`. When the Rust version pinned in `rust/native/rust-toolchain.toml` changes its Unicode version, update `UNICODE_VERSION`, the pins, the generated header, and the `sakura_uri_tests` expectations together.
 - The lint simulates LF and CRLF inputs for the semantic-graph schema and semantic-inventory scanner, and verifies that committed generated projections remain equivalent. Do not substitute `generate --check` for this preflight; run both checks.
 
 ## Canonical CLI Tests

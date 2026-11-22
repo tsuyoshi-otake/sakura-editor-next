@@ -43,25 +43,30 @@ profile descriptors, storage, request/proxy, and credentials.
   authentication, proxy-policy, cancellation, and transport branch returns a
   distinct terminal `RequestResult`.
 
-### URI identity casing (#434)
+### URI identity casing (#434, #436)
 
-`WinMain` sets the process locale with `setlocale(LC_ALL, "Japanese")`,
-which resolved to `Japanese_Japan.932` in the UCRT measurements. Comparison-key
-casing is defined under this production locale. The URI identity service
-lowers ASCII directly and applies the CRT's `towlower` to each non-ASCII UTF-16
-code unit.
+URI comparison keys use Unicode 17.0.0 default lowercase with full mapping and
+Final_Sigma. `tools/generate-unicode-lowercase-table.py` generates
+`sakura_core/platform/uri/UnicodeLowercaseData.h` from pinned UCD files. The fold
+is independent of the CRT and process locale. MSVC/UCRT and MinGW/msvcrt
+produce identical keys, and `sakura_uri_tests` asserts the same table on both.
 
-The measured Debug and Release UCRT fold covers U+0178, the sampled Greek and
-Cyrillic capitals, U+2160, U+24B6, U+10A0, and the sampled full-width capitals.
-The sampled Latin-1 capitals, U+00DF, U+0130, U+1E9E, U+2126, U+212A, and both
-surrogates of Deseret U+10400 stay unchanged. The `C` locale folds only ASCII
-among these probes. MinGW MINGW64's msvcrt table awaits measurement in #435.
+The earlier per-code-unit `towlower` fold under `Japanese_Japan.932` left sampled
+Latin-1 and supplementary capitals unfolded (#434), and MinGW's msvcrt matched
+UCRT on all 25 probes.
 
-The current fold differs from VS Code. At `microsoft/vscode` revision
-`733a99842b0e`, `ExtUri.getComparisonKey` uses `uri.path.toLowerCase()` when the
-scheme's provider lacks `PathCaseSensitive`. #436 owns the decision on the
-target fold. The Rust URI candidate must defer implementing comparison-key
-casing until #436 is decided.
+The table follows the pinned Rust toolchain's `char::UNICODE_VERSION` (Rust
+1.96.0 uses Unicode 17.0.0), so the Rust URI candidate may use
+`str::to_lowercase` for comparison-key casing. Its Unicode version must equal
+`kUnicodeVersion`. When the toolchain's Unicode version changes, regenerate the
+table and update the pins and test expectations together.
+
+The fold matches the `uri.path.toLowerCase()` operation in VS Code's
+`ExtUri.getComparisonKey`, subject to the Unicode version of its Electron/ICU.
+VS Code applies that operation when the scheme's provider lacks
+`PathCaseSensitive`. Issue #439 tracks component-level differences in host,
+userinfo, query and fragment, the localhost alias, scheme case, drive letter,
+and the policy source.
 [VS Code comparison key](https://github.com/microsoft/vscode/blob/733a99842b0e/src/vs/base/common/resources.ts#L162-L167)
 [VS Code provider capability check](https://github.com/microsoft/vscode/blob/733a99842b0e/src/vs/platform/uriIdentity/common/uriIdentityService.ts#L44-L51)
 

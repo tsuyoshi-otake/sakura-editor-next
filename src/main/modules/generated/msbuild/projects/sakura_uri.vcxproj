@@ -101,9 +101,12 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="$(SakuraRepoRoot)\sakura_core\include\sakura\uri\UriIdentity.h" />
+    <ClInclude Include="$(SakuraRepoRoot)\sakura_core\platform\uri\UnicodeLowercase.h" />
+    <ClInclude Include="$(SakuraRepoRoot)\sakura_core\platform\uri\UnicodeLowercaseData.h" />
     <ClInclude Include="$(SakuraRepoRoot)\sakura_core\platform\uri\UriIdentityInternal.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="$(SakuraRepoRoot)\sakura_core\platform\uri\UnicodeLowercase.cpp" />
     <ClCompile Include="$(SakuraRepoRoot)\sakura_core\platform\uri\UriIdentity.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

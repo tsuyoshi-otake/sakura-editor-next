@@ -1797,6 +1797,12 @@
     <ClInclude Include="..\sakura_core\include\sakura\uri\UriIdentity.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\uri\UnicodeLowercase.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\uri\UnicodeLowercaseData.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\platform\uri\UriRustCandidate.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
@@ -3898,6 +3904,9 @@
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\uri\UriIdentity.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\uri\UnicodeLowercase.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\uri\UriRustCandidate.cpp">

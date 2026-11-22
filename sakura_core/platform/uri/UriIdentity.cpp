@@ -7,9 +7,9 @@
 
 #include <sakura/uri/UriIdentity.h>
 #include "UriIdentityInternal.h"
+#include "UnicodeLowercase.h"
 
 #include <algorithm>
-#include <cwctype>
 
 namespace platform::uri {
 namespace {
@@ -28,18 +28,6 @@ bool IsSubDelimiter(wchar_t value) noexcept
 	default:
 		return false;
 	}
-}
-
-std::wstring ToLowerInvariant(std::wstring_view value)
-{
-	std::wstring lowered;
-	lowered.reserve(value.size());
-	for (const wchar_t character : value) {
-		// URI の ASCII scheme/host は必ず正規化する。非 ASCII は CRT の basic wide
-		// lower-case を使う。ファイル実体への照会はしない。
-		lowered.push_back(character <= 0x7f ? ToLowerAscii(character) : static_cast<wchar_t>(std::towlower(character)));
-	}
-	return lowered;
 }
 
 bool IsValidUtf16(std::wstring_view value) noexcept
@@ -377,7 +365,8 @@ UriParseResult Uri::FromComponents(
 	if (fragment && !ValidateComponent(*fragment)) {
 		return { std::nullopt, EUriParseError::InvalidFragment };
 	}
-	return { Uri(ToLowerInvariant(scheme), std::move(authority), std::move(path), std::move(query), std::move(fragment), hasAuthority), EUriParseError::None };
+	std::transform(scheme.begin(), scheme.end(), scheme.begin(), internal::ToLowerAscii);
+	return { Uri(std::move(scheme), std::move(authority), std::move(path), std::move(query), std::move(fragment), hasAuthority), EUriParseError::None };
 }
 
 UriParseResult Uri::Parse(std::wstring_view text)
@@ -520,7 +509,7 @@ Uri::WindowsPathResult Uri::ToWindowsPath() const
 	if (m_scheme != L"file") {
 		return { std::nullopt, EUriWindowsPathError::NotFileUri };
 	}
-	if (!m_hasAuthority || m_authority.empty() || ToLowerInvariant(m_authority) == L"localhost") {
+	if (!m_hasAuthority || m_authority.empty() || internal::ToUnicodeLowercase(m_authority) == L"localhost") {
 		if (m_path.size() < 3 || m_path[0] != L'/' || !IsAsciiAlpha(m_path[1]) || m_path[2] != L':') {
 			return { std::nullopt, EUriWindowsPathError::InvalidFileUri };
 		}
@@ -542,26 +531,26 @@ std::wstring UriIdentityService::MakeComparisonKey(const Uri& uri, ENonFileUriCa
 	const bool isFile = uri.Scheme() == L"file";
 	const bool foldAll = !isFile && nonFilePolicy == ENonFileUriCasePolicy::CaseInsensitive;
 	const bool isLocalFileAuthority = isFile
-		&& (uri.Authority().empty() || ToLowerInvariant(uri.Authority()) == L"localhost");
+		&& (uri.Authority().empty() || internal::ToUnicodeLowercase(uri.Authority()) == L"localhost");
 	std::wstring key;
 	key.reserve(uri.ToString().size() + 32);
-	AppendKeyPart(key, ToLowerInvariant(uri.Scheme()));
+	AppendKeyPart(key, internal::ToUnicodeLowercase(uri.Scheme()));
 	// On Windows, file:/C:/x, file:///C:/x, and file://localhost/C:/x
 	// address the same local resource.  Preserve authority syntax for non-file
 	// schemes while canonicalizing these local file aliases.
 	key.push_back(isFile ? L'1' : (uri.HasAuthority() ? L'1' : L'0'));
 	key.push_back(internal::kComparisonKeySeparator);
 	AppendKeyPart(key, isLocalFileAuthority ? std::wstring{}
-		: ((isFile || foldAll) ? ToLowerInvariant(uri.Authority()) : uri.Authority()));
-	AppendKeyPart(key, (isFile || foldAll) ? ToLowerInvariant(uri.Path()) : uri.Path());
+		: ((isFile || foldAll) ? internal::ToUnicodeLowercase(uri.Authority()) : uri.Authority()));
+	AppendKeyPart(key, (isFile || foldAll) ? internal::ToUnicodeLowercase(uri.Path()) : uri.Path());
 	key.push_back(uri.Query().has_value() ? L'1' : L'0');
 	key.push_back(internal::kComparisonKeySeparator);
 	const std::wstring query = uri.Query() ? *uri.Query() : std::wstring{};
-	AppendKeyPart(key, foldAll ? ToLowerInvariant(query) : query);
+	AppendKeyPart(key, foldAll ? internal::ToUnicodeLowercase(query) : query);
 	key.push_back(uri.Fragment().has_value() ? L'1' : L'0');
 	key.push_back(internal::kComparisonKeySeparator);
 	const std::wstring fragment = uri.Fragment() ? *uri.Fragment() : std::wstring{};
-	AppendKeyPart(key, foldAll ? ToLowerInvariant(fragment) : fragment);
+	AppendKeyPart(key, foldAll ? internal::ToUnicodeLowercase(fragment) : fragment);
 	return key;
 }
 

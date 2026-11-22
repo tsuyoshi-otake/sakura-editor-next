@@ -13,8 +13,11 @@ set(CMAKE_OBJECT_PATH_MAX 220)
 
 add_library(sakura_uri STATIC
   "${SAKURA_REPO_ROOT}/sakura_core/platform/uri/UriIdentity.cpp"
+  "${SAKURA_REPO_ROOT}/sakura_core/platform/uri/UnicodeLowercase.cpp"
   "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/uri/UriIdentity.h"
   "${SAKURA_REPO_ROOT}/sakura_core/platform/uri/UriIdentityInternal.h"
+  "${SAKURA_REPO_ROOT}/sakura_core/platform/uri/UnicodeLowercase.h"
+  "${SAKURA_REPO_ROOT}/sakura_core/platform/uri/UnicodeLowercaseData.h"
 )
 target_include_directories(sakura_uri PUBLIC "${SAKURA_REPO_ROOT}/sakura_core/include")
 target_include_directories(sakura_uri PRIVATE "${SAKURA_REPO_ROOT}/sakura_core/platform/uri")
