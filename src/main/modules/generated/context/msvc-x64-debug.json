@@ -153,8 +153,11 @@
     "sakura-shareddata-contract-tests-to-contract"
   ],
   "active_runtime_providers": [
-    "sakura-output-cpp-provider",
+    "sakura-document-cpp-provider",
     "sakura-output-rust-candidate",
+    "sakura-output-rust-provider",
+    "sakura-uri-cpp-provider",
+    "sakura-uri-rust-candidate",
     "sakura-utf16-cpp-provider",
     "sakura-utf16-rust-candidate"
   ],
@@ -176,16 +179,18 @@
   "generated_artifacts": [
     "sakura-module-generated-projections"
   ],
-  "generator_version": "0.3.7",
+  "generator_version": "0.3.8",
   "package_sets": [
     "root-vcpkg-package-set"
   ],
   "production_runtime_providers": {
-    "output-service-state": "sakura-output-cpp-provider",
+    "document-text-undo-layout": "sakura-document-cpp-provider",
+    "output-service-state": "sakura-output-rust-provider",
+    "uri-identity": "sakura-uri-cpp-provider",
     "utf16-scan-backend": "sakura-utf16-cpp-provider"
   },
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:d8f3b5c721e604f5b8ab20d9822f796681c09378967d3e87ffec7634ed366562",
+  "semantic_graph_hash": "sha256:0fc5ebc4265f983d6a9f60caf3e8fcd5457a47fb6aae2322dbd665c3a822915c",
   "staging_sets": [
     "sakura-editor-msvc-x64-debug-runtime-stage"
   ]

@@ -1,6 +1,6 @@
 {
   "schema_version": 4,
-  "minimum_generator_version": "0.3.7",
+  "minimum_generator_version": "0.3.8",
   "contexts": [
     {"id": "msvc-x64-debug", "platform": "x64", "arch": "x64", "configuration": "Debug", "toolchain": "msvc", "backend": "msbuild", "role": "development", "features": []},
     {"id": "cmake-msvc-x64-debug", "platform": "x64", "arch": "x64", "configuration": "Debug", "toolchain": "msvc", "backend": "cmake", "role": "component-pilot", "features": []},
@@ -1286,10 +1286,21 @@
       "id": "sakura-native-ffi-staticlib",
       "owner": "sakura_app",
       "artifact_kind": "product",
-      "inputs": ["rust/native/Cargo.toml", "rust/native/Cargo.lock", "rust/native/sakura_native_ffi/Cargo.toml", "rust/native/sakura_simd/Cargo.toml"],
+      "inputs": ["rust/native/Cargo.toml", "rust/native/Cargo.lock", "rust/native/rust-toolchain.toml", "rust/native/sakura_native_ffi/Cargo.toml", "rust/native/sakura_simd/Cargo.toml", "rust/native/sakura_unicode_core/Cargo.toml"],
       "outputs": ["build/native/sakura_native_ffi.lib"],
       "tool_id": "cargo",
+      "cargo_target_triple": "x86_64-pc-windows-msvc",
       "condition": {"eq": {"field": "toolchain", "value": "msvc"}}
+    },
+    {
+      "id": "sakura-native-ffi-gnu-staticlib",
+      "owner": "sakura_app",
+      "artifact_kind": "product",
+      "inputs": ["rust/native/Cargo.toml", "rust/native/Cargo.lock", "rust/native/rust-toolchain.toml", "rust/native/sakura_native_ffi/Cargo.toml", "rust/native/sakura_simd/Cargo.toml", "rust/native/sakura_unicode_core/Cargo.toml"],
+      "outputs": ["build/native/libsakura_native_ffi.a"],
+      "tool_id": "cargo",
+      "cargo_target_triple": "x86_64-pc-windows-gnu",
+      "condition": {"eq": {"field": "toolchain", "value": "mingw"}}
     },
     {
       "id": "root-vcpkg-package-set",
@@ -1384,18 +1395,46 @@
       "side_effects": []
     },
     {
+      "id": "sakura-utf16-rust-gnu-candidate",
+      "authority_domain": "utf16-scan-backend",
+      "authority_mode": "candidate-shadow",
+      "implementation_language": "rust",
+      "build_component": "sakura_app",
+      "supported_contexts": ["mingw-x64-debug", "mingw-x64-release"],
+      "cargo_package": "sakura-native-ffi",
+      "cargo_target": "sakura_native_ffi",
+      "link_artifact": "sakura-native-ffi-gnu-staticlib",
+      "thread_affinity": "any-worker",
+      "lifecycle_owner": "sakura_app",
+      "side_effects": []
+    },
+    {
       "id": "sakura-output-cpp-provider",
       "authority_domain": "output-service-state",
       "authority_mode": "production",
       "implementation_language": "cpp",
       "build_component": "sakura_app",
-      "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release", "mingw-x64-debug", "mingw-x64-release"],
+      "supported_contexts": ["mingw-x64-debug", "mingw-x64-release"],
       "cargo_package": null,
       "cargo_target": null,
       "link_artifact": null,
       "thread_affinity": "any-worker",
       "lifecycle_owner": "sakura_app",
-      "side_effects": []
+      "side_effects": ["notification"]
+    },
+    {
+      "id": "sakura-output-rust-provider",
+      "authority_domain": "output-service-state",
+      "authority_mode": "production",
+      "implementation_language": "rust",
+      "build_component": "sakura_app",
+      "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release"],
+      "cargo_package": "sakura-native-ffi",
+      "cargo_target": "sakura_native_ffi",
+      "link_artifact": "sakura-native-ffi-staticlib",
+      "thread_affinity": "any-worker",
+      "lifecycle_owner": "sakura_app",
+      "side_effects": ["notification"]
     },
     {
       "id": "sakura-output-rust-candidate",
@@ -1410,6 +1449,76 @@
       "thread_affinity": "any-worker",
       "lifecycle_owner": "sakura_app",
       "side_effects": []
+    },
+    {
+      "id": "sakura-output-rust-gnu-candidate",
+      "authority_domain": "output-service-state",
+      "authority_mode": "candidate-shadow",
+      "implementation_language": "rust",
+      "build_component": "sakura_app",
+      "supported_contexts": ["mingw-x64-debug", "mingw-x64-release"],
+      "cargo_package": "sakura-native-ffi",
+      "cargo_target": "sakura_native_ffi",
+      "link_artifact": "sakura-native-ffi-gnu-staticlib",
+      "thread_affinity": "any-worker",
+      "lifecycle_owner": "sakura_app",
+      "side_effects": []
+    },
+    {
+      "id": "sakura-uri-cpp-provider",
+      "authority_domain": "uri-identity",
+      "authority_mode": "production",
+      "implementation_language": "cpp",
+      "build_component": "sakura_uri",
+      "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release", "mingw-x64-debug", "mingw-x64-release"],
+      "cargo_package": null,
+      "cargo_target": null,
+      "link_artifact": null,
+      "thread_affinity": "any-worker",
+      "lifecycle_owner": "sakura_app",
+      "side_effects": []
+    },
+    {
+      "id": "sakura-uri-rust-candidate",
+      "authority_domain": "uri-identity",
+      "authority_mode": "candidate-shadow",
+      "implementation_language": "rust",
+      "build_component": "sakura_app",
+      "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release"],
+      "cargo_package": "sakura-native-ffi",
+      "cargo_target": "sakura_native_ffi",
+      "link_artifact": "sakura-native-ffi-staticlib",
+      "thread_affinity": "any-worker",
+      "lifecycle_owner": "sakura_app",
+      "side_effects": []
+    },
+    {
+      "id": "sakura-uri-rust-gnu-candidate",
+      "authority_domain": "uri-identity",
+      "authority_mode": "candidate-shadow",
+      "implementation_language": "rust",
+      "build_component": "sakura_app",
+      "supported_contexts": ["mingw-x64-debug", "mingw-x64-release"],
+      "cargo_package": "sakura-native-ffi",
+      "cargo_target": "sakura_native_ffi",
+      "link_artifact": "sakura-native-ffi-gnu-staticlib",
+      "thread_affinity": "any-worker",
+      "lifecycle_owner": "sakura_app",
+      "side_effects": []
+    },
+    {
+      "id": "sakura-document-cpp-provider",
+      "authority_domain": "document-text-undo-layout",
+      "authority_mode": "legacy-production",
+      "implementation_language": "cpp",
+      "build_component": "sakura_app",
+      "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release", "mingw-x64-debug", "mingw-x64-release"],
+      "cargo_package": null,
+      "cargo_target": null,
+      "link_artifact": null,
+      "thread_affinity": "ui-thread",
+      "lifecycle_owner": "sakura_app",
+      "side_effects": ["document-mutation"]
     }
   ],
   "edges": [
@@ -1429,6 +1538,22 @@
         {"context": "cmake-msvc-x64-debug", "probe": "rust/native/Cargo.toml"},
         {"context": "msvc-x64-release", "probe": "rust/native/Cargo.toml"},
         {"context": "cmake-msvc-x64-release", "probe": "rust/native/Cargo.toml"}
+      ]
+    },
+    {
+      "id": "sakura-app-to-native-ffi-gnu-staticlib",
+      "from": "sakura_app",
+      "to": "sakura-native-ffi-gnu-staticlib",
+      "kind": "package",
+      "phases": ["compile", "link"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": {"eq": {"field": "toolchain", "value": "mingw"}},
+      "required": true,
+      "witnesses": [
+        {"context": "mingw-x64-debug", "probe": "src/main/cmake/sakura.cmake"},
+        {"context": "mingw-x64-release", "probe": "src/main/cmake/sakura.cmake"}
       ]
     },
     {

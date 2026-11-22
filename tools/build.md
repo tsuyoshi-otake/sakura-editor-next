@@ -55,7 +55,7 @@ C++20をサポートするC++コンパイラーが必要です。
 |HTML Help Workshop|hhc.exe|Visual Studio同梱のもの|
 |CMake|cmake.exe|Visual Studio同梱のもので可|
 |PowerShell Core|pwsh.exe|Microsoft Storeなどからインストール|
-|Rust toolchain|cargo.exe / rustc.exe|MSVCの通常・テスト・配布ビルドでは、C++を本番プロバイダーに保ったままRust candidateをビルド・リンクするため必要です。SENPのホスト・ツール・WASM拡張のビルドにも使用します。`rust/native/rust-toolchain.toml`と`rust/senp/rust-toolchain.toml`がRust toolchain 1.96.0を固定するため、stableを別途選択しません。|
+|Rust toolchain|cargo.exe / rustc.exe|MSVCとMinGWが共有するネイティブRustアーカイブ、SENPのホスト・ツール・WASM拡張のビルドに使用します。`rust/native/rust-toolchain.toml`と`rust/senp/rust-toolchain.toml`がRust toolchain 1.96.0を固定するため、stableを別途選択しません。|
 |[7-Zip](https://7-zip.opensource.jp/)|7z.exe|外部依存ファイルの解凍に使用します。|
 |Locale Emulator|LEProc.exe|日本語環境以外でHTMLヘルプをビルドする場合に利用します。|
 |Auto HotKey|AutoHotKey.exe|日本語環境以外でHTMLヘルプをビルドする場合にソースに腹持ちしたLocale Emulatorを展開する際に利用します。|
@@ -179,6 +179,26 @@ component graph の唯一の定義は `src/main/modules/modules.json` です。m
 `sakura-build.bat generate` を明示的に実行し、CIや通常ビルドでは
 `sakura-build.bat generate --check` により生成物のstalenessを検査します。通常ビルドが
 生成済みproject fragmentを暗黙に書き換えることはありません。
+
+schema v4 の `production_runtime_providers` は、既存6コンテキストで既定のビルドセレクターが
+選ぶ本番プロバイダーを示します。Output は MSVC（MSBuild・CMake）で Rust、MinGW で C++ です。
+UTF-16 と URI は全コンテキストで C++ が本番を担います。MSVC の明示的な
+`SAKURA_OUTPUT_BACKEND=cpp` ロールバックはビルド側で選択できます。グラフは既定構成を投影します。
+`test_build_model.py` は MSBuild と CMake のセレクター定義から既定値を読み取り、投影と比較します。
+
+各コンテキストはツールチェーンに対応する `sakura_native_ffi` アーカイブをリンクします。
+アーカイブの `cargo_target_triple` は Cargo のコンパイル先を示し、プロバイダーの
+`cargo_target` はクレートのターゲット名です。両アーカイブは共通の
+`rust/native/rust-toolchain.toml` と `sakura_unicode_core/Cargo.toml` をビルド入力に持ちます。
+UTF-16・Output・URI の Rust 比較実装は副作用のない `candidate-shadow` として記録します。
+`active_runtime_providers` はそのコンテキストでリンクされる実装を示し、実行時に呼び出されることは
+示しません。Output の Rust shadow は C++ の Output authority にだけ接続されるため
+（`sakura_core/workbench/CWorkbenchRuntime.cpp`）、Rust が本番を担う MSVC の既定構成では起動しません。
+URI の Rust 比較実装を呼び出すのは `tests1` の差分テストだけです。
+
+文書のテキスト・Undo・レイアウトは `CEditDoc` 配下の既存 C++ 実装が所有し、
+`document-text-undo-layout` の `legacy-production` として宣言します。同じドメインとコンテキストに
+比較用プロバイダーを追加する場合は `candidate-shadow` を使用します。
 
 ### 明示 package restore と runtime staging
 

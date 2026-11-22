@@ -154,7 +154,11 @@
         "inputs": {"$ref": "#/$defs/stringArray"},
         "outputs": {"$ref": "#/$defs/stringArray"},
         "tool_id": {"anyOf": [{"type": "null"}, {"enum": ["sakura-module-generator", "header-make", "cmake", "msbuild", "cargo", "rc", "copy"]}]},
+        "cargo_target_triple": {"$ref": "#/$defs/nonEmptyString"},
         "condition": {"$ref": "#/$defs/condition"}
+      },
+      "dependentSchemas": {
+        "cargo_target_triple": {"properties": {"tool_id": {"const": "cargo"}}}
       }
     },
     "runtimeProvider": {

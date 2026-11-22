@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
-GENERATOR_VERSION = "0.3.7"
+GENERATOR_VERSION = "0.3.8"
 
 PROJECT_PROFILE_FIELDS = frozenset({
     "abi_family",
@@ -349,9 +349,10 @@ class Artifact:
     outputs: tuple[str, ...]
     tool_id: str | None
     condition: Any
+    cargo_target_triple: str | None = None
 
     def as_mapping(self) -> dict[str, Any]:
-        return {
+        result = {
             "id": self.id,
             "owner": self.owner,
             "artifact_kind": self.artifact_kind,
@@ -360,6 +361,9 @@ class Artifact:
             "tool_id": self.tool_id,
             "condition": self.condition,
         }
+        if self.cargo_target_triple is not None:
+            result["cargo_target_triple"] = self.cargo_target_triple
+        return result
 
 
 @dataclass(frozen=True)
@@ -1014,6 +1018,7 @@ def _parse_artifact(repo_root: Path, value: Any, location: str) -> Artifact:
         value,
         location,
         required={"id", "owner", "artifact_kind", "inputs", "outputs", "tool_id", "condition"},
+        optional={"cargo_target_triple"},
     )
     kind = _string(obj["artifact_kind"], f"{location}.artifact_kind")
     if kind not in ARTIFACT_KINDS:
@@ -1023,6 +1028,11 @@ def _parse_artifact(repo_root: Path, value: Any, location: str) -> Artifact:
         tool_id = _string(tool_id, f"{location}.tool_id")
         if tool_id not in TOOL_IDS:
             _fail("TOOL_ID_UNKNOWN", f"{location}.tool_id", f"unsupported tool_id: {tool_id}")
+    cargo_target_triple = None
+    if "cargo_target_triple" in obj:
+        cargo_target_triple = _string(obj["cargo_target_triple"], f"{location}.cargo_target_triple")
+        if tool_id != "cargo":
+            _fail("ARTIFACT_CARGO_TARGET", f"{location}.cargo_target_triple", "requires tool_id cargo")
     inputs = tuple(
         _repo_path(repo_root, item, f"{location}.inputs[{index}]", must_exist=True)
         for index, item in enumerate(_array(obj["inputs"], f"{location}.inputs"))
@@ -1039,6 +1049,7 @@ def _parse_artifact(repo_root: Path, value: Any, location: str) -> Artifact:
         outputs=outputs,
         tool_id=tool_id,
         condition=normalize_condition(obj["condition"], f"{location}.condition"),
+        cargo_target_triple=cargo_target_triple,
     )
 
 
@@ -1548,6 +1559,15 @@ def load_semantic_graph(
             for component, provider_id in records
             if component.authority_mode in PRODUCTION_AUTHORITY_MODES
         ]
+        if (domain, context_id) in runtime_authority_records:
+            # The runtime-provider pass already established the one authority.
+            if production:
+                _fail(
+                    "AUTHORITY_PRODUCTION_COUNT",
+                    f"$.authority[{domain}][{context_id}]",
+                    "a runtime production provider already owns this domain and context",
+                )
+            continue
         if len(production) != 1:
             _fail(
                 "AUTHORITY_PRODUCTION_COUNT",
