@@ -14,8 +14,10 @@
 #include <array>
 #include <clocale>
 #include <cstdint>
+#include <iomanip>
 #include <initializer_list>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -32,6 +34,52 @@ std::wstring CodeUnits(std::initializer_list<std::uint32_t> values)
 }
 
 constexpr wchar_t kComparisonKeySeparator = static_cast<wchar_t>(0x1f);
+
+#if defined(_MSC_VER) || defined(_UCRT)
+constexpr bool kUsesUcrt = true;
+#else
+constexpr bool kUsesUcrt = false;
+#endif
+
+class ScopedLocale final {
+public:
+	explicit ScopedLocale(const char* name)
+	{
+		if (const char* previous = std::setlocale(LC_ALL, nullptr)) {
+			m_previous = previous;
+			m_isSet = std::setlocale(LC_ALL, name) != nullptr;
+		}
+	}
+
+	ScopedLocale(const ScopedLocale&) = delete;
+	ScopedLocale& operator=(const ScopedLocale&) = delete;
+
+	~ScopedLocale() { Restore(); }
+
+	bool IsSet() const { return m_isSet; }
+
+	bool Restore()
+	{
+		if (!m_isSet) return true;
+		if (std::setlocale(LC_ALL, m_previous.c_str()) == nullptr) return false;
+		m_isSet = false;
+		return true;
+	}
+
+private:
+	std::string m_previous;
+	bool m_isSet = false;
+};
+
+std::wstring ExpectedKey(std::initializer_list<std::wstring_view> fields)
+{
+	std::wstring expected;
+	for (const auto field : fields) {
+		expected.append(field);
+		expected.push_back(kComparisonKeySeparator);
+	}
+	return expected;
+}
 
 bool ConvertsDrivePathToCanonicalFileUriAndBackWithoutFilesystemResolution()
 {
@@ -215,10 +263,8 @@ bool NonFileCasePolicyIsExplicit()
 
 bool FreezesJapaneseLocaleCaseSentinels()
 {
-	const char* previousLocale = std::setlocale(LC_ALL, nullptr);
-	if (previousLocale == nullptr) return false;
-	const std::string savedLocale(previousLocale);
-	if (std::setlocale(LC_ALL, "Japanese") == nullptr) return false;
+	ScopedLocale locale("Japanese");
+	if (!locale.IsSet()) return false;
 
 	const auto dottedCapital = CodeUnits({0x0130});
 	const auto deseretCapital = CodeUnits({0xd801, 0xdc00});
@@ -272,7 +318,140 @@ bool FreezesJapaneseLocaleCaseSentinels()
 			&& UriIdentityService::MakeComparisonKey(*deseretUpper.value, ENonFileUriCasePolicy::CaseInsensitive) == expectedDeseret;
 	}
 
-	const bool restored = std::setlocale(LC_ALL, savedLocale.c_str()) != nullptr;
+	const bool restored = locale.Restore();
+	return passed && restored;
+}
+
+bool FreezesFileAndNonFileKeyFieldsUnderProductionLocale()
+{
+	ScopedLocale locale("Japanese");
+	if (!locale.IsSet()) return false;
+
+	const auto local = Uri::Parse(L"FILE://LocalHost/C:/ReadMe.TXT?Query#Frag");
+	const auto unc = Uri::Parse(L"file://Server/Share/ReadMe.TXT");
+	const auto nonFile = Uri::Parse(L"DeMo://Host/Path?Query#Frag");
+	bool passed = local && unc && nonFile
+		&& UriIdentityService::MakeComparisonKey(*local.value) == ExpectedKey({
+			L"4:file", L"1", L"0:", L"14:/c:/readme.txt", L"1", L"5:Query", L"1", L"4:Frag"})
+		&& UriIdentityService::MakeComparisonKey(*unc.value) == ExpectedKey({
+			L"4:file", L"1", L"6:server", L"17:/share/readme.txt", L"0", L"0:", L"0", L"0:"})
+		&& UriIdentityService::MakeComparisonKey(*nonFile.value, ENonFileUriCasePolicy::CaseSensitive) == ExpectedKey({
+			L"4:demo", L"1", L"4:Host", L"5:/Path", L"1", L"5:Query", L"1", L"4:Frag"})
+		&& UriIdentityService::MakeComparisonKey(*nonFile.value, ENonFileUriCasePolicy::CaseInsensitive) == ExpectedKey({
+			L"4:demo", L"1", L"4:host", L"5:/path", L"1", L"5:query", L"1", L"4:frag"});
+
+	if constexpr (kUsesUcrt) {
+		const auto cyrillic = Uri::Parse(L"file:///C:/\u0414.txt");
+		const auto latinCapital = Uri::Parse(L"file:///C:/\u00c9.txt");
+		const auto latinSmall = Uri::Parse(L"file:///C:/\u00e9.txt");
+		passed = passed && cyrillic && latinCapital && latinSmall
+			&& UriIdentityService::MakeComparisonKey(*cyrillic.value) == ExpectedKey({
+				L"4:file", L"1", L"0:", L"9:/c:/\u0434.txt", L"0", L"0:", L"0", L"0:"})
+			&& UriIdentityService::MakeComparisonKey(*latinCapital.value) == ExpectedKey({
+				L"4:file", L"1", L"0:", L"9:/c:/\u00c9.txt", L"0", L"0:", L"0", L"0:"})
+			&& !UriIdentityService::IsEqual(*latinCapital.value, *latinSmall.value); // #436
+	}
+
+	const bool restored = locale.Restore();
+	return passed && restored;
+}
+
+void PrintFoldProbe(const char* localeName, std::wstring_view input, std::wstring_view output)
+{
+	std::ostringstream line;
+	line << "[  PROBE   ] crt=other locale=" << localeName << std::uppercase << std::hex << std::setfill('0');
+	const auto appendUnits = [&line](std::wstring_view units) {
+		if (units.size() == 2 && units[0] >= 0xd800 && units[0] <= 0xdbff
+			&& units[1] >= 0xdc00 && units[1] <= 0xdfff) {
+			const auto scalar = 0x10000u + (units[0] - 0xd800u) * 0x400u + (units[1] - 0xdc00u);
+			line << " U+" << std::setw(4) << scalar;
+			return;
+		}
+		for (const auto unit : units) line << " U+" << std::setw(4) << static_cast<std::uint32_t>(unit);
+	};
+	appendUnits(input);
+	line << " ->";
+	appendUnits(output);
+	std::cout << line.str() << '\n';
+}
+
+bool CheckNonFilePathFold(const char* localeName, std::wstring_view input, std::wstring_view expectedFold)
+{
+	const auto uri = Uri::Parse(std::wstring{L"demo://host/"}.append(input));
+	if (!uri) return false;
+	const auto key = UriIdentityService::MakeComparisonKey(*uri.value, ENonFileUriCasePolicy::CaseInsensitive);
+	const auto keyPrefix = ExpectedKey({L"4:demo", L"1", L"4:host"}) + (input.size() == 1 ? L"2:/" : L"3:/");
+	const auto keySuffix = kComparisonKeySeparator + ExpectedKey({L"0", L"0:", L"0", L"0:"});
+	if constexpr (kUsesUcrt) {
+		return key == std::wstring{keyPrefix}.append(expectedFold).append(keySuffix);
+	} else {
+		// The exact length also catches expansion of U+0130.
+		if (key.size() != keyPrefix.size() + input.size() + keySuffix.size()
+			|| !key.starts_with(keyPrefix) || !key.ends_with(keySuffix)) return false;
+		const auto folded = std::wstring_view{key}.substr(keyPrefix.size(), input.size());
+		PrintFoldProbe(localeName, input, folded);
+		if (input.front() <= 0x7f) return folded == expectedFold;
+		if (input.size() == 2) return folded == input;
+		return true;
+	}
+}
+
+bool FreezesProductionLocaleCodeUnitFoldTable()
+{
+	constexpr char localeName[] = "Japanese";
+	ScopedLocale locale(localeName);
+	if (!locale.IsSet()) return false;
+
+	struct Fold {
+		const std::uint32_t input;
+		const std::uint32_t expected;
+	};
+	constexpr std::array folds{
+		Fold{0x0049, 0x0069},
+		Fold{0x0178, 0x00ff},
+		Fold{0x0391, 0x03b1},
+		Fold{0x03a3, 0x03c3},
+		Fold{0x0401, 0x0451},
+		Fold{0x0414, 0x0434},
+		Fold{0x2160, 0x2170},
+		Fold{0x24b6, 0x24d0},
+		Fold{0x10a0, 0x2d00},
+		Fold{0xff21, 0xff41},
+		Fold{0xff3a, 0xff5a},
+		Fold{0x00c0, 0x00c0},
+		Fold{0x00c9, 0x00c9},
+		Fold{0x00d6, 0x00d6},
+		Fold{0x00de, 0x00de},
+		Fold{0x00df, 0x00df},
+		Fold{0x0130, 0x0130},
+		Fold{0x1e9e, 0x1e9e},
+		Fold{0x2126, 0x2126},
+		Fold{0x212a, 0x212a},
+	};
+	bool passed = true;
+	for (const auto& fold : folds) {
+		if (!CheckNonFilePathFold(localeName, CodeUnits({fold.input}), CodeUnits({fold.expected}))) passed = false;
+	}
+	const auto deseretCapital = CodeUnits({0xd801, 0xdc00});
+	if (!CheckNonFilePathFold(localeName, deseretCapital, deseretCapital)) passed = false;
+
+	const bool restored = locale.Restore();
+	return passed && restored;
+}
+
+bool RecordsCLocaleFoldDifference()
+{
+	constexpr char localeName[] = "C";
+	ScopedLocale locale(localeName);
+	if (!locale.IsSet()) return false;
+
+	bool passed = CheckNonFilePathFold(localeName, L"I", L"i");
+	for (const auto unit : {0x0178u, 0x0414u, 0xff21u}) {
+		const auto value = CodeUnits({unit});
+		if (!CheckNonFilePathFold(localeName, value, value)) passed = false;
+	}
+
+	const bool restored = locale.Restore();
 	return passed && restored;
 }
 
@@ -327,6 +506,9 @@ constexpr std::array kTests{
 	TestCase{"ComparisonKeyIsByteExactAndTracksComponentPresence", ComparisonKeyIsByteExactAndTracksComponentPresence},
 	TestCase{"NonFileCasePolicyIsExplicit", NonFileCasePolicyIsExplicit},
 	TestCase{"FreezesJapaneseLocaleCaseSentinels", FreezesJapaneseLocaleCaseSentinels},
+	TestCase{"FreezesFileAndNonFileKeyFieldsUnderProductionLocale", FreezesFileAndNonFileKeyFieldsUnderProductionLocale},
+	TestCase{"FreezesProductionLocaleCodeUnitFoldTable", FreezesProductionLocaleCodeUnitFoldTable},
+	TestCase{"RecordsCLocaleFoldDifference", RecordsCLocaleFoldDifference},
 	TestCase{"RejectsInvalidComponentConstructionExplicitly", RejectsInvalidComponentConstructionExplicitly},
 	TestCase{"RejectsInvalidUriAndWindowsPathInputsExplicitly", RejectsInvalidUriAndWindowsPathInputsExplicitly},
 };

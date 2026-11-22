@@ -5205,6 +5205,29 @@
         }
       ],
       "missing_touched_reductions": []
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#434 freezes the current URI identity casing contract (#267 G2.3) without changing behavior. UriIdentity.h changes only the ENonFileUriCasePolicy comment and gains the UTF-8 BOM the encoding check requires; its four existing state.public_mutable_field findings are the public value/error fields of UriParseResult and Uri::WindowsPathResult, which are the published result API and are out of scope for a contract freeze. uri_contract_test.cpp adds the frozen key, fold-table and locale cases; its two existing findings are fields of the test-local InvalidUri and TestCase aggregates, and the new Fold aggregate uses const fields so it adds none. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "tracking_issue": 389,
+      "created": "2026-11-22",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/include/sakura/uri/UriIdentity.h": "sha256:314f89ffcaa69f29b499b4d2e53ca2a4b1748793b5c4fb00df8153d708fc4a5b",
+        "tools/build/pilots/uri_contract_test.cpp": "sha256:76d8acc40678cac2088dca696a18d059c8a66e74a70f74da0c9d09c8e9ed442e"
+      },
+      "new_findings": [],
+      "missing_touched_reductions": [
+        {
+          "baseline_finding_count": 4,
+          "path": "sakura_core/include/sakura/uri/UriIdentity.h"
+        },
+        {
+          "baseline_finding_count": 2,
+          "path": "tools/build/pilots/uri_contract_test.cpp"
+        }
+      ]
     }
   ]
 }

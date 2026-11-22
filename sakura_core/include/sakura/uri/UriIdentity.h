@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -113,9 +113,12 @@ struct Uri::WindowsPathResult {
 //! non-file URI に適用する文字大小の比較規則。
 //!
 //! CaseSensitive は RFC の scheme 以外をそのまま比較する既定値。CaseInsensitive は
-//! authority/path/query/fragment 全てを basic Unicode lower-case で
-//! 比較する。file URI は常に authority と path を case-insensitive に比較し、query/
-//! fragment は URI metadata として case-sensitive に保つ。
+//! authority/path/query/fragment のすべてに小文字化を適用する。ASCII は別に処理し、
+//! 非 ASCII にはプロセスのロケールに従う CRT の towlower を UTF-16 コード単位ごとに
+//! 適用する。WinMain が設定する "Japanese" では、UCRT は Latin-1 の大文字と補助文字を
+//! 変換しない。#434 で現行の挙動を固定し、#436 で目標の規則を決める。
+//! file URI は常に authority と path を case-insensitive に比較し、query/fragment は
+//! URI metadata として case-sensitive に保つ。
 enum class ENonFileUriCasePolicy : std::uint8_t {
 	CaseSensitive,
 	CaseInsensitive,
