@@ -13,7 +13,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use crate::ffi_pointer::{is_aligned, is_valid_pointer};
-use crate::output_shadow;
+use crate::output_shadow::{self, PoisonOnUnwind};
 
 pub type SakuraOutputProviderStatus = output_shadow::SakuraOutputShadowStatus;
 pub type SakuraOutputProviderOperationStatus = output_shadow::SakuraOutputShadowOperationStatus;
@@ -38,6 +38,9 @@ const EXPORT_PANIC_SNAPSHOT_WRITE: u8 = 4;
 const EXPORT_PANIC_ACTIVE_CHANNEL: u8 = 5;
 const EXPORT_PANIC_STOP: u8 = 6;
 const EXPORT_PANIC_DESTROY: u8 = 7;
+const EXPORT_PANIC_RECORD_RECEIPT: u8 = 8;
+const EXPORT_PANIC_DISCARD_RECEIPT: u8 = 9;
+const EXPORT_PANIC_REMOVE_RECEIPTS_ON_DESTROY: u8 = 10;
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -232,9 +235,14 @@ assert_abi_layout!(SakuraOutputProviderActiveChannelV1, 64, 8, {
     reserved: 48,
 });
 
+struct ProviderEntry {
+    model_token: u64,
+    poisoned: bool,
+}
+
 struct ProviderRegistry {
     next_token: u64,
-    providers: BTreeMap<u64, u64>,
+    providers: BTreeMap<u64, ProviderEntry>,
     next_measurement_id: u64,
     snapshot_measurements: BTreeMap<u64, SnapshotMeasurement>,
 }
@@ -255,7 +263,23 @@ fn providers() -> &'static Mutex<ProviderRegistry> {
 fn lock_providers() -> MutexGuard<'static, ProviderRegistry> {
     providers()
         .lock()
+        // An unwinding mutation marks its token before releasing this lock.
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn provider_entry<T>(
+    providers: &mut BTreeMap<u64, ProviderEntry>,
+    token: u64,
+    output: *mut T,
+) -> Result<&mut ProviderEntry, SakuraOutputProviderStatus> {
+    let entry = providers.get_mut(&token);
+    if entry.as_deref().is_some_and(|entry| entry.poisoned) {
+        return Err(SakuraOutputProviderStatus::InternalError);
+    }
+    if !is_valid_pointer(output.cast_const()) {
+        return Err(SakuraOutputProviderStatus::InvalidArgument);
+    }
+    entry.ok_or(SakuraOutputProviderStatus::InvalidHandle)
 }
 
 fn poison_result() -> SakuraOutputProviderApplyResultV1 {
@@ -381,35 +405,48 @@ fn capture_model_snapshot_measure(
     Ok(info)
 }
 
-fn next_measurement_id(registry: &mut ProviderRegistry) -> Option<u64> {
-    let measurement_id = registry.next_measurement_id;
-    if measurement_id == 0 {
-        return None;
+// Removing a tentative receipt on unwind preserves both the shared budget
+// and every previously retained receipt, even when the registry is full.
+struct PendingMeasurement<'a> {
+    measurements: &'a mut BTreeMap<u64, SnapshotMeasurement>,
+    id: Option<u64>,
+}
+
+impl Drop for PendingMeasurement<'_> {
+    fn drop(&mut self) {
+        if let Some(id) = self.id {
+            self.measurements.remove(&id);
+        }
     }
-    registry.next_measurement_id = measurement_id.checked_add(1).unwrap_or(0);
-    Some(measurement_id)
 }
 
 fn retain_measurement(
-    registry: &mut ProviderRegistry,
+    measurements: &mut BTreeMap<u64, SnapshotMeasurement>,
     measurement_id: u64,
     measurement: SnapshotMeasurement,
 ) {
-    while registry.snapshot_measurements.len() >= MAX_SNAPSHOT_MEASUREMENTS {
-        let Some(oldest) = registry.snapshot_measurements.keys().next().copied() else {
-            break;
-        };
-        registry.snapshot_measurements.remove(&oldest);
+    let mut pending = PendingMeasurement {
+        measurements,
+        id: Some(measurement_id),
+    };
+    pending.measurements.insert(measurement_id, measurement);
+    maybe_test_panic(EXPORT_PANIC_RECORD_RECEIPT);
+    // The oldest receipt is removed only after all fallible work succeeds.
+    if pending.measurements.len() > MAX_SNAPSHOT_MEASUREMENTS {
+        pending.measurements.pop_first();
     }
-    registry
-        .snapshot_measurements
-        .insert(measurement_id, measurement);
+    pending.id = None;
 }
 
-fn remove_measurements_for_provider(registry: &mut ProviderRegistry, provider_token: u64) {
-    registry
-        .snapshot_measurements
-        .retain(|_, measurement| measurement.provider_token != provider_token);
+fn discard_measurement(
+    measurements: &mut BTreeMap<u64, SnapshotMeasurement>,
+    measurement_id: u64,
+    provider: &mut ProviderEntry,
+) {
+    let mut poison = PoisonOnUnwind::new(&mut provider.poisoned);
+    measurements.remove(&measurement_id);
+    maybe_test_panic(EXPORT_PANIC_DISCARD_RECEIPT);
+    poison.complete();
 }
 
 fn ranges_overlap(
@@ -557,7 +594,13 @@ pub unsafe extern "C" fn sakura_output_provider_create_v1(
             return SakuraOutputProviderStatus::InternalError;
         }
         registry.next_token = provider_token.checked_add(1).unwrap_or(0);
-        registry.providers.insert(provider_token, shadow_token);
+        registry.providers.insert(
+            provider_token,
+            ProviderEntry {
+                model_token: shadow_token,
+                poisoned: false,
+            },
+        );
         // SAFETY: The token slot remains caller-owned for this call.
         unsafe { token.write(provider_token) };
         SakuraOutputProviderStatus::Ok
@@ -586,19 +629,23 @@ pub unsafe extern "C" fn sakura_output_provider_apply_v1(
     result: *mut SakuraOutputProviderApplyResultV1,
 ) -> SakuraOutputProviderStatus {
     match catch_unwind(AssertUnwindSafe(|| {
-        if !is_valid_pointer(result.cast_const()) {
-            return SakuraOutputProviderStatus::InvalidArgument;
-        }
-        // SAFETY: The result slot is validated and caller-owned for this call.
-        unsafe { result.write(poison_result()) };
-        maybe_test_panic(EXPORT_PANIC_APPLY);
-        let registry = lock_providers();
-        let Some(&shadow_token) = registry.providers.get(&token) else {
-            return SakuraOutputProviderStatus::InvalidHandle;
+        poison_result_if_valid(result);
+        let mut registry = lock_providers();
+        let provider = match provider_entry(&mut registry.providers, token, result) {
+            Ok(entry) => entry,
+            Err(status) => return status,
         };
-        // SAFETY: The wrapped export validates all request/span/range fields
-        // and copies every input before changing the Rust-owned model.
-        unsafe { output_shadow::model_apply_v1(shadow_token, request.cast(), result.cast()) }
+        maybe_test_panic(EXPORT_PANIC_APPLY);
+        // SAFETY: The model validates and copies the request before arming
+        // both poison flags at the start of mutation.
+        unsafe {
+            output_shadow::model_apply_v1(
+                provider.model_token,
+                request.cast(),
+                result.cast(),
+                Some(&mut provider.poisoned),
+            )
+        }
     })) {
         Ok(status) => status,
         Err(_) => {
@@ -625,32 +672,28 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_measure_v1(
     info: *mut SakuraOutputProviderSnapshotInfoV1,
 ) -> SakuraOutputProviderStatus {
     match catch_unwind(AssertUnwindSafe(|| {
-        if !is_valid_pointer(info.cast_const()) {
-            return SakuraOutputProviderStatus::InvalidArgument;
-        }
-        // SAFETY: The info slot is validated and caller-owned for this call.
-        unsafe { info.write(poison_info()) };
-        maybe_test_panic(EXPORT_PANIC_SNAPSHOT_MEASURE);
+        poison_info_if_valid(info);
         let mut registry = lock_providers();
-        let Some(&shadow_token) = registry.providers.get(&token) else {
-            return SakuraOutputProviderStatus::InvalidHandle;
+        let ProviderRegistry {
+            providers,
+            next_measurement_id,
+            snapshot_measurements,
+            ..
+        } = &mut *registry;
+        let provider = match provider_entry(providers, token, info) {
+            Ok(entry) => entry,
+            Err(status) => return status,
         };
-        let model_info = match capture_model_snapshot_measure(shadow_token) {
+        maybe_test_panic(EXPORT_PANIC_SNAPSHOT_MEASURE);
+        let model_info = match capture_model_snapshot_measure(provider.model_token) {
             Ok(value) => value,
-            Err(status) => {
-                // Keep the provider boundary fail-closed even if a future
-                // model implementation returns an error without poisoning
-                // its output.
-                poison_info_if_valid(info);
-                return status;
-            }
+            Err(status) => return status,
         };
-        let Some(measurement_id) = next_measurement_id(&mut registry) else {
-            poison_info_if_valid(info);
+        let measurement_id = *next_measurement_id;
+        if measurement_id == 0 {
             return SakuraOutputProviderStatus::InternalError;
-        };
+        }
         let Some(receipt) = snapshot_receipt_from_model_info(measurement_id, &model_info) else {
-            poison_info_if_valid(info);
             return SakuraOutputProviderStatus::InternalError;
         };
         let provider_info = SakuraOutputProviderSnapshotInfoV1 {
@@ -667,20 +710,22 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_measure_v1(
             receipt,
         };
         if !provider_snapshot_info_is_valid(&provider_info) {
-            poison_info_if_valid(info);
             return SakuraOutputProviderStatus::InternalError;
         }
-        // SAFETY: `info` is validated caller-owned storage and the value is a
-        // complete copied descriptor with no retained foreign pointer.
-        unsafe { info.write(provider_info) };
+        let mut poison = PoisonOnUnwind::new(&mut provider.poisoned);
         retain_measurement(
-            &mut registry,
+            snapshot_measurements,
             measurement_id,
             SnapshotMeasurement {
                 provider_token: token,
                 receipt,
             },
         );
+        *next_measurement_id = measurement_id.checked_add(1).unwrap_or(0);
+        // SAFETY: The validated caller-owned descriptor is published only
+        // once the corresponding receipt has been retained.
+        unsafe { info.write(provider_info) };
+        poison.complete();
         SakuraOutputProviderStatus::Ok
     })) {
         Ok(status) => status,
@@ -713,16 +758,18 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_write_v1(
     buffer: *mut SakuraOutputProviderSnapshotBufferV1,
 ) -> SakuraOutputProviderStatus {
     match catch_unwind(AssertUnwindSafe(|| {
-        if !is_valid_pointer(buffer.cast_const()) {
-            return SakuraOutputProviderStatus::InvalidArgument;
-        }
-        // SAFETY: The descriptor slot is validated and caller-owned.
         poison_snapshot_length_if_valid(buffer);
-        maybe_test_panic(EXPORT_PANIC_SNAPSHOT_WRITE);
         let mut registry = lock_providers();
-        let Some(&shadow_token) = registry.providers.get(&token) else {
-            return SakuraOutputProviderStatus::InvalidHandle;
+        let ProviderRegistry {
+            providers,
+            snapshot_measurements,
+            ..
+        } = &mut *registry;
+        let provider = match provider_entry(providers, token, buffer) {
+            Ok(entry) => entry,
+            Err(status) => return status,
         };
+        maybe_test_panic(EXPORT_PANIC_SNAPSHOT_WRITE);
         // SAFETY: The descriptor pointer was validated above and remains
         // caller-owned for this call. Copy it before taking any destination
         // action; no caller pointer is retained.
@@ -732,7 +779,7 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_write_v1(
             Err(status) => return status,
         };
         let measurement_id = descriptor.receipt.measurement_id;
-        let Some(measured) = registry.snapshot_measurements.get(&measurement_id).copied() else {
+        let Some(measured) = snapshot_measurements.get(&measurement_id).copied() else {
             // A write without a successful preceding measure has no identity
             // fence and must never copy an arbitrary current snapshot.
             return SakuraOutputProviderStatus::InvalidArgument;
@@ -743,12 +790,12 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_write_v1(
             return SakuraOutputProviderStatus::InvalidArgument;
         }
 
-        let model_info = match capture_model_snapshot_measure(shadow_token) {
+        let model_info = match capture_model_snapshot_measure(provider.model_token) {
             Ok(value) => value,
             Err(status) => return status,
         };
         let Some(current) = snapshot_receipt_from_model_info(measurement_id, &model_info) else {
-            registry.snapshot_measurements.remove(&measurement_id);
+            discard_measurement(snapshot_measurements, measurement_id, provider);
             return SakuraOutputProviderStatus::InternalError;
         };
         if current != measured.receipt {
@@ -756,7 +803,7 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_write_v1(
             // before it can attempt another write. This comparison includes
             // the monotonic revision, drop counter, framing metadata, and
             // stopped/active state.
-            registry.snapshot_measurements.remove(&measurement_id);
+            discard_measurement(snapshot_measurements, measurement_id, provider);
             return SakuraOutputProviderStatus::InternalError;
         }
         if u64::try_from(capacity).unwrap_or(u64::MAX) < model_info.encoded_size {
@@ -775,8 +822,9 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_write_v1(
         // SAFETY: The provider descriptor was validated above, and the model
         // buffer borrows its caller-owned destination only for this call.  No
         // pointer is retained by either layer.
-        let written =
-            unsafe { output_shadow::model_snapshot_write_v1(shadow_token, &mut model_buffer) };
+        let written = unsafe {
+            output_shadow::model_snapshot_write_v1(provider.model_token, &mut model_buffer)
+        };
         if written != SakuraOutputProviderStatus::Ok
             || model_buffer.struct_size
                 != size_of::<output_shadow::SakuraOutputShadowSnapshotBufferV1>() as u32
@@ -789,7 +837,7 @@ pub unsafe extern "C" fn sakura_output_provider_snapshot_write_v1(
             if written != SakuraOutputProviderStatus::Ok {
                 return written;
             }
-            registry.snapshot_measurements.remove(&measurement_id);
+            discard_measurement(snapshot_measurements, measurement_id, provider);
             return SakuraOutputProviderStatus::InternalError;
         }
         // SAFETY: The descriptor pointer was validated and remains caller-
@@ -824,22 +872,18 @@ pub unsafe extern "C" fn sakura_output_provider_active_channel_v1(
     active: *mut SakuraOutputProviderActiveChannelV1,
 ) -> SakuraOutputProviderStatus {
     match catch_unwind(AssertUnwindSafe(|| {
-        if !is_valid_pointer(active.cast_const()) {
-            return SakuraOutputProviderStatus::InvalidArgument;
-        }
-        maybe_test_panic(EXPORT_PANIC_ACTIVE_CHANNEL);
-        let registry = lock_providers();
-        let Some(&shadow_token) = registry.providers.get(&token) else {
-            // SAFETY: The active descriptor was validated and remains
-            // caller-owned for this call. Poison only the invalid-handle path;
-            // the model helper must retain the original destination metadata
-            // for valid-token calls.
-            unsafe { active.write(poison_active()) };
-            return SakuraOutputProviderStatus::InvalidHandle;
+        let mut registry = lock_providers();
+        let provider = match provider_entry(&mut registry.providers, token, active) {
+            Ok(entry) => entry,
+            Err(status) => {
+                poison_active_if_valid(active);
+                return status;
+            }
         };
-        // SAFETY: The wrapped export validates descriptor/range fields and
-        // copies no destination pointer into the model.
-        unsafe { output_shadow::read_active_channel_internal(shadow_token, active.cast()) }
+        maybe_test_panic(EXPORT_PANIC_ACTIVE_CHANNEL);
+        // SAFETY: The model validates descriptor/range fields and copies no
+        // destination pointer into the model. This query is read-only.
+        unsafe { output_shadow::read_active_channel_internal(provider.model_token, active.cast()) }
     })) {
         Ok(status) => status,
         Err(_) => {
@@ -863,18 +907,22 @@ pub unsafe extern "C" fn sakura_output_provider_stop_v1(
     result: *mut SakuraOutputProviderApplyResultV1,
 ) -> SakuraOutputProviderStatus {
     match catch_unwind(AssertUnwindSafe(|| {
-        if !is_valid_pointer(result.cast_const()) {
-            return SakuraOutputProviderStatus::InvalidArgument;
-        }
-        // SAFETY: The result slot is validated and caller-owned.
-        unsafe { result.write(poison_result()) };
-        maybe_test_panic(EXPORT_PANIC_STOP);
-        let registry = lock_providers();
-        let Some(&shadow_token) = registry.providers.get(&token) else {
-            return SakuraOutputProviderStatus::InvalidHandle;
+        poison_result_if_valid(result);
+        let mut registry = lock_providers();
+        let provider = match provider_entry(&mut registry.providers, token, result) {
+            Ok(entry) => entry,
+            Err(status) => return status,
         };
-        // SAFETY: The wrapped export performs terminal-state handling.
-        unsafe { output_shadow::model_stop_v1(shadow_token, result.cast()) }
+        maybe_test_panic(EXPORT_PANIC_STOP);
+        // SAFETY: The model owns terminal-state handling and arms both
+        // poison flags before making changes.
+        unsafe {
+            output_shadow::model_stop_v1(
+                provider.model_token,
+                result.cast(),
+                Some(&mut provider.poisoned),
+            )
+        }
     })) {
         Ok(status) => status,
         Err(_) => {
@@ -899,24 +947,39 @@ pub unsafe extern "C" fn sakura_output_provider_destroy_v1(
         if !is_valid_pointer(token.cast_const()) {
             return SakuraOutputProviderStatus::InvalidArgument;
         }
-        maybe_test_panic(EXPORT_PANIC_DESTROY);
         // SAFETY: The token slot is validated and caller-owned.
         let value = unsafe { token.read() };
         if value == 0 {
             return SakuraOutputProviderStatus::InvalidHandle;
         }
         let mut registry = lock_providers();
-        let Some(&stored_shadow_token) = registry.providers.get(&value) else {
+        let ProviderRegistry {
+            providers,
+            snapshot_measurements,
+            ..
+        } = &mut *registry;
+        let std::collections::btree_map::Entry::Occupied(mut entry) = providers.entry(value) else {
             return SakuraOutputProviderStatus::InvalidHandle;
         };
-        let mut shadow_token = stored_shadow_token;
-        // SAFETY: The wrapped export consumes the Rust-owned temporary token.
-        let status = unsafe { output_shadow::model_destroy_v1(&mut shadow_token) };
+        maybe_test_panic(EXPORT_PANIC_DESTROY);
+        let provider = entry.get_mut();
+        let mut model_token = provider.model_token;
+        let receipt_count = snapshot_measurements.len();
+        let mut poison = PoisonOnUnwind::new(&mut provider.poisoned);
+        snapshot_measurements.retain(|_, measurement| measurement.provider_token != value);
+        if snapshot_measurements.len() == receipt_count {
+            poison.complete();
+        }
+        maybe_test_panic(EXPORT_PANIC_REMOVE_RECEIPTS_ON_DESTROY);
+        // SAFETY: The model consumes the Rust-owned temporary token. Until
+        // that commit, a panic leaves the model registered for a retry.
+        let status = unsafe { output_shadow::model_destroy_v1(&mut model_token) };
+        poison.complete();
+        drop(poison);
         if status != SakuraOutputProviderStatus::Ok {
             return status;
         }
-        registry.providers.remove(&value);
-        remove_measurements_for_provider(&mut registry, value);
+        entry.remove();
         // SAFETY: Consume the caller token only after successful destruction.
         unsafe { token.write(0) };
         SakuraOutputProviderStatus::Ok
@@ -949,6 +1012,7 @@ mod tests {
     fn isolate_provider_test() -> MutexGuard<'static, ()> {
         PROVIDER_TEST_LIFECYCLE
             .lock()
+            // This test-only mutex serializes fixtures and contains no model.
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
@@ -2904,7 +2968,7 @@ mod tests {
         let mut model_result = poison_result();
         // SAFETY: A provider token must not be accepted by the replay model.
         assert_eq!(SakuraOutputProviderStatus::InvalidHandle, unsafe {
-            output_shadow::model_apply_v1(provider_token, &request, &mut model_result)
+            output_shadow::model_apply_v1(provider_token, &request, &mut model_result, None)
         });
         assert_poison_result(&model_result);
 
@@ -2950,7 +3014,7 @@ mod tests {
         let mut model_stop = poison_result();
         // SAFETY: A provider token must not be accepted by replay Stop.
         assert_eq!(SakuraOutputProviderStatus::InvalidHandle, unsafe {
-            output_shadow::model_stop_v1(provider_token, &mut model_stop)
+            output_shadow::model_stop_v1(provider_token, &mut model_stop, None)
         });
         assert_poison_result(&model_stop);
 
@@ -3479,6 +3543,244 @@ mod tests {
         assert_eq!(0, destroy_slot);
     }
 
+    fn assert_poisoned_provider(token: u64, receipt: SakuraOutputProviderSnapshotReceiptV1) {
+        let request = create_request(b"after-panic", b"owner", b"new-channel", b"Label");
+        let mut result = poison_result();
+        let mut info = poison_info();
+        let mut destination = vec![0xA5; receipt.encoded_size as usize];
+        let mut buffer = snapshot_buffer_with_receipt(&mut destination, receipt);
+        let mut active_destination = [0xA5; 16];
+        let mut active = active_buffer(&mut active_destination);
+        let internal_error = SakuraOutputProviderStatus::InternalError;
+
+        // SAFETY: Each descriptor and destination is valid caller-owned storage.
+        unsafe {
+            assert_eq!(
+                internal_error,
+                sakura_output_provider_apply_v1(token, &request, &mut result)
+            );
+            assert_poison_result(&result);
+            assert_eq!(
+                internal_error,
+                sakura_output_provider_stop_v1(token, &mut result)
+            );
+            assert_poison_result(&result);
+            assert_eq!(
+                internal_error,
+                sakura_output_provider_snapshot_measure_v1(token, &mut info)
+            );
+            assert_poison_info(&info);
+            assert_eq!(
+                internal_error,
+                sakura_output_provider_snapshot_write_v1(token, &mut buffer)
+            );
+            assert_eq!(u64::MAX, buffer.length);
+            assert_eq!(
+                internal_error,
+                sakura_output_provider_active_channel_v1(token, &mut active)
+            );
+            assert_poison_active(&active);
+            assert_eq!(
+                internal_error,
+                sakura_output_provider_snapshot_measure_v1(token, ptr::null_mut())
+            );
+        }
+        assert!(destination.iter().all(|&byte| byte == 0xA5));
+        assert_eq!([0xA5; 16], active_destination);
+    }
+
+    fn assert_provider_destroyed(token: u64, model_token: u64) {
+        let mut destroy_token = token;
+        // SAFETY: The live token is in caller-owned writable storage.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_destroy_v1(&mut destroy_token)
+        });
+        assert_eq!(0, destroy_token);
+        let registry = lock_providers();
+        assert!(!registry.providers.contains_key(&token));
+        assert!(registry
+            .snapshot_measurements
+            .values()
+            .all(|receipt| receipt.provider_token != token));
+        assert!(!output_shadow::model_is_registered(model_token));
+    }
+
+    #[test]
+    fn provider_late_panics_poison_only_the_affected_token_and_allow_destroy() {
+        let _test_lifecycle = isolate_provider_test();
+        for operation in ["apply", "stop", "measure", "write", "destroy"] {
+            let token = create_provider_token();
+            let model_token = lock_providers().providers[&token].model_token;
+            let seed = create_request(b"seed", b"owner", b"seed", b"Label");
+            let request = create_request(b"mutate", b"owner", b"mutate", b"Label");
+            let mut result = poison_result();
+            let mut retained = poison_info();
+            // SAFETY: These descriptors and their borrowed spans are valid for each call.
+            unsafe {
+                assert_eq!(
+                    SakuraOutputProviderStatus::Ok,
+                    sakura_output_provider_apply_v1(token, &seed, &mut result)
+                );
+                assert_eq!(
+                    SakuraOutputProviderStatus::Ok,
+                    sakura_output_provider_snapshot_measure_v1(token, &mut retained)
+                );
+            }
+            let mut info = retained;
+            let mut destination = vec![0xA5; retained.encoded_size as usize];
+            let mut buffer = snapshot_buffer_with_receipt(&mut destination, retained.receipt);
+            let mut destroy_token = token;
+
+            // SAFETY: Every export receives valid caller-owned storage.
+            let status = unsafe {
+                match operation {
+                    "apply" => {
+                        output_shadow::with_model_panic(output_shadow::MODEL_PANIC_APPLY, || {
+                            sakura_output_provider_apply_v1(token, &request, &mut result)
+                        })
+                    }
+                    "stop" => {
+                        output_shadow::with_model_panic(output_shadow::MODEL_PANIC_STOP, || {
+                            sakura_output_provider_stop_v1(token, &mut result)
+                        })
+                    }
+                    "measure" => with_export_panic(EXPORT_PANIC_RECORD_RECEIPT, || {
+                        sakura_output_provider_snapshot_measure_v1(token, &mut info)
+                    }),
+                    "write" => {
+                        // Make the receipt stale so write enters its receipt removal path.
+                        assert_eq!(
+                            SakuraOutputProviderStatus::Ok,
+                            sakura_output_provider_apply_v1(token, &request, &mut result)
+                        );
+                        with_export_panic(EXPORT_PANIC_DISCARD_RECEIPT, || {
+                            sakura_output_provider_snapshot_write_v1(token, &mut buffer)
+                        })
+                    }
+                    "destroy" => with_export_panic(EXPORT_PANIC_REMOVE_RECEIPTS_ON_DESTROY, || {
+                        sakura_output_provider_destroy_v1(&mut destroy_token)
+                    }),
+                    _ => unreachable!(),
+                }
+            };
+            assert_eq!(
+                SakuraOutputProviderStatus::InternalError,
+                status,
+                "{operation}"
+            );
+            match operation {
+                "apply" | "stop" => assert_poison_result(&result),
+                "measure" => assert_poison_info(&info),
+                "write" => {
+                    assert_eq!(u64::MAX, buffer.length);
+                    assert!(destination.iter().all(|&byte| byte == 0xA5));
+                }
+                "destroy" => assert_eq!(token, destroy_token),
+                _ => unreachable!(),
+            }
+            assert!(lock_providers().providers[&token].poisoned, "{operation}");
+            assert!(output_shadow::model_is_registered(model_token));
+            assert_poisoned_provider(token, retained.receipt);
+            assert_provider_destroyed(token, model_token);
+        }
+    }
+
+    #[test]
+    fn provider_panic_with_full_receipt_registry_preserves_another_tokens_snapshot() {
+        let _test_lifecycle = isolate_provider_test();
+        let healthy = create_provider_token();
+        let failing = create_provider_token();
+        let healthy_model = lock_providers().providers[&healthy].model_token;
+        let failing_model = lock_providers().providers[&failing].model_token;
+        let mut oldest = poison_info();
+        // SAFETY: Each measurement writes to initialized caller-owned storage.
+        unsafe {
+            assert_eq!(
+                SakuraOutputProviderStatus::Ok,
+                sakura_output_provider_snapshot_measure_v1(healthy, &mut oldest)
+            );
+            for _ in 1..MAX_SNAPSHOT_MEASUREMENTS {
+                let mut info = poison_info();
+                assert_eq!(
+                    SakuraOutputProviderStatus::Ok,
+                    sakura_output_provider_snapshot_measure_v1(healthy, &mut info)
+                );
+            }
+        }
+        let snapshot = || {
+            let mut bytes = vec![0; oldest.encoded_size as usize];
+            let mut buffer = snapshot_buffer_with_receipt(&mut bytes, oldest.receipt);
+            // SAFETY: The destination and its descriptor are caller-owned.
+            assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+                sakura_output_provider_snapshot_write_v1(healthy, &mut buffer)
+            });
+            assert_eq!(oldest.encoded_size, buffer.length);
+            bytes
+        };
+        let expected = snapshot();
+        let start = Barrier::new(2);
+        thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                start.wait();
+                snapshot()
+            });
+            start.wait();
+            let mut info = poison_info();
+            // SAFETY: The snapshot descriptor is caller-owned for this call.
+            let status = with_export_panic(EXPORT_PANIC_RECORD_RECEIPT, || unsafe {
+                sakura_output_provider_snapshot_measure_v1(failing, &mut info)
+            });
+            assert_eq!(SakuraOutputProviderStatus::InternalError, status);
+            assert_eq!(expected, worker.join().expect("healthy provider worker"));
+        });
+        assert_eq!(expected, snapshot());
+        assert_eq!(
+            MAX_SNAPSHOT_MEASUREMENTS,
+            lock_providers().snapshot_measurements.len()
+        );
+        assert_poisoned_provider(failing, oldest.receipt);
+        assert_provider_destroyed(failing, failing_model);
+        assert_provider_destroyed(healthy, healthy_model);
+    }
+
+    #[test]
+    fn successful_provider_calls_during_an_unrelated_unwind_keep_the_token_usable() {
+        struct Cleanup<F: FnMut()>(F);
+
+        impl<F: FnMut()> Drop for Cleanup<F> {
+            fn drop(&mut self) {
+                (self.0)();
+            }
+        }
+
+        let _test_lifecycle = isolate_provider_test();
+        let token = create_provider_token();
+        let model_token = lock_providers().providers[&token].model_token;
+        let request = create_request(b"cleanup", b"owner", b"channel", b"Label");
+        let mut result = poison_result();
+        let mut info = poison_info();
+        let mut statuses = [SakuraOutputProviderStatus::InternalError; 2];
+        let unwind = catch_unwind(AssertUnwindSafe(|| {
+            // SAFETY: The request and outputs outlive this cleanup.
+            let _cleanup = Cleanup(|| unsafe {
+                statuses[0] = sakura_output_provider_apply_v1(token, &request, &mut result);
+                statuses[1] = sakura_output_provider_snapshot_measure_v1(token, &mut info);
+            });
+            panic!("unrelated unwind");
+        }));
+        assert!(unwind.is_err());
+        assert_eq!([SakuraOutputProviderStatus::Ok; 2], statuses);
+
+        let mut bytes = vec![0; info.encoded_size as usize];
+        let mut buffer = snapshot_buffer_with_receipt(&mut bytes, info.receipt);
+        // SAFETY: The output descriptor and destination are caller-owned.
+        assert_eq!(SakuraOutputProviderStatus::Ok, unsafe {
+            sakura_output_provider_snapshot_write_v1(token, &mut buffer)
+        });
+        assert_eq!(info.encoded_size, buffer.length);
+        assert_provider_destroyed(token, model_token);
+    }
+
     #[test]
     fn provider_export_source_contract_contains_panic_containment_for_each_export() {
         let source = include_str!("output_provider.rs");
@@ -3547,7 +3849,7 @@ mod tests {
         // The provider token must not be accepted by the replay-model family.
         // SAFETY: The request and result are valid caller-owned V1 storage.
         assert_eq!(SakuraOutputProviderStatus::InvalidHandle, unsafe {
-            output_shadow::model_apply_v1(provider_token, &request, &mut result)
+            output_shadow::model_apply_v1(provider_token, &request, &mut result, None)
         });
         // SAFETY: The request and result are valid caller-owned V1 storage.
         assert_eq!(SakuraOutputProviderStatus::InvalidHandle, unsafe {

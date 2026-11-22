@@ -49,6 +49,37 @@ Output provider selection is independent of UTF-16/SIMD backend selection.
 Both paths use this same static archive, but the stateful Output lifecycle must
 not be coupled to CPU feature detection or the stateless SIMD dispatch table.
 
+## C ABI threading, reentry, and failure
+
+Concurrent callers must keep input storage valid for each call and use
+independent writable outputs, including slots passed to destroy or join.
+
+| Export family | Threading and reentry | Failure |
+| --- | --- | --- |
+| Output provider (7) | Callable from any thread. The provider registry lock serializes calls, including measure/write individually. No callbacks. | A caught panic returns provider InternalError. Once poisoned, a token returns InternalError on every call except destroy, without accessing the model. |
+| Output shadow (6) | Callable from any thread. The model registry lock serializes model access. No callbacks. Measure and write are separate calls and can see an intervening mutation. | A caught panic returns shadow InternalError. Once poisoned, a token returns InternalError on every call except destroy, without accessing the model. |
+| URI candidate (4) | Stateless, with independent measure/write calls and no callbacks. | Typed validation or capacity errors. A caught panic returns URI InternalError. Consume output only on Ok. |
+| UTF-16 scan (9) | Concurrent readers share the immutable CPU snapshot. No callbacks. | NotInitialized before snapshot publication, Unsupported for missing CPU/OS support, and typed span errors. A caught panic returns InternalError. The result slot is initialized to the input length before scanning. |
+| Byte scan (3) | Concurrent readers share the immutable CPU snapshot. No callbacks. Uses the CPU capability gate without an operation-policy slot. | NotInitialized, Unsupported, and typed span errors. A caught panic returns InternalError. The result slot is initialized to the input length before scanning. See [#433](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/433). |
+| Worker thread (2) | Start invokes the foreign entry on a new thread. Join releases the registry lock before waiting. The entry must not join itself or unwind across the ABI. The opaque context must stay valid until join completes. | Spawn failure returns SpawnFailed. Join consumes the token before waiting and currently discards the join result. Export-side Rust panics return InternalError. See [#432](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/432). |
+| Initialize (1) | Copies the inputs and publishes one immutable snapshot with OnceLock. Concurrent identical calls succeed. Conflicting calls receive ConflictingInitialization. No callbacks. | Invalid inputs receive typed errors. A caught panic returns InternalError. See [#433](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/433). |
+
+An Output export that panics after looking up a token poisons that token
+unless it can prove that no change occurred. Poison is recorded under the
+registry lock before another caller can observe the token. A poisoned token
+still accepts destroy, which releases its model and any provider receipts,
+zeros the caller's slot, and returns Ok. Other tokens remain usable.
+
+| Output export | Provider | Shadow |
+| --- | --- | --- |
+| Create | Publishes a new token only on success. | Publishes a new token only on success. |
+| Apply | A panic in request preparation preserves the token. A panic from the start of model mutation poisons both the provider token and its backing model entry. | A panic in request preparation preserves the token. A panic during model mutation poisons it. |
+| Stop | A panic before model mutation preserves the token. A panic during model mutation poisons the token and its backing entry. | A panic during terminal-state mutation poisons the token. |
+| Snapshot measure | Model encoding stages bytes before commit. A panic during receipt registration poisons the token and removes the tentative receipt before any eviction. | Encoding works on local bytes and commits the cache once after encoding. A panic before commit preserves the token. |
+| Snapshot write | A panic before modifying a receipt preserves the token. A panic during removal of a rejected receipt poisons it. A successful write leaves the receipt available. | Encoding uses the same staged cache commit as measure. Destination copy and length publication follow validation with no fallible model work. |
+| Active channel | Reads model metadata only. A panic preserves the token. | No exported active-channel call. |
+| Destroy | A panic before removing receipts or the model preserves the token. If receipts have been removed and destruction panics before model removal, the token is poisoned and destroy can be retried. | Removal of the occupied entry is the single commit. A panic before removal preserves the token and destroy can be retried. |
+
 ## Output provider test isolation
 
 The Output provider retains at most 64 snapshot measurements per process,

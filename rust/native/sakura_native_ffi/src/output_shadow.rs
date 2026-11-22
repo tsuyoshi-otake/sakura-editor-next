@@ -64,6 +64,47 @@ thread_local! {
     static FINGERPRINT_CONSTRUCTION_COUNT: Cell<usize> = const { Cell::new(0) };
 }
 
+pub(crate) const MODEL_PANIC_APPLY: u8 = 1;
+pub(crate) const MODEL_PANIC_STOP: u8 = 2;
+const MODEL_PANIC_SNAPSHOT_ENCODE: u8 = 3;
+const MODEL_PANIC_DESTROY: u8 = 4;
+pub(crate) const MODEL_PANIC_APPLY_BEFORE_MUTATION: u8 = 5;
+
+#[cfg(test)]
+thread_local! {
+    static FORCED_MODEL_PANIC: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+#[inline(never)]
+fn maybe_model_panic(point: u8) {
+    FORCED_MODEL_PANIC.with(|forced| {
+        if forced.get() == point {
+            forced.set(0);
+            panic!("forced Output model panic");
+        }
+    });
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn maybe_model_panic(_point: u8) {}
+
+#[cfg(test)]
+pub(crate) fn with_model_panic<T>(point: u8, operation: impl FnOnce() -> T) -> T {
+    FORCED_MODEL_PANIC.with(|forced| {
+        let previous = forced.replace(point);
+        let result = operation();
+        forced.set(previous);
+        result
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn model_is_registered(token: u64) -> bool {
+    lock_registry().services.contains_key(&token)
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReserveFailurePoint {
@@ -612,6 +653,7 @@ impl Service {
         match outcome {
             ApplyOutcome::NotAccepted(result) => Ok(result),
             ApplyOutcome::Accepted { prepared, result } => {
+                maybe_model_panic(MODEL_PANIC_APPLY);
                 self.commit_remember(prepared, result);
                 Ok(result)
             }
@@ -1230,6 +1272,7 @@ impl Service {
             // snapshot for the terminal state.
             self.snapshot_cache = None;
             self.channels.clear();
+            maybe_model_panic(MODEL_PANIC_STOP);
             self.active_owner_generations.clear();
             self.active_channel_id = None;
             self.completed_operations.clear();
@@ -1300,14 +1343,15 @@ impl Service {
             };
             put_bytes(&mut output, projected_text);
         }
-        self.snapshot_cache = Some(SnapshotCache {
-            revision: self.revision,
-            bytes: output,
-        });
+        // Encoding can fail while building the local bytes. Commit the cache
+        // once, with no fallible work left in the model.
+        maybe_model_panic(MODEL_PANIC_SNAPSHOT_ENCODE);
         &self
             .snapshot_cache
-            .as_ref()
-            .expect("snapshot cache was inserted")
+            .insert(SnapshotCache {
+                revision: self.revision,
+                bytes: output,
+            })
             .bytes
     }
 }
@@ -1807,15 +1851,48 @@ fn normalize_limit(value: u64) -> Result<usize, SakuraOutputShadowStatus> {
     usize::try_from(value).map_err(|_| SakuraOutputShadowStatus::InvalidArgument)
 }
 
+// An interrupted mutation marks its token before either registry lock is
+// released. Disarm explicitly so successful calls from a Rust destructor
+// during an unrelated unwind are still treated as successful.
+pub(crate) struct PoisonOnUnwind<'a> {
+    poisoned: Option<&'a mut bool>,
+}
+
+impl<'a> PoisonOnUnwind<'a> {
+    pub(crate) fn new(poisoned: &'a mut bool) -> Self {
+        Self {
+            poisoned: Some(poisoned),
+        }
+    }
+
+    pub(crate) fn complete(&mut self) {
+        self.poisoned = None;
+    }
+}
+
+impl Drop for PoisonOnUnwind<'_> {
+    fn drop(&mut self) {
+        if let Some(poisoned) = self.poisoned.take() {
+            *poisoned = true;
+        }
+    }
+}
+
+struct ModelEntry {
+    service: Service,
+    poisoned: bool,
+}
+
 fn lock_registry() -> MutexGuard<'static, Registry> {
     registry()
         .lock()
+        // An unwinding mutation marks its token before releasing this lock.
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 struct Registry {
     next_token: u64,
-    services: BTreeMap<u64, Service>,
+    services: BTreeMap<u64, ModelEntry>,
 }
 
 static REGISTRY: OnceLock<Mutex<Registry>> = OnceLock::new();
@@ -1827,6 +1904,23 @@ fn registry() -> &'static Mutex<Registry> {
             services: BTreeMap::new(),
         })
     })
+}
+
+// Missing tokens retain the existing validation order. A poisoned token
+// is rejected before reading any caller input or accessing the model.
+fn model_entry<T>(
+    registry: &mut Registry,
+    token: u64,
+    output: *mut T,
+) -> Result<Option<&mut ModelEntry>, SakuraOutputShadowStatus> {
+    let entry = registry.services.get_mut(&token);
+    if entry.as_deref().is_some_and(|entry| entry.poisoned) {
+        return Err(SakuraOutputShadowStatus::InternalError);
+    }
+    if !is_valid_pointer(output.cast_const()) {
+        return Err(SakuraOutputShadowStatus::InvalidArgument);
+    }
+    Ok(entry)
 }
 
 fn catch_status(operation: impl FnOnce() -> SakuraOutputShadowStatus) -> SakuraOutputShadowStatus {
@@ -1859,7 +1953,13 @@ pub(crate) unsafe fn model_create_v1(
         return SakuraOutputShadowStatus::InternalError;
     }
     registry.next_token = token_value.checked_add(1).unwrap_or(0);
-    registry.services.insert(token_value, Service::new(limits));
+    registry.services.insert(
+        token_value,
+        ModelEntry {
+            service: Service::new(limits),
+            poisoned: false,
+        },
+    );
     // SAFETY: The output pointer was validated above and remains caller
     // owned for this call.
     unsafe { token.write(token_value) };
@@ -1888,13 +1988,18 @@ pub(crate) unsafe fn model_apply_v1(
     token: u64,
     request: *const SakuraOutputShadowRequestV1,
     result: *mut SakuraOutputShadowApplyResultV1,
+    provider_poison: Option<&mut bool>,
 ) -> SakuraOutputShadowStatus {
-    if !is_valid_pointer(result.cast_const()) {
-        return SakuraOutputShadowStatus::InvalidArgument;
+    if is_valid_pointer(result.cast_const()) {
+        // SAFETY: The output pointer is validated and caller-owned.
+        unsafe { result.write(poison_result()) };
     }
-    // SAFETY: The output pointer is non-null and aligned. Publish a poison
-    // result before reading any caller-controlled input.
-    unsafe { result.write(poison_result()) };
+    let mut registry = lock_registry();
+    let entry = match model_entry(&mut registry, token, result) {
+        Ok(entry) => entry,
+        Err(status) => return status,
+    };
+    maybe_model_panic(MODEL_PANIC_APPLY_BEFORE_MUTATION);
     if !request.is_null()
         && is_aligned(request)
         && ranges_overlap(
@@ -1910,16 +2015,18 @@ pub(crate) unsafe fn model_apply_v1(
         Ok(value) => value,
         Err(status) => return status,
     };
-    let mut registry = lock_registry();
-    let Some(service) = registry.services.get_mut(&token) else {
+    let Some(ModelEntry { service, poisoned }) = entry else {
         return SakuraOutputShadowStatus::InvalidHandle;
     };
-    // A future fallible mutation must never leave a partially updated model
-    // paired with bytes from the prior revision. Invalidating at the copied
-    // request boundary is conservative for rejected/replayed operations and
-    // keeps panic recovery fail-closed without changing their result.
+    let mut poison_model = PoisonOnUnwind::new(poisoned);
+    let mut poison_provider = provider_poison.map(PoisonOnUnwind::new);
     service.snapshot_cache = None;
-    let operation_result = match service.try_apply(request) {
+    let outcome = service.try_apply(request);
+    poison_model.complete();
+    if let Some(guard) = &mut poison_provider {
+        guard.complete();
+    }
+    let operation_result = match outcome {
         Ok(result) => result,
         Err(status) => return status,
     };
@@ -1942,7 +2049,7 @@ pub unsafe extern "C" fn sakura_output_shadow_apply_v1(
 ) -> SakuraOutputShadowStatus {
     catch_status(|| {
         // SAFETY: This wrapper has the same caller contract as the model call.
-        unsafe { model_apply_v1(token, request, result) }
+        unsafe { model_apply_v1(token, request, result, None) }
     })
 }
 
@@ -1955,14 +2062,15 @@ pub(crate) unsafe fn model_snapshot_measure_v1(
     token: u64,
     info: *mut SakuraOutputShadowSnapshotInfoV1,
 ) -> SakuraOutputShadowStatus {
-    if !is_valid_pointer(info.cast_const()) {
-        return SakuraOutputShadowStatus::InvalidArgument;
+    if is_valid_pointer(info.cast_const()) {
+        // SAFETY: The output pointer is validated and caller-owned.
+        unsafe { info.write(poison_info()) };
     }
-    // SAFETY: The output pointer is non-null and aligned.
-    unsafe { info.write(poison_info()) };
     let mut registry = lock_registry();
-    let Some(service) = registry.services.get_mut(&token) else {
-        return SakuraOutputShadowStatus::InvalidHandle;
+    let service = match model_entry(&mut registry, token, info) {
+        Ok(Some(entry)) => &mut entry.service,
+        Ok(None) => return SakuraOutputShadowStatus::InvalidHandle,
+        Err(status) => return status,
     };
     let bytes = service.snapshot_bytes();
     let encoded_size = match u64::try_from(bytes.len()) {
@@ -2010,13 +2118,16 @@ pub(crate) unsafe fn model_snapshot_write_v1(
     token: u64,
     buffer: *mut SakuraOutputShadowSnapshotBufferV1,
 ) -> SakuraOutputShadowStatus {
-    if !is_valid_pointer(buffer.cast_const()) {
-        return SakuraOutputShadowStatus::InvalidArgument;
+    if is_valid_pointer(buffer.cast_const()) {
+        // SAFETY: The output pointer is validated and caller-owned.
+        unsafe { (*buffer).length = u64::MAX };
     }
-    // SAFETY: The output structure pointer is non-null and aligned.
-    unsafe { (*buffer).length = u64::MAX };
-    // SAFETY: The structure pointer was validated above; copy it before
-    // taking the registry lock so no caller pointer is retained.
+    let mut registry = lock_registry();
+    let entry = match model_entry(&mut registry, token, buffer) {
+        Ok(entry) => entry,
+        Err(status) => return status,
+    };
+    // SAFETY: The structure pointer was validated by model_entry.
     let descriptor = unsafe { buffer.read() };
     if !validate_struct_header(
         descriptor.struct_size,
@@ -2047,11 +2158,10 @@ pub(crate) unsafe fn model_snapshot_write_v1(
     ) {
         return SakuraOutputShadowStatus::InvalidArgument;
     }
-    let mut registry = lock_registry();
-    let Some(service) = registry.services.get_mut(&token) else {
+    let Some(entry) = entry else {
         return SakuraOutputShadowStatus::InvalidHandle;
     };
-    let bytes = service.snapshot_bytes();
+    let bytes = entry.service.snapshot_bytes();
     if capacity < bytes.len() {
         return SakuraOutputShadowStatus::InsufficientCapacity;
     }
@@ -2132,9 +2242,13 @@ pub(crate) unsafe fn read_active_channel_internal(
             return SakuraOutputShadowStatus::InvalidArgument;
         }
         let registry = lock_registry();
-        let Some(service) = registry.services.get(&token) else {
+        let Some(entry) = registry.services.get(&token) else {
             return SakuraOutputShadowStatus::InvalidHandle;
         };
+        if entry.poisoned {
+            return SakuraOutputShadowStatus::InternalError;
+        }
+        let service = &entry.service;
         let identifier = service.active_channel_id.as_deref().unwrap_or_default();
         if capacity < identifier.len() {
             let required = SakuraOutputShadowActiveChannelV1 {
@@ -2187,18 +2301,26 @@ pub(crate) unsafe fn read_active_channel_internal(
 pub(crate) unsafe fn model_stop_v1(
     token: u64,
     result: *mut SakuraOutputShadowApplyResultV1,
+    provider_poison: Option<&mut bool>,
 ) -> SakuraOutputShadowStatus {
-    if !is_valid_pointer(result.cast_const()) {
-        return SakuraOutputShadowStatus::InvalidArgument;
+    if is_valid_pointer(result.cast_const()) {
+        // SAFETY: The output pointer is validated and caller-owned.
+        unsafe { result.write(poison_result()) };
     }
-    // SAFETY: The output pointer is non-null and aligned.
-    unsafe { result.write(poison_result()) };
     let mut registry = lock_registry();
-    let Some(service) = registry.services.get_mut(&token) else {
-        return SakuraOutputShadowStatus::InvalidHandle;
+    let (service, poisoned) = match model_entry(&mut registry, token, result) {
+        Ok(Some(ModelEntry { service, poisoned })) => (service, poisoned),
+        Ok(None) => return SakuraOutputShadowStatus::InvalidHandle,
+        Err(status) => return status,
     };
+    let mut poison_model = PoisonOnUnwind::new(poisoned);
+    let mut poison_provider = provider_poison.map(PoisonOnUnwind::new);
     // SAFETY: The output pointer was validated above.
     unsafe { result.write(service.stop().to_ffi()) };
+    poison_model.complete();
+    if let Some(guard) = &mut poison_provider {
+        guard.complete();
+    }
     SakuraOutputShadowStatus::Ok
 }
 
@@ -2209,7 +2331,7 @@ pub unsafe extern "C" fn sakura_output_shadow_stop_v1(
 ) -> SakuraOutputShadowStatus {
     catch_status(|| {
         // SAFETY: This wrapper has the same caller contract as the model call.
-        unsafe { model_stop_v1(token, result) }
+        unsafe { model_stop_v1(token, result, None) }
     })
 }
 
@@ -2230,9 +2352,13 @@ pub(crate) unsafe fn model_destroy_v1(token: *mut u64) -> SakuraOutputShadowStat
         return SakuraOutputShadowStatus::InvalidHandle;
     }
     let mut registry = lock_registry();
-    if registry.services.remove(&value).is_none() {
+    let std::collections::btree_map::Entry::Occupied(entry) = registry.services.entry(value) else {
         return SakuraOutputShadowStatus::InvalidHandle;
-    }
+    };
+    // Removal is the single commit. This entry owns only Rust data with
+    // no fallible destruction or foreign callbacks.
+    maybe_model_panic(MODEL_PANIC_DESTROY);
+    entry.remove();
     // SAFETY: The pointer was validated above and remains caller-owned.
     unsafe { token.write(0) };
     SakuraOutputShadowStatus::Ok
@@ -3664,10 +3790,11 @@ mod tests {
 
         let snapshot_state = |token| {
             let mut registry = lock_registry();
-            let service = registry
+            let service = &mut registry
                 .services
                 .get_mut(&token)
-                .expect("test token remains registered");
+                .expect("test token remains registered")
+                .service;
             assert_remember_invariant(service);
             let snapshot = service.snapshot_bytes().to_vec();
             let seed_key: Arc<[u8]> = Arc::from(&seed_id[..]);
@@ -3823,6 +3950,215 @@ mod tests {
         ));
     }
 
+    fn create_seeded_shadow() -> u64 {
+        let limits = SakuraOutputShadowLimitsV1 {
+            struct_size: size_of::<SakuraOutputShadowLimitsV1>() as u32,
+            abi_version: ABI_VERSION_V1,
+            maximum_owners: 4,
+            maximum_channels: 4,
+            maximum_text_bytes_per_channel: 32,
+            maximum_payload_bytes: 32,
+            maximum_log_entries_per_channel: 4,
+            maximum_remembered_operations: 4,
+            reserved: [0; 3],
+        };
+        let mut token = 0;
+        let request = abi_create_request(b"seed", b"seed-channel");
+        let mut result = poison_result();
+        // SAFETY: The arguments are initialized and caller-owned for each call.
+        unsafe {
+            assert_eq!(
+                SakuraOutputShadowStatus::Ok,
+                sakura_output_shadow_create_v1(&limits, &mut token)
+            );
+            assert_eq!(
+                SakuraOutputShadowStatus::Ok,
+                sakura_output_shadow_apply_v1(token, &request, &mut result)
+            );
+        }
+        assert_eq!(
+            SakuraOutputShadowOperationStatus::Succeeded as u32,
+            result.status
+        );
+        token
+    }
+
+    fn shadow_snapshot_buffer(bytes: &mut [u8]) -> SakuraOutputShadowSnapshotBufferV1 {
+        SakuraOutputShadowSnapshotBufferV1 {
+            struct_size: size_of::<SakuraOutputShadowSnapshotBufferV1>() as u32,
+            abi_version: ABI_VERSION_V1,
+            data: bytes.as_mut_ptr(),
+            capacity: bytes.len() as u64,
+            length: 0,
+            reserved: [0; 2],
+        }
+    }
+
+    fn shadow_snapshot(token: u64) -> Vec<u8> {
+        let mut info = poison_info();
+        // SAFETY: The info descriptor is caller-owned writable storage.
+        assert_eq!(SakuraOutputShadowStatus::Ok, unsafe {
+            sakura_output_shadow_snapshot_measure_v1(token, &mut info)
+        });
+        let mut bytes = vec![0; info.encoded_size as usize];
+        let mut buffer = shadow_snapshot_buffer(&mut bytes);
+        // SAFETY: The output descriptor and buffer are valid for this call.
+        assert_eq!(SakuraOutputShadowStatus::Ok, unsafe {
+            sakura_output_shadow_snapshot_write_v1(token, &mut buffer)
+        });
+        assert_eq!(info.encoded_size, buffer.length);
+        bytes
+    }
+
+    fn assert_poisoned_shadow(token: u64) {
+        let request = abi_create_request(b"after-panic", b"new-channel");
+        let mut result = poison_result();
+        let mut info = poison_info();
+        let mut bytes = [0xA5; 1024];
+        let mut buffer = shadow_snapshot_buffer(&mut bytes);
+        let internal_error = SakuraOutputShadowStatus::InternalError;
+        // SAFETY: The descriptors and destinations are caller-owned.
+        unsafe {
+            assert_eq!(
+                internal_error,
+                sakura_output_shadow_apply_v1(token, &request, &mut result)
+            );
+            assert_poisoned_result(&result);
+            assert_eq!(
+                internal_error,
+                sakura_output_shadow_stop_v1(token, &mut result)
+            );
+            assert_poisoned_result(&result);
+            assert_eq!(
+                internal_error,
+                sakura_output_shadow_snapshot_measure_v1(token, &mut info)
+            );
+            assert_eq!(u64::MAX, info.revision);
+            assert_eq!(
+                internal_error,
+                sakura_output_shadow_snapshot_write_v1(token, &mut buffer)
+            );
+            assert_eq!(u64::MAX, buffer.length);
+            assert_eq!(
+                internal_error,
+                sakura_output_shadow_snapshot_write_v1(token, ptr::null_mut())
+            );
+        }
+        assert_eq!([0xA5; 1024], bytes);
+    }
+
+    fn assert_shadow_destroyed(token: u64) {
+        let mut destroy_token = token;
+        // SAFETY: The shadow token is stored in a caller-owned writable slot.
+        assert_eq!(SakuraOutputShadowStatus::Ok, unsafe {
+            sakura_output_shadow_destroy_v1(&mut destroy_token)
+        });
+        assert_eq!(0, destroy_token);
+        assert!(!model_is_registered(token));
+    }
+
+    #[test]
+    fn shadow_late_mutation_panics_poison_apply_and_stop_but_allow_destroy() {
+        for point in [MODEL_PANIC_APPLY, MODEL_PANIC_STOP] {
+            let token = create_seeded_shadow();
+            let request = abi_create_request(b"mutate", b"second-channel");
+            let mut result = poison_result();
+            // SAFETY: The descriptors and their borrowed spans are caller-owned.
+            let status = with_model_panic(point, || unsafe {
+                if point == MODEL_PANIC_APPLY {
+                    sakura_output_shadow_apply_v1(token, &request, &mut result)
+                } else {
+                    sakura_output_shadow_stop_v1(token, &mut result)
+                }
+            });
+            assert_eq!(SakuraOutputShadowStatus::InternalError, status);
+            assert_poisoned_result(&result);
+            assert_poisoned_shadow(token);
+            assert_shadow_destroyed(token);
+        }
+    }
+
+    #[test]
+    fn shadow_panics_before_commit_leave_apply_measure_write_and_destroy_retryable() {
+        for operation in ["apply", "measure", "write", "destroy"] {
+            let token = create_seeded_shadow();
+            let request = abi_create_request(b"mutate", b"second-channel");
+            let mut result = poison_result();
+            let mut info = poison_info();
+            let mut bytes = [0xA5; 1024];
+            let mut buffer = shadow_snapshot_buffer(&mut bytes);
+            let mut destroy_token = token;
+
+            // SAFETY: All arguments are valid caller-owned values for the call.
+            let status = unsafe {
+                match operation {
+                    "apply" => with_model_panic(MODEL_PANIC_APPLY_BEFORE_MUTATION, || {
+                        sakura_output_shadow_apply_v1(token, &request, &mut result)
+                    }),
+                    "measure" => with_model_panic(MODEL_PANIC_SNAPSHOT_ENCODE, || {
+                        sakura_output_shadow_snapshot_measure_v1(token, &mut info)
+                    }),
+                    "write" => with_model_panic(MODEL_PANIC_SNAPSHOT_ENCODE, || {
+                        sakura_output_shadow_snapshot_write_v1(token, &mut buffer)
+                    }),
+                    "destroy" => with_model_panic(MODEL_PANIC_DESTROY, || {
+                        sakura_output_shadow_destroy_v1(&mut destroy_token)
+                    }),
+                    _ => unreachable!(),
+                }
+            };
+            assert_eq!(
+                SakuraOutputShadowStatus::InternalError,
+                status,
+                "{operation}"
+            );
+            assert_poisoned_result(&result);
+            assert_eq!(u64::MAX, info.revision);
+            assert_eq!(token, destroy_token);
+            if operation == "write" {
+                assert_eq!(u64::MAX, buffer.length);
+            }
+            assert_eq!([0xA5; 1024], bytes);
+            {
+                let registry = lock_registry();
+                let entry = &registry.services[&token];
+                assert!(!entry.poisoned, "{operation}");
+                assert!(entry.service.snapshot_cache.is_none(), "{operation}");
+                assert_eq!(1, entry.service.channels.len());
+                assert_eq!(2, entry.service.revision);
+            }
+            assert!(shadow_snapshot(token).starts_with(SNAPSHOT_MAGIC));
+            assert_shadow_destroyed(token);
+        }
+    }
+
+    #[test]
+    fn shadow_poison_preserves_another_tokens_snapshot_across_threads() {
+        let healthy = create_seeded_shadow();
+        let failing = create_seeded_shadow();
+        let expected = shadow_snapshot(healthy);
+        let start = std::sync::Barrier::new(2);
+
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                start.wait();
+                shadow_snapshot(healthy)
+            });
+            start.wait();
+            let mut result = poison_result();
+            // SAFETY: The result is initialized caller-owned storage.
+            let status = with_model_panic(MODEL_PANIC_STOP, || unsafe {
+                sakura_output_shadow_stop_v1(failing, &mut result)
+            });
+            assert_eq!(SakuraOutputShadowStatus::InternalError, status);
+            assert_eq!(expected, worker.join().expect("healthy shadow worker"));
+        });
+        assert_eq!(expected, shadow_snapshot(healthy));
+        assert_poisoned_shadow(failing);
+        assert_shadow_destroyed(failing);
+        assert_shadow_destroyed(healthy);
+    }
+
     #[test]
     fn invalid_spans_and_panics_are_contained() {
         assert_eq!(
@@ -3834,7 +4170,7 @@ mod tests {
         // SAFETY: The deliberately non-addressable request is rejected by the
         // complete top-level range check before the function reads from it.
         assert_eq!(SakuraOutputShadowStatus::InvalidArgument, unsafe {
-            sakura_output_shadow_apply_v1(1, invalid_address, &mut result)
+            sakura_output_shadow_apply_v1(0, invalid_address, &mut result)
         });
         assert_eq!(u64::MAX, result.revision);
         assert_eq!(
