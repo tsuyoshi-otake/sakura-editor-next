@@ -54,9 +54,10 @@ jobs:
       # MinGW links the one native Rust staticlib and compiles the candidate
       # paths, but its production providers stay C++: the provider guard in
       # src/main/cmake/sakura.cmake is fatal for any other value here (#303).
-      # Pin the selector so no Rust backend arrives from the caller or from the
-      # runner environment.
+      # Pin both selectors so no Rust backend arrives from the caller or from
+      # the runner environment.
       SAKURA_UTF16_BACKEND: cpp
+      SAKURA_OUTPUT_BACKEND: cpp
       # This build neither packages nor tests diff.exe; avoid an unnecessary
       # MSYS2 package prerequisite and the archive fallback.
       SAKURA_DIFFUTILS_SOURCE: none

@@ -99,7 +99,7 @@ class NativeRustToolchainParityTests(unittest.TestCase):
 
     def test_mingw_production_providers_remain_cpp(self) -> None:
         # Linking the archive is not adopting a backend.  The provider guard
-        # stays fatal for MinGW, and the workflow pins the selector so the
+        # stays fatal for MinGW, and the workflow pins both selectors so the
         # decision cannot arrive from a caller or the runner environment.
         self.assertIn(
             "MinGW currently retains only the legacy C++ UTF-16 compatibility backend",
@@ -111,6 +111,8 @@ class NativeRustToolchainParityTests(unittest.TestCase):
         )
         self.assertIn("SAKURA_UTF16_BACKEND: cpp", self.workflow)
         self.assertNotIn("SAKURA_UTF16_BACKEND: rust", self.workflow)
+        self.assertIn("SAKURA_OUTPUT_BACKEND: cpp", self.workflow)
+        self.assertNotIn("SAKURA_OUTPUT_BACKEND: rust", self.workflow)
 
     def test_mingw_installs_the_pinned_release_for_the_gnu_target(self) -> None:
         self.assertIn(
