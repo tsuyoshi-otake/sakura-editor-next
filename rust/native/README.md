@@ -32,6 +32,11 @@ native product/test link. The old `SakuraRustCore*` MSBuild property and target
 names remain compatibility shims, but resolve to this archive and to the
 `rust/native` workspace; they do not identify a second static library.
 
+[`exported-symbols.txt`](sakura_native_ffi/exported-symbols.txt) lists the
+native Rust C ABI exports checked against the built archive by
+`tools/verify-native-rust-exports.py`. For an intentional ABI change, inspect
+the rebuilt archive and update the sorted list with the reviewed names.
+
 The workspace keeps its own `Cargo.lock` and `rust-toolchain.toml`. Native
 MSBuild inputs include only these files and the native source closure, so a
 SENP-only change cannot invalidate the native Cargo stamp.

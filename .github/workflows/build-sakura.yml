@@ -1043,6 +1043,23 @@ jobs:
           throw "Rust product staticlib ($profile) failed with exit code $LASTEXITCODE."
         }
 
+    - name: Verify native Rust C ABI exports
+      shell: pwsh
+      timeout-minutes: 2
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+        $dumpbin = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+        if ($LASTEXITCODE -ne 0 -or -not $dumpbin) {
+          throw 'Could not locate dumpbin in the Visual Studio installation.'
+        }
+        $profileDir = '${{ matrix.config }}'.ToLowerInvariant()
+        $archive = "rust/native/target/x86_64-pc-windows-msvc/$profileDir/sakura_native_ffi.lib"
+        py -3 tools/verify-native-rust-exports.py --format dumpbin --tool $dumpbin --archive $archive
+        if ($LASTEXITCODE -ne 0) {
+          exit $LASTEXITCODE
+        }
+
   pr-gate:
     name: Native PR Gate
     runs-on: ubuntu-latest

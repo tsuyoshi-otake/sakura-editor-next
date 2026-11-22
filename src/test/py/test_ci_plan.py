@@ -303,6 +303,23 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("RUST_TESTS_RESULT: ${{ needs.rust-tests.result }}", self.workflow)
 
+    def test_native_rust_export_check_follows_the_staticlib_build(self) -> None:
+        steps = self.job("rust-tests").split("\n    - name: ")[1:]
+        names = [step.splitlines()[0] for step in steps]
+        build = names.index("Rust tests and product staticlib (${{ matrix.config }})")
+        self.assertEqual(names[build + 1 : build + 2], ["Verify native Rust C ABI exports"])
+        check = steps[build + 1]
+        self.assertNotRegex(check, r"(?m)^      (?:if|continue-on-error):")
+        self.assertIn(
+            "py -3 tools/verify-native-rust-exports.py --format dumpbin --tool $dumpbin --archive $archive",
+            check,
+        )
+        self.assertIn("'${{ matrix.config }}'.ToLowerInvariant()", check)
+        self.assertIn(
+            "rust/native/target/x86_64-pc-windows-msvc/$profileDir/sakura_native_ffi.lib",
+            check,
+        )
+
     def test_cargo_audit_uses_a_pinned_verified_official_binary(self) -> None:
         self.assertIn("  rust-security-audit:\n", self.workflow)
         self.assertIn("readonly version='0.22.2'", self.workflow)
