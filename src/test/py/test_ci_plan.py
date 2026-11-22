@@ -308,8 +308,14 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         names = [step.splitlines()[0] for step in steps]
         build = names.index("Rust tests and product staticlib (${{ matrix.config }})")
         self.assertEqual(names[build + 1 : build + 2], ["Verify native Rust C ABI exports"])
-        check = steps[build + 1]
+        # Exclude the comment that explains the prohibited pipeline.
+        check = "\n".join(
+            line for line in steps[build + 1].splitlines()
+            if not line.lstrip().startswith("#")
+        )
         self.assertNotRegex(check, r"(?m)^      (?:if|continue-on-error):")
+        self.assertNotIn("Select-Object -First", check)
+        self.assertIn("$dumpbinCandidates = @(& $vswhere", check)
         self.assertIn(
             "py -3 tools/verify-native-rust-exports.py --format dumpbin --tool $dumpbin --archive $archive",
             check,
