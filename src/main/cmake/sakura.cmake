@@ -934,6 +934,14 @@ if(SAKURA_OUTPUT_BACKEND STREQUAL "rust")
   target_compile_definitions(sakura_core PUBLIC SAKURA_OUTPUT_BACKEND_RUST)
 endif()
 
+# MinGW keeps the C++ authority and compiles the Rust provider so the provider
+# conformance corpus runs under GCC (#435).
+# MSVC defaults to the Rust authority. Its C++ rollback object must stay free
+# of provider imports (tools/prepare-output-provider-artifact.md).
+if(MINGW)
+  target_compile_definitions(sakura_core PUBLIC SAKURA_OUTPUT_RUST_CANDIDATE)
+endif()
+
 if(SAKURA_UTF16_BENCHMARK_TELEMETRY)
   target_compile_definitions(sakura_core PRIVATE SAKURA_UTF16_BENCHMARK_TELEMETRY)
 endif()

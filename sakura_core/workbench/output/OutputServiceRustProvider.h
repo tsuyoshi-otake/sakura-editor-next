@@ -12,6 +12,13 @@
 #include <cstdint>
 #include <memory>
 
+// Compile the Rust provider when the Rust backend is selected or the MinGW
+// candidate is built (#435). OutputProviderFactory selects the Rust authority
+// only through SAKURA_OUTPUT_BACKEND_RUST.
+#if defined(SAKURA_OUTPUT_BACKEND_RUST) || defined(SAKURA_OUTPUT_RUST_CANDIDATE)
+#define SAKURA_OUTPUT_RUST_PROVIDER_COMPILED 1
+#endif
+
 namespace workbench::output {
 
 enum class EOutputServiceRustProviderAvailability : std::uint8_t {
@@ -74,10 +81,10 @@ public:
 	OutputServiceRustProvider(OutputServiceRustProvider&&) = delete;
 	OutputServiceRustProvider& operator=(OutputServiceRustProvider&&) = delete;
 
-	//! The selector macro is the sole compile/link adoption boundary.
+	//! Reports whether the Rust implementation is compiled, independently of authority selection.
 	[[nodiscard]] static constexpr bool IsCompiledIn() noexcept
 	{
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+#if defined(SAKURA_OUTPUT_RUST_PROVIDER_COMPILED)
 		return true;
 #else
 		return false;

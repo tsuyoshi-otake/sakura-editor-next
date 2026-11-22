@@ -444,7 +444,7 @@ OutputOperationResult CompareMutation(
 	return cppResult;
 }
 
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+#if defined(SAKURA_OUTPUT_RUST_PROVIDER_COMPILED)
 
 TEST(OutputServiceProviderConformance, EveryAcceptedMutationKindMatchesCppAuthority)
 {
@@ -1488,7 +1488,8 @@ TEST(OutputServiceProviderConformance, BoundedAdvisoryDropUnsubscribeAndExternal
 
 TEST(OutputServiceRustProvider, ReportsCompileSelectedAvailabilityWithoutFunctionalFallback)
 {
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+#if defined(SAKURA_OUTPUT_RUST_PROVIDER_COMPILED)
+	// This exercises the provider directly in both builds that compile it.
 	static_assert(OutputServiceRustProvider::IsCompiledIn());
 	OutputServiceRustProvider provider;
 	ASSERT_TRUE(provider.IsAvailable());

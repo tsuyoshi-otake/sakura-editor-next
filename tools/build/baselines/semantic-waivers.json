@@ -5228,6 +5228,34 @@
           "path": "tools/build/pilots/uri_contract_test.cpp"
         }
       ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#435 compiles the Rust Output provider as a MinGW-only candidate (#267 G2.5) without changing production selection. OutputServiceRustProvider.h gains the SAKURA_OUTPUT_RUST_PROVIDER_COMPILED condition and OutputServiceRustProvider.cpp switches its nine compile guards to it; OutputServiceProviderConformanceTest.cpp switches its two guards. No finding is added. The existing findings are the provider's catch-all FFI and worker boundaries, its stop-required worker and dispatcher acquisitions, its notification mutable member, and public fields of its plain value records (OutputServiceRustProvider.cpp: 6 error.catch_all, 2 resource.stop_required_acquisition, 1 state.mutable_member, 9 state.public_mutable_field; OutputServiceRustProvider.h: 1 resource.stop_required_acquisition), and the conformance test's catch-all, stop-required fixture acquisitions, and test-local aggregates (1 error.catch_all, 8 resource.stop_required_acquisition, 6 state.public_mutable_field). They are out of scope for a compile-guard change. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "tracking_issue": 389,
+      "created": "2026-11-22",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/workbench/output/OutputServiceRustProvider.cpp": "sha256:b123a6c973e6fb39d06a2b2130a58a164f6d902853ffe12c9e7ca733c4a68676",
+        "sakura_core/workbench/output/OutputServiceRustProvider.h": "sha256:93ffa1502834db31af18b09d360bb04735f297f46019651865081cb387d03954",
+        "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp": "sha256:d7946e71473124100fb0e5591dcac17ce38d5b0430327e3a79a99d0b5416beea"
+      },
+      "new_findings": [],
+      "missing_touched_reductions": [
+        {
+          "baseline_finding_count": 18,
+          "path": "sakura_core/workbench/output/OutputServiceRustProvider.cpp"
+        },
+        {
+          "baseline_finding_count": 1,
+          "path": "sakura_core/workbench/output/OutputServiceRustProvider.h"
+        },
+        {
+          "baseline_finding_count": 15,
+          "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp"
+        }
+      ]
     }
   ]
 }

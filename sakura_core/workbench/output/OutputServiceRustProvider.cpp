@@ -593,7 +593,7 @@ template <typename Control>
 	}
 }
 
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+#if defined(SAKURA_OUTPUT_RUST_PROVIDER_COMPILED)
 
 template <typename Control>
 [[nodiscard]] std::optional<OutputServiceSnapshot> ReadSnapshot(
@@ -911,7 +911,7 @@ template <typename Control, typename FillRequest>
 		if (ready) control.snapshotCacheValid = false;
 	}
 	if (!ready) return ProviderUnavailable(control, true);
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+#if defined(SAKURA_OUTPUT_RUST_PROVIDER_COMPILED)
 	try {
 		PendingRequest pending;
 		fillRequest(pending);
@@ -967,7 +967,7 @@ template <typename Control>
 		}
 		control.pendingDestroy = true;
 	}
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+#if defined(SAKURA_OUTPUT_RUST_PROVIDER_COMPILED)
 	// Keep the ABI's writable token slot private to this serialized call. The
 	// control token is also observed under modelMutex by health/fault paths, so
 	// passing its address directly would race with those observers while Rust
@@ -1009,7 +1009,7 @@ OutputServiceRustProvider::OutputServiceRustProvider(OutputServiceLimits limits)
 		control.diagnostics.initializationStage =
 			EOutputProviderInitializationStage::ProviderConstruction;
 		control.diagnostics.counters.initializationAttempts = 1;
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+#if defined(SAKURA_OUTPUT_RUST_PROVIDER_COMPILED)
 		SakuraOutputProviderLimitsV1 rawLimits{};
 		rawLimits.struct_size = sizeof(rawLimits);
 		rawLimits.abi_version = SAKURA_OUTPUT_PROVIDER_ABI_VERSION_V1;
@@ -1246,7 +1246,7 @@ OutputOperationResult OutputServiceRustProvider::Stop() noexcept
 				RecordPublicResultLocked(*m_control, result, false);
 			}
 		} else {
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+#if defined(SAKURA_OUTPUT_RUST_PROVIDER_COMPILED)
 			bool publishSuccessfulStopBoundary{};
 			if (m_control->token != 0) {
 				SakuraOutputProviderApplyResultV1 raw{};
@@ -1281,7 +1281,7 @@ OutputOperationResult OutputServiceRustProvider::Stop() noexcept
 			std::shared_ptr<const OutputServiceSnapshot> previousSnapshot;
 			{
 				std::lock_guard lock(m_control->modelMutex);
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+#if defined(SAKURA_OUTPUT_RUST_PROVIDER_COMPILED)
 				if (publishSuccessfulStopBoundary) {
 					RecordBoundaryLocked(*m_control, EOutputProviderBoundary::Stop,
 						nullptr, SakuraOutputProviderStatus::Ok);
@@ -1353,7 +1353,7 @@ OutputServiceSnapshot OutputServiceRustProvider::Snapshot() const
 			mutationLock.unlock();
 			return *cachedObservation;
 		}
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+#if defined(SAKURA_OUTPUT_RUST_PROVIDER_COMPILED)
 		if (auto snapshot = ReadSnapshot(*m_control)) {
 			const auto observation = std::make_shared<const OutputServiceSnapshot>(std::move(*snapshot));
 			std::shared_ptr<const OutputServiceSnapshot> previousSnapshot;
@@ -1390,7 +1390,7 @@ std::optional<OutputServiceSubscriptionId> OutputServiceRustProvider::Subscribe(
 	} catch (...) {
 		return std::nullopt;
 	}
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+#if defined(SAKURA_OUTPUT_RUST_PROVIDER_COMPILED)
 	return m_control->notificationDispatcher.Subscribe(std::move(listener));
 #else
 	return std::nullopt;
@@ -1402,7 +1402,7 @@ void OutputServiceRustProvider::Unsubscribe(
 {
 	if (!m_control) return;
 	try {
-#if defined(SAKURA_OUTPUT_BACKEND_RUST)
+#if defined(SAKURA_OUTPUT_RUST_PROVIDER_COMPILED)
 		m_control->notificationDispatcher.Unsubscribe(subscriptionId);
 #else
 		(void)subscriptionId;

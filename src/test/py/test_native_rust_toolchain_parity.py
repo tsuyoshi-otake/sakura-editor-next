@@ -116,6 +116,21 @@ class NativeRustToolchainParityTests(unittest.TestCase):
         self.assertIn("SAKURA_OUTPUT_BACKEND: cpp", self.workflow)
         self.assertNotIn("SAKURA_OUTPUT_BACKEND: rust", self.workflow)
 
+    def test_output_rust_candidate_is_mingw_only(self) -> None:
+        candidate = "SAKURA_OUTPUT_RUST_CANDIDATE"
+        definition = f"target_compile_definitions(sakura_core PUBLIC {candidate})"
+        self.assertEqual(self.cmake.count(candidate), 1)
+        self.assertIn(f"if(MINGW)\n  {definition}\nendif()", self.cmake)
+        self.assertEqual(self.depths[definition], 1)
+
+        targets = REPO_ROOT / "src/main/msbuild/sakura-rust-core.targets"
+        self.assertNotIn(candidate, targets.read_text(encoding="utf-8-sig"))
+
+        factory = REPO_ROOT / "sakura_core/workbench/output/OutputProviderFactory.cpp"
+        factory_source = factory.read_text(encoding="utf-8-sig")
+        self.assertNotIn(candidate, factory_source)
+        self.assertNotIn("SAKURA_OUTPUT_RUST_PROVIDER_COMPILED", factory_source)
+
     def test_mingw_installs_the_pinned_release_for_the_gnu_target(self) -> None:
         self.assertIn(
             "Get-Content -LiteralPath 'rust-toolchain.toml' -Raw",

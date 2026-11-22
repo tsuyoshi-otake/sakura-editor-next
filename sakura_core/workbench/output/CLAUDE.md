@@ -227,6 +227,15 @@ stateful authority with lifecycle and revision semantics; SIMD remains an
 internal stateless kernel concern. They share only the one-staticlib native Rust
 transport and must be selected, tested, and rolled back independently.
 
+Issue #435 defines `SAKURA_OUTPUT_RUST_CANDIDATE` only on MinGW, where C++
+remains the production Output authority. `SAKURA_OUTPUT_RUST_PROVIDER_COMPILED`
+enables the adapter when either the Rust backend is selected or the MinGW
+candidate is built. `OutputProviderFactory` selects the production Rust
+provider only through `SAKURA_OUTPUT_BACKEND_RUST`. Both MinGW legs run
+`OutputServiceProviderConformance.*` against the C++ authority, and MSVC runs
+the same corpus through its default Rust build. The MSVC C++ rollback build
+keeps `OutputServiceRustProvider.obj` free of provider imports.
+
 `sakura_core/workbench/scm/GitOutputChannel.h`/`.cpp` (Issue #221) is this
 service's first real production content producer: an HWND-free adapter that
 mirrors `workbench::scm::RunGit` invocations into a "Git" `Log` channel,
