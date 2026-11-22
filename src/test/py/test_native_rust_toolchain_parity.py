@@ -192,11 +192,8 @@ class NativeRustToolchainParityTests(unittest.TestCase):
         self.assertNotRegex(uri_tests, r"(?m)^        (?:if|continue-on-error|shell):")
         self.assertIn("test component sakura_uri_tests", uri_tests)
         self.assertIn('context="mingw-x64-', uri_tests)
-        # A passing CTest run keeps the PROBE lines only in LastTest.log, so the
-        # step must print them from exactly one component tree.
-        self.assertIn("-path '*/Testing/Temporary/LastTest.log'", uri_tests)
-        self.assertIn('if [ "${#logs[@]}" -ne 1 ]; then', uri_tests)
-        self.assertIn("grep -F '[  PROBE   ]'", uri_tests)
+        self.assertNotIn("PROBE", uri_tests)
+        self.assertNotIn("LastTest.log", uri_tests)
 
 
 if __name__ == "__main__":
