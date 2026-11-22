@@ -66,7 +66,7 @@ target_link_libraries(sakura_controlipc_transport_tests PRIVATE sakura_controlip
 target_link_libraries(sakura_controlipc_transport_tests PRIVATE sakura_controlipc_security)
 target_link_libraries(sakura_controlipc_transport_tests PRIVATE sakura_controlipc_protocol)
 target_link_libraries(sakura_controlipc_transport_tests PRIVATE sakura_security)
-target_link_options(sakura_controlipc_transport_tests PRIVATE /INCREMENTAL:NO "/MAP:${CMAKE_BINARY_DIR}/sakura_controlipc_transport_tests.map")
+target_link_options(sakura_controlipc_transport_tests PRIVATE "-Wl,-Map=${CMAKE_BINARY_DIR}/sakura_controlipc_transport_tests.map")
 
 enable_testing()
 add_test(NAME sakura_controlipc_transport_tests COMMAND sakura_controlipc_transport_tests)

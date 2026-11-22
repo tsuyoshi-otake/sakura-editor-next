@@ -820,7 +820,12 @@ def _cmake_project(graph: SemanticGraph, root: Component, context_id: str) -> st
             scope = "INTERFACE" if not has_sources else "PUBLIC"
             lines.append(f'target_link_libraries({component.id} {scope} {" ".join(component.system_libraries)})')
         if component.kind == "test":
-            lines.append(f'target_link_options({component.id} PRIVATE /INCREMENTAL:NO "/MAP:${{CMAKE_BINARY_DIR}}/{component.id}.map")')
+            if context.toolchain == "msvc":
+                lines.append(f'target_link_options({component.id} PRIVATE /INCREMENTAL:NO "/MAP:${{CMAKE_BINARY_DIR}}/{component.id}.map")')
+            elif context.toolchain == "mingw":
+                lines.append(f'target_link_options({component.id} PRIVATE "-Wl,-Map=${{CMAKE_BINARY_DIR}}/{component.id}.map")')
+            else:
+                raise ValueError(f"unsupported generated CMake test link toolchain: {context.toolchain}")
         lines.append('')
     if root.kind == "test":
         lines.extend([

@@ -202,6 +202,33 @@ jobs:
           export PATH="$(cygpath --unix "${SAKURA_CARGO_BIN}"):${PATH}"
           ./build-gnu.bat ${{ env.BuildPlatform }} ${{ env.Configuration }} --no-test
 
+      - name: Verify native Rust C ABI exports (GNU nm)
+        # Check the GNU archive against the same 32-name allowlist as the
+        # MSVC rust-tests leg (#429, #435).
+        run: |
+          profile_dir="$(printf '%s' "${Configuration}" | tr '[:upper:]' '[:lower:]')"
+          archive="build/MinGW/rust/native/x86_64-pc-windows-gnu/${profile_dir}/libsakura_native_ffi.a"
+          nm_path="$(command -v nm)"
+          nm_tool="$(cygpath -w "${nm_path}")"
+          py -3 tools/verify-native-rust-exports.py --format nm --tool "${nm_tool}" --archive "${archive}"
+
+      - name: Run the URI identity contract tests (sakura_uri_tests)
+        # Record the msvcrt case-fold PROBE lines from #434 that #435 freezes.
+        # Run the generated component for the current MinGW configuration.
+        # CTest keeps a passing test's output only in LastTest.log, so print
+        # the PROBE lines from the one component tree this fresh runner built.
+        run: |
+          context="mingw-x64-$(printf '%s' "${Configuration}" | tr '[:upper:]' '[:lower:]')"
+          py -3 tools/build/sakura_build.py test component sakura_uri_tests --context "${context}"
+          mapfile -t logs < <(find build/components/cmake -path '*/Testing/Temporary/LastTest.log' -print)
+          if [ "${#logs[@]}" -ne 1 ]; then
+            echo "::error::expected one component CTest log, found ${#logs[@]}"
+            exit 1
+          fi
+          probes="$(grep -F '[  PROBE   ]' "${logs[0]}" || true)"
+          printf '%s\n' "${probes}"
+          echo "PROBE lines: $(printf '%s' "${probes}" | grep -c . || true)"
+
       - name: Run unit tests
         id: run_unit_tests
         timeout-minutes: 15

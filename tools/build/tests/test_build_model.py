@@ -1040,6 +1040,22 @@ class ManifestTests(unittest.TestCase):
             self.assertIn("/Zp8", cmake)
             self.assertIn("/FI${SAKURA_REPO_ROOT}/src/main/modules/generated/abi/cmake-ctx/consumer.h", cmake)
 
+    def test_generated_cmake_tests_use_toolchain_specific_map_options(self):
+        graph = load_semantic_graph(REPO_ROOT)
+        component = graph.components["sakura_uri_tests"]
+        msvc = build_generator._cmake_project(graph, component, "cmake-msvc-x64-debug")
+        mingw = build_generator._cmake_project(graph, component, "mingw-x64-debug")
+        self.assertIn(
+            'target_link_options(sakura_uri_tests PRIVATE /INCREMENTAL:NO "/MAP:${CMAKE_BINARY_DIR}/sakura_uri_tests.map")',
+            msvc.splitlines(),
+        )
+        self.assertIn(
+            'target_link_options(sakura_uri_tests PRIVATE "-Wl,-Map=${CMAKE_BINARY_DIR}/sakura_uri_tests.map")',
+            mingw.splitlines(),
+        )
+        self.assertNotIn("/INCREMENTAL", mingw)
+        self.assertNotIn("/MAP:", mingw)
+
     def test_legacy_consumer_projection_replaces_embedded_source_and_rolls_back(self):
         with RepositoryFixture() as (root, manifest):
             value, profiles = generated_dual_backend_data(root)

@@ -29,7 +29,7 @@ target_compile_features(sakura_controlipc_protocol_tests PRIVATE cxx_std_20)
 target_compile_options(sakura_controlipc_protocol_tests PRIVATE -fpack-struct=8 -include "${SAKURA_REPO_ROOT}/src/main/modules/generated/abi/mingw-x64-debug/sakura_controlipc_protocol_tests.h")
 target_compile_definitions(sakura_controlipc_protocol_tests PRIVATE _WIN32_WINNT=0x0A00 NOMINMAX UNICODE _UNICODE)
 target_link_libraries(sakura_controlipc_protocol_tests PRIVATE sakura_controlipc_protocol)
-target_link_options(sakura_controlipc_protocol_tests PRIVATE /INCREMENTAL:NO "/MAP:${CMAKE_BINARY_DIR}/sakura_controlipc_protocol_tests.map")
+target_link_options(sakura_controlipc_protocol_tests PRIVATE "-Wl,-Map=${CMAKE_BINARY_DIR}/sakura_controlipc_protocol_tests.map")
 
 enable_testing()
 add_test(NAME sakura_controlipc_protocol_tests COMMAND sakura_controlipc_protocol_tests)

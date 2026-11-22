@@ -51,7 +51,7 @@ target_compile_options(sakura_storage_tests PRIVATE -fpack-struct=8 -include "${
 target_compile_definitions(sakura_storage_tests PRIVATE _WIN32_WINNT=0x0A00 NOMINMAX UNICODE _UNICODE)
 target_link_libraries(sakura_storage_tests PRIVATE sakura_storage)
 target_link_libraries(sakura_storage_tests PRIVATE sakura_security)
-target_link_options(sakura_storage_tests PRIVATE /INCREMENTAL:NO "/MAP:${CMAKE_BINARY_DIR}/sakura_storage_tests.map")
+target_link_options(sakura_storage_tests PRIVATE "-Wl,-Map=${CMAKE_BINARY_DIR}/sakura_storage_tests.map")
 
 enable_testing()
 add_test(NAME sakura_storage_tests COMMAND sakura_storage_tests)

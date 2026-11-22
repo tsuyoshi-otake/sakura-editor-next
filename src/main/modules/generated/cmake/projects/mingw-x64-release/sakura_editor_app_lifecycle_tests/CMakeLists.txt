@@ -28,7 +28,7 @@ target_compile_features(sakura_editor_app_lifecycle_tests PRIVATE cxx_std_20)
 target_compile_options(sakura_editor_app_lifecycle_tests PRIVATE -fpack-struct=8 -include "${SAKURA_REPO_ROOT}/src/main/modules/generated/abi/mingw-x64-release/sakura_editor_app_lifecycle_tests.h")
 target_compile_definitions(sakura_editor_app_lifecycle_tests PRIVATE _WIN32_WINNT=0x0A00 NOMINMAX UNICODE _UNICODE)
 target_link_libraries(sakura_editor_app_lifecycle_tests PRIVATE sakura_editor_app_lifecycle)
-target_link_options(sakura_editor_app_lifecycle_tests PRIVATE /INCREMENTAL:NO "/MAP:${CMAKE_BINARY_DIR}/sakura_editor_app_lifecycle_tests.map")
+target_link_options(sakura_editor_app_lifecycle_tests PRIVATE "-Wl,-Map=${CMAKE_BINARY_DIR}/sakura_editor_app_lifecycle_tests.map")
 
 enable_testing()
 add_test(NAME sakura_editor_app_lifecycle_tests COMMAND sakura_editor_app_lifecycle_tests)

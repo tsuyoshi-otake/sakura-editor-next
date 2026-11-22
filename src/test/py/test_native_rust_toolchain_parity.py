@@ -57,6 +57,8 @@ class NativeRustToolchainParityTests(unittest.TestCase):
             self.toolchain = tomllib.load(stream)["toolchain"]
         self.cmake = SAKURA_CMAKE.read_text(encoding="utf-8-sig")
         self.workflow = MINGW_WORKFLOW.read_text(encoding="utf-8-sig")
+        self.steps = re.split(r"(?m)^      - ", self.workflow)[1:]
+        self.step_names = [step.splitlines()[0].removeprefix("name: ") for step in self.steps]
         self.depths = _condition_depths(self.cmake)
 
     def test_declared_targets_match_the_triples_cmake_selects(self) -> None:
@@ -150,6 +152,36 @@ class NativeRustToolchainParityTests(unittest.TestCase):
             ),
             self.workflow.count("./build-gnu.bat "),
         )
+
+    def test_mingw_export_check_follows_the_staticlib_build(self) -> None:
+        build = self.step_names.index("Build with MinGW-w64-gcc")
+        self.assertEqual(
+            self.step_names[build + 1 : build + 2],
+            ["Verify native Rust C ABI exports (GNU nm)"],
+        )
+        check = self.steps[build + 1]
+        self.assertNotRegex(check, r"(?m)^        (?:if|continue-on-error|shell):")
+        self.assertIn("py -3 tools/verify-native-rust-exports.py --format nm", check)
+        self.assertIn(
+            f"build/MinGW/rust/native/{GNU_TRIPLE}/${{profile_dir}}/libsakura_native_ffi.a",
+            check,
+        )
+
+    def test_mingw_uri_contract_tests_run_between_the_export_check_and_unit_tests(self) -> None:
+        export_check = self.step_names.index("Verify native Rust C ABI exports (GNU nm)")
+        self.assertEqual(
+            self.step_names[export_check + 1 : export_check + 3],
+            ["Run the URI identity contract tests (sakura_uri_tests)", "Run unit tests"],
+        )
+        uri_tests = self.steps[export_check + 1]
+        self.assertNotRegex(uri_tests, r"(?m)^        (?:if|continue-on-error|shell):")
+        self.assertIn("test component sakura_uri_tests", uri_tests)
+        self.assertIn('context="mingw-x64-', uri_tests)
+        # A passing CTest run keeps the PROBE lines only in LastTest.log, so the
+        # step must print them from exactly one component tree.
+        self.assertIn("-path '*/Testing/Temporary/LastTest.log'", uri_tests)
+        self.assertIn('if [ "${#logs[@]}" -ne 1 ]; then', uri_tests)
+        self.assertIn("grep -F '[  PROBE   ]'", uri_tests)
 
 
 if __name__ == "__main__":

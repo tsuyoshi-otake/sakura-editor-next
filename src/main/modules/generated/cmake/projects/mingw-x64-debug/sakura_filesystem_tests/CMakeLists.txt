@@ -48,7 +48,7 @@ target_compile_options(sakura_filesystem_tests PRIVATE -fpack-struct=8 -include 
 target_compile_definitions(sakura_filesystem_tests PRIVATE _WIN32_WINNT=0x0A00 NOMINMAX UNICODE _UNICODE)
 target_link_libraries(sakura_filesystem_tests PRIVATE sakura_filesystem)
 target_link_libraries(sakura_filesystem_tests PRIVATE sakura_uri)
-target_link_options(sakura_filesystem_tests PRIVATE /INCREMENTAL:NO "/MAP:${CMAKE_BINARY_DIR}/sakura_filesystem_tests.map")
+target_link_options(sakura_filesystem_tests PRIVATE "-Wl,-Map=${CMAKE_BINARY_DIR}/sakura_filesystem_tests.map")
 
 enable_testing()
 add_test(NAME sakura_filesystem_tests COMMAND sakura_filesystem_tests)

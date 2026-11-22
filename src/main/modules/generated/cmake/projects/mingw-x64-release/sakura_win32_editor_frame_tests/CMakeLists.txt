@@ -29,7 +29,7 @@ target_compile_features(sakura_win32_editor_frame_tests PRIVATE cxx_std_20)
 target_compile_options(sakura_win32_editor_frame_tests PRIVATE -fpack-struct=8 -include "${SAKURA_REPO_ROOT}/src/main/modules/generated/abi/mingw-x64-release/sakura_win32_editor_frame_tests.h")
 target_compile_definitions(sakura_win32_editor_frame_tests PRIVATE _WIN32_WINNT=0x0A00 NOMINMAX UNICODE _UNICODE)
 target_link_libraries(sakura_win32_editor_frame_tests PRIVATE sakura_win32_editor_frame)
-target_link_options(sakura_win32_editor_frame_tests PRIVATE /INCREMENTAL:NO "/MAP:${CMAKE_BINARY_DIR}/sakura_win32_editor_frame_tests.map")
+target_link_options(sakura_win32_editor_frame_tests PRIVATE "-Wl,-Map=${CMAKE_BINARY_DIR}/sakura_win32_editor_frame_tests.map")
 
 enable_testing()
 add_test(NAME sakura_win32_editor_frame_tests COMMAND sakura_win32_editor_frame_tests)
