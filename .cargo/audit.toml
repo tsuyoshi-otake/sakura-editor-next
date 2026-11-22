@@ -21,4 +21,10 @@ ignore = [
     # reason: SENP never calls extract() and rejects symlink entries. The zip
     # 9.x update that fixes all four stays in #335.
     "RUSTSEC-2026-0429",
+    # zip 5.1.1 (#437, approved 2026-11-22). 0545 (AES MAC) and 0547 (legacy Shrink/Reduce/Implode decoders) are
+    # compiled only with the aes-crypto and legacy-zip features, which SENP does not enable; 0548 concerns
+    # ZipStreamReader, which SENP never constructs (it reads packages through ZipArchive). zip 9.x stays in #335.
+    "RUSTSEC-2026-0545",
+    "RUSTSEC-2026-0547",
+    "RUSTSEC-2026-0548",
 ]
