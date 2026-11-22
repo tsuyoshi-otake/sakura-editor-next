@@ -1,8 +1,10 @@
 """Native Rust staticlib symbol parsing and fail-closed C ABI checks."""
 
+import re
 import runpy
 import subprocess
 import sys
+from codecs import BOM_UTF16_BE, BOM_UTF16_LE
 from pathlib import Path
 
 import pytest
@@ -72,6 +74,65 @@ def test_allowlist_is_sorted_unique_and_nonempty():
     names = allowlist_names()
     assert names
     assert names == sorted(set(names))
+
+
+def test_byte_simd_candidates_are_comparison_only():
+    exports = tuple(
+        f"sakura_byte_find_cr_or_lf_{isa}_candidate_v1"
+        for isa in ("avx128", "avx2", "avx512bw")
+    )
+    adapters = {
+        "FindCrOrLfRustAvx128": "avx",
+        "FindCrOrLfRustAvx2": "avx2",
+        "FindCrOrLfRustAvx512Bw": "avx512",
+    }
+    accessor = "GetSupportedFindCrOrLfRust"
+    references = re.compile(r"\b(?:" + "|".join((*exports, *adapters, accessor)) + r")\b")
+    adapter_signatures = {
+        f"std::size_t {name}(const char* data, std::size_t length) noexcept"
+        for name in adapters
+    }
+    accessor_signature = f"FindCrOrLfFunction {accessor}(Isa isa) noexcept"
+    # Pin individual references, including the adapter and Testing accessor
+    # names, so wiring either into production dispatch also fails this check.
+    allowed = {
+        "util/RustUtf16Scan.h": {f"SakuraStatus {name}(" for name in exports},
+        "util/CpuDispatchRust.cpp": {f"return {name}(" for name in exports} | adapter_signatures,
+        "util/CpuDispatchInternal.h": {f"{signature};" for signature in adapter_signatures},
+        "util/CpuDispatch.h": {f"{accessor_signature};"},
+        "util/CpuDispatch.cpp": {accessor_signature} | {
+            f"return dispatch.capabilities.{capability} ? Internal::{name} : nullptr;"
+            for name, capability in adapters.items()
+        },
+    }
+
+    core = ROOT / "sakura_core"
+    assert core.is_dir()
+    source_suffixes = {
+        ".c", ".cc", ".cpp", ".cppm", ".cxx", ".h", ".hh", ".hpp", ".hsrc",
+        ".hxx", ".inc", ".inl", ".ixx", ".rc", ".rc2",
+    }
+    unexpected = []
+    # Test sources live outside sakura_core/ and can use the candidates.
+    for path in sorted(core.rglob("*")):
+        if path.suffix.lower() not in source_suffixes or not path.is_file():
+            continue
+        relative = path.relative_to(core).as_posix()
+        permitted = allowed.get(relative, set())
+        data = path.read_bytes()
+        encoding = "utf-16" if data.startswith((BOM_UTF16_LE, BOM_UTF16_BE)) else "utf-8-sig"
+        for number, line in enumerate(data.decode(encoding, errors="replace").splitlines(), 1):
+            if not references.search(line):
+                continue
+            reference = line.strip()
+            if reference in permitted:
+                permitted.remove(reference)
+            else:
+                unexpected.append(f"sakura_core/{relative}:{number}: {reference}")
+    assert not unexpected, (
+        "Rust byte CR/LF candidates require a versioned byte operation policy before "
+        "production use:\n" + "\n".join(unexpected)
+    )
 
 
 def test_dumpbin_parser_reads_the_public_symbol_table():

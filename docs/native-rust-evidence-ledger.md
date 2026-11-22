@@ -48,3 +48,16 @@ measured host for CR/LF (−33.33%), Markdown inline-special (−41.93%), and
 find-char (−20.56%). The final local review identifies Rust 1.96.0 for the
 audited static library, with nine versioned scan symbols.
 [#239 final local review](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/239#issuecomment-5365951669)
+
+## 2026-11-22 / #433 G2.4 byte CR/LF policy
+
+The three Rust byte CR/LF exports are an accepted G2 exception for
+comparison-only use. They use the C++-owned CPU/OS capability snapshot.
+`CpuDispatch` selects C++ scanners for production byte CR/LF dispatch and
+exposes the Rust adapters through `CpuDispatch::Testing` for comparisons.
+Before any production dispatch through these exports, add a versioned byte
+operation policy with an operation ID and minimum length. The existing ABI V1
+policy slots cover the three UTF-16 operations.
+The source guard is `test_byte_simd_candidates_are_comparison_only` in
+`src/test/py/test_native_rust_exports.py`.
+[#433](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/433)

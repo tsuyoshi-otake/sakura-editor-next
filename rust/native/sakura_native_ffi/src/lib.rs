@@ -574,6 +574,9 @@ export_byte_candidate!(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Barrier;
+    use std::thread;
+
     use super::*;
 
     fn capabilities(raw: u64, os: u64) -> SakuraCpuCapabilitiesV1 {
@@ -717,6 +720,58 @@ mod tests {
             SakuraStatus::ConflictingInitialization,
             cell.initialize(different)
         );
+    }
+
+    fn assert_first_initialization_races(offers: [Snapshot; 8]) {
+        for offered in &offers {
+            assert_eq!(SakuraStatus::Ok, validate_snapshot(offered));
+        }
+
+        for round in 0..200 {
+            let cell = InitializationCell::new();
+            let start = Barrier::new(offers.len());
+            let statuses = thread::scope(|scope| {
+                let cell = &cell;
+                let start = &start;
+                let racers = offers.map(|offered| {
+                    scope.spawn(move || {
+                        start.wait();
+                        let first = cell.initialize(offered);
+                        // The first call has published or observed the winner.
+                        let repeated = cell.initialize(offered);
+                        (first, repeated)
+                    })
+                });
+                racers.map(|racer| racer.join().expect("initialization racer panicked"))
+            });
+
+            let winner = cell.snapshot.get().expect("no snapshot was published");
+            assert!(offers.contains(winner), "round {round}: unexpected winner");
+            for (racer, (offered, status)) in offers.into_iter().zip(statuses).enumerate() {
+                let expected = if &offered == winner {
+                    SakuraStatus::Ok
+                } else {
+                    SakuraStatus::ConflictingInitialization
+                };
+                assert_eq!((expected, expected), status, "round {round}, racer {racer}");
+            }
+        }
+    }
+
+    #[test]
+    fn concurrent_first_initialization_accepts_all_identical_snapshots() {
+        let original = snapshot(full_capabilities(), policies(IMPLEMENTATION_CPP_AVX512BW));
+        assert_first_initialization_races([original; 8]);
+    }
+
+    #[test]
+    fn concurrent_first_initialization_accepts_only_the_winning_snapshot() {
+        let original = snapshot(full_capabilities(), policies(IMPLEMENTATION_CPP_AVX512BW));
+        let mut different = original;
+        different.policies[0].minimum_length += 1;
+        assert_first_initialization_races(std::array::from_fn(|racer| {
+            [original, different][racer % 2]
+        }));
     }
 
     #[test]
