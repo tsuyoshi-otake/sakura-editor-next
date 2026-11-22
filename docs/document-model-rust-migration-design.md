@@ -264,9 +264,9 @@ one `sakura_native_ffi` archive. Keep its lockfile and audit separate from
 SENP. Use the existing immutable CPU policy handoff before SIMD use.
 Start with workspace code and standard-library types. Any new dependency needs
 its locked provenance, release-age and audit evidence under the applicable
-repository and #267 rules. The
-UTF-16 production package is currently C++ and the Rust comparison path
-exists. G0 disposition remains a prerequisite. (`rust/native/README.md:3–41`,
+repository and #267 rules. C++ owns all nine production UTF-16 scan cells
+(#239). The retained Rust comparison path remains available for the document
+lane's future performance review. (`rust/native/README.md:3–44`,
 `rust/native/Cargo.toml:1–20`, `src/main/msbuild/sakura-rust-core.targets:11–15,55–64,84–95`,
 `src/main/cmake/sakura.cmake:757–768,788–851,928–936`,
 `.github/workflows/build-sakura.yml:274–280,573–575`)
@@ -390,7 +390,7 @@ state masks, p50/p95, dispersion and confidence intervals. Include direct
 and actual caller results, allocations/peak memory, copied bytes, FFI call
 volume, and clean startup/relink evidence. Run cold/warm and streaming cases
 with realistic and adversarial sizes. Keep each cell's result and artifact
-SHA-256, command and raw evidence reference in the #267 append-only ledger.
+SHA-256, command and raw evidence reference in the [append-only evidence ledger](native-rust-evidence-ledger.md).
 A NO-GO cell stays with its approved provider in its context. The existing
 UTF-16 phase harness is direct and actual-caller scan evidence, with
 `TryRunFromEnvironment` in the disabled benchmark test

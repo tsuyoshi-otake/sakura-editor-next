@@ -14,15 +14,18 @@ The native link boundary is deliberately one archive:
 - `sakura-native-ffi` is the only `staticlib`. It uses `std` to own the C ABI
   wrappers and catches a panic at every export, returning the typed
   `InternalError` status rather than unwinding into C++. Its fixed-width V2
-  UTF-16 scan ABI delegates to the internal kernels in `sakura-simd`. The same
+  UTF-16 scan ABI delegates to the internal kernels in `sakura-simd`. #239
+  keeps all nine production UTF-16 cells in C++. The Rust scan ABI and kernels
+  remain available for tests and explicit non-production MSVC comparisons. The
   archive also owns the stateless URI candidate, the replay-only Output state
   candidate, and the callback-free Output authority provider. All three copy
   caller input and retain no foreign pointer. Candidates have no callback or
   external side-effect authority. In a
   `SAKURA_OUTPUT_BACKEND_RUST` build, the provider owns the Output model behind
   a separate opaque-token family while its C++ adapter owns advisory listener
-  dispatch. Rust is the MSVC default (#274); MinGW remains C++. An explicit C++
-  build is the rollback path; there is no runtime fallback between providers.
+  dispatch. Rust Output is the MSVC default (#274). MinGW uses C++ Output.
+  An explicit C++ build is the rollback path. Each build uses a single Output
+  provider.
 
 `sakura_native_ffi.lib` is therefore the only Rust library added to each
 native product/test link. The old `SakuraRustCore*` MSBuild property and target

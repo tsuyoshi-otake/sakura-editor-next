@@ -4,10 +4,10 @@
     <SakuraUtf16ProductionPackageUpper>$(SAKURA_UTF16_PRODUCTION_PACKAGE.ToUpperInvariant())</SakuraUtf16ProductionPackageUpper>
     <SAKURA_OUTPUT_PRODUCTION_PACKAGE Condition="'$(SAKURA_OUTPUT_PRODUCTION_PACKAGE)'=='' And $([System.Environment]::GetEnvironmentVariables().Contains('SAKURA_OUTPUT_PRODUCTION_PACKAGE')) == 'False'">false</SAKURA_OUTPUT_PRODUCTION_PACKAGE>
     <!-- UTF-16 and Output package contexts are independent contracts. -->
-    <!-- Output defaults to Rust (#274); UTF-16 retains its C++ default.
+    <!-- Output defaults to Rust (#274). C++ owns all production UTF-16 cells (#239).
          Both selections share the single native Rust static library. -->
-    <!-- Environment variables are imported as properties; inspect the
-         environment table so a defined empty value is not treated as absent. -->
+    <!-- MSBuild imports environment variables as properties. The Output selector
+         checks the environment table to distinguish an empty value from absence. -->
     <SAKURA_UTF16_BACKEND Condition="'$(SAKURA_UTF16_BACKEND)'==''">cpp</SAKURA_UTF16_BACKEND>
     <SAKURA_OUTPUT_BACKEND Condition="'$(SAKURA_OUTPUT_BACKEND)'=='' And $([System.Environment]::GetEnvironmentVariables().Contains('SAKURA_OUTPUT_BACKEND')) == 'False'">rust</SAKURA_OUTPUT_BACKEND>
     <SAKURA_UTF16_BENCHMARK_TELEMETRY Condition="'$(SAKURA_UTF16_BENCHMARK_TELEMETRY)'==''">false</SAKURA_UTF16_BENCHMARK_TELEMETRY>
@@ -94,7 +94,7 @@
 
   <ItemDefinitionGroup>
     <ClCompile>
-      <!-- Native FFI is linked in both modes for candidate differential tests. -->
+      <!-- The native Rust archive supplies retained differential kernels in both modes. -->
       <PreprocessorDefinitions>SAKURA_UTF16_RUST_CANDIDATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -105,7 +105,7 @@
 
   <ItemDefinitionGroup Condition="'$(SakuraUtf16BackendUpper)'=='RUST'">
     <ClCompile>
-      <!-- Only an explicit Rust selection becomes the production provider. -->
+      <!-- An explicit Rust selection enables non-production actual-caller comparisons. -->
       <PreprocessorDefinitions>SAKURA_UTF16_BACKEND_RUST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>

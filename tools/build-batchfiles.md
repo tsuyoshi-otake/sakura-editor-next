@@ -22,9 +22,10 @@
 `tools/build/sakura_build.py` が所有します。
 
 MSVCのOutput backendは`rust`が既定です（Issue #274）。`cpp`の明示選択は
-ビルド単位のrollback用に残し、MinGWとUTF-16の既定は`cpp`のままです。
-`build-installer.bat`と`zipArtifacts.bat`は独立したproductionフラグを設定して
-Outputの`cpp`/`rust`を検証します。公開用のrelease provenance/smokeは
+ビルド単位のrollback用に残します。MinGWのOutputは`cpp`です。UTF-16の配布にはC++で
+ビルドした本体を使用します。MSVCで明示的に選ぶRust UTF-16は比較専用です。
+`build-installer.bat`と`zipArtifacts.bat`は独立したproductionフラグを設定して、
+UTF-16の`cpp`とOutputの`cpp`/`rust`を検証します。公開用のrelease provenance/smokeは
 Rust Output / C++ UTF-16のexact契約を要求します。
 
 | ファイル名 | 説明 |

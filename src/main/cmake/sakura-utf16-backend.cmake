@@ -1,9 +1,8 @@
 # Early UTF-16 backend contract validation.
 #
-# The C++ implementation remains the rollback-first authority. MSVC still
-# builds the Rust native FFI archive as a comparison candidate, but selecting
-# that archive as the UTF-16 provider is an explicit, non-production choice.
-# MinGW has no pinned GNU Rust target and therefore remains C++ only.
+# C++ is the UTF-16 production backend on MSVC and MinGW (#239).
+# The pinned native Rust archive supplies retained comparison kernels on both.
+# MSVC can explicitly select Rust for non-production caller comparisons.
 
 if(DEFINED SAKURA_UTF16_BACKEND)
   set(_sakura_utf16_backend_value "${SAKURA_UTF16_BACKEND}")
@@ -12,14 +11,14 @@ else()
   if(_sakura_utf16_backend_value STREQUAL "")
     # This file is included before project(), so compiler-specific variables
     # such as MINGW are not available yet. The canonical MinGW runner passes
-    # cpp explicitly; every other CMake path uses the rollback-first default.
+    # cpp explicitly. The other CMake paths default to cpp.
     set(_sakura_utf16_backend_value "cpp")
   endif()
 endif()
 set(
   SAKURA_UTF16_BACKEND
   "${_sakura_utf16_backend_value}"
-  CACHE STRING "UTF-16 backend: rust for MSVC, cpp for experimental MinGW"
+  CACHE STRING "UTF-16 backend (cpp by default, rust for MSVC comparison builds only)"
 )
 set_property(CACHE SAKURA_UTF16_BACKEND PROPERTY STRINGS cpp rust)
 if(NOT SAKURA_UTF16_BACKEND STREQUAL "cpp"

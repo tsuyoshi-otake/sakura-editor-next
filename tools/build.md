@@ -74,9 +74,10 @@ choco install InnoSetup -y
 
 詳細は [インストーラビルドの仕組み](../installer/readme.md) を参照してください。
 
-UTF-16走査バックエンドは`SAKURA_UTF16_BACKEND`で明示します。MSVCではrollback-firstの
-既定・本番プロバイダーをC++に戻しますが、Rust実装は候補として常にビルド・リンクする
-ため、通常ビルド・テスト・配布ビルドのすべてでCargoと固定toolchainを必要とします。
+UTF-16走査バックエンドは`SAKURA_UTF16_BACKEND`で明示します。既定は`cpp`で、全9セルの
+本番プロバイダーはC++です（Issue #239）。Rust実装は差分検証と、MSVCでの配布を伴わない
+比較ビルド用に残します。MSVCとMinGWは共有のRust staticlibをビルド・リンクするため、
+固定toolchainとCargoが必要です。
 ネイティブ側は`rust/native`のCargoワークスペースから内部`rlib`の
 `sakura-simd`と、唯一のRustリンク境界である`rust/native/sakura_native_ffi`の
 `sakura_native_ffi.lib`をビルドします。SENPのホスト・ツール・WASM拡張は独立した
@@ -93,7 +94,8 @@ MSVCで`cpp`を明示すればビルド単位で戻せます。UTF-16/SIMD backe
 
 MSBuildでは`/p:SAKURA_UTF16_BACKEND=cpp`（既定）または明示的な
 `/p:SAKURA_UTF16_BACKEND=rust`、MSVCのCMakeでは`-DSAKURA_UTF16_BACKEND=cpp`（既定）
-または`rust`を指定します。MinGWは`-DSAKURA_UTF16_BACKEND=cpp`を明示します。
+または`rust`を指定します。`rust`は配布を伴わない比較ビルド専用です。
+MinGWは`-DSAKURA_UTF16_BACKEND=cpp`を明示します。
 `both`、`auto`、空でない未知の値はハードエラーです。Rustワークスペースは
 ネイティブなら`rust/native/rust-toolchain.toml`、SENPなら
 `rust/senp/rust-toolchain.toml`の固定toolchainを選ぶため、Cargoは各ワークスペースの
@@ -107,9 +109,9 @@ Outputも同様にMSBuildでは`/p:SAKURA_OUTPUT_BACKEND=cpp|rust`、CMakeでは
 選択を変えても`SAKURA_UTF16_BACKEND`は変わらず、逆方向にも影響しません。
 
 配布ビルド・インストーラ・ZIPは`SAKURA_UTF16_PRODUCTION_PACKAGE=true`と
-`SAKURA_OUTPUT_PRODUCTION_PACKAGE=true`をそれぞれ設定します。G0のrollback-first契約では
-`SAKURA_UTF16_BACKEND=cpp`だけを受け付け、UTF-16の`rust`は比較ビルドで選択できても配布処理では
-拒否します。OutputはIssue #274の独立した採用判断によりRustを既定とし、
+`SAKURA_OUTPUT_PRODUCTION_PACKAGE=true`をそれぞれ設定します。UTF-16の配布用設定は
+`SAKURA_UTF16_BACKEND=cpp`だけを受け付け、比較用の`rust`を拒否します。
+OutputはIssue #274の独立した採用判断によりRustを既定とし、
 `SAKURA_OUTPUT_PRODUCTION_PACKAGE=true`でも`cpp`と`rust`を受け付けます。
 Outputのproduction判定はUTF-16のproductionフラグから推測しません。
 `both`など未知のモードもCargo・コンパイル・パッケージ処理の前に拒否します。
@@ -598,8 +600,8 @@ AVX2 および AVX-512F/BW を使う処理はソース単位で分離してコ�
 CPUID と XGETBV で CPU・OS の保存状態を一度だけ確認して、利用可能な最上位実装へ
 関数ポインターを固定します。グローバルな AVX-512 ティアは、C++ バイトスキャナの
 末尾処理が AVX2 実装へ委譲するため、AVX-512F/BW と OS 状態に加えて AVX2 も必要です。
-Rust UTF-16 AVX-512 エントリポイントもこのプロセス全体の契約に従います。追加の ISA 別
-バイナリは生成しません。
+比較用に残した Rust UTF-16 AVX-512BW カーネルも、同じ AVX2 と OS の保存状態を必要とします。
+追加の ISA 別バイナリは生成しません。
 
 ### R1 candidate component pilot (URI)
 

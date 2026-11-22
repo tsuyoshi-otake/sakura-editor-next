@@ -49,6 +49,10 @@ build-all.bat x64   Debug
 
 ### 個別にビルドする場合
 
+インストーラには、`SAKURA_UTF16_BACKEND=cpp`でビルドした本体を使用します。
+MSVCで`rust`を明示したUTF-16ビルドは比較専用です。`build-installer.bat`は
+ファイルの配置前に`SAKURA_UTF16_BACKEND`の設定を検証します。
+
 以下のコマンドを実行する
 
 ```
