@@ -322,6 +322,9 @@ TEST(SessionLogs, WriterAppendsInOrderAndStopWritesWhatIsQueued)
 	}));
 	for (int index = 0; index < 50; ++index) writer.Append(L"Tasks.log", "line " + std::to_string(index) + "\n");
 	writer.Append(L"exthost/vscode.git/Git.log", "git\n");
+	// The prelude runs on the worker and Stop() sets its predicate, so wait for the
+	// prelude first; otherwise a main thread that reaches Stop() first makes it true (#438).
+	ASSERT_TRUE(WaitFor([&] { return preludeRan.load(); }));
 	writer.Stop();
 	EXPECT_TRUE(preludeRan);
 	std::string expected;

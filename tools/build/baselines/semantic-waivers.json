@@ -4976,13 +4976,13 @@
     },
     {
       "owner": "tsuyoshi-otake",
-      "reason": "The #421 session logs (workbench/logs: Log channel files, retention, and problems.json), their composition in CWorkbenchRuntime and CNormalProcess, and Open in Editor for Log channels in CEditWnd and the Output panel menu touch existing runtime and editor-window debt. Each new finding was reviewed: catch-alls are noexcept containment at the file-system seam, the writer and problems.json worker loops, their Start/Stop paths, and the command boundary, so a log I/O failure never fails an Output or Marker operation; the stop-required acquisitions are the two worker threads, which Stop joins and the destructors call; public fields are plain value structs (session layout, limits, writer status, runtime dependencies) and test fakes; mutable members are the writer's status mutex and a test fake's counter; Win32 types are the Output panel's own menu and the window's open path. Reducing unrelated debt would widen this change. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "reason": "The #421 session logs (workbench/logs: Log channel files, retention, and problems.json), their composition in CWorkbenchRuntime and CNormalProcess, and Open in Editor for Log channels in CEditWnd and the Output panel menu touch existing runtime and editor-window debt. Each new finding was reviewed: catch-alls are noexcept containment at the file-system seam, the writer and problems.json worker loops, their Start/Stop paths, and the command boundary, so a log I/O failure never fails an Output or Marker operation; the stop-required acquisitions are the two worker threads, which Stop joins and the destructors call; public fields are plain value structs (session layout, limits, writer status, runtime dependencies) and test fakes; mutable members are the writer's status mutex and a test fake's counter; Win32 types are the Output panel's own menu and the window's open path. Reducing unrelated debt would widen this change. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files. The #438 fix makes one writer test wait for the prelude before Stop and adds no finding.",
       "tracking_issue": 389,
       "created": "2026-11-17",
       "expires": "2027-02-07",
       "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
       "files": {
-        "src/test/cpp/tests1/workbench/SessionLogsTest.cpp": "sha256:296628720ca5634cce32c32dbb43988acff80e759e88ed55fbecfcdb164ec845"
+        "src/test/cpp/tests1/workbench/SessionLogsTest.cpp": "sha256:9eace3eb39f0ecee2680e75381e1b26b60047ba2d9dada241559a8a579652527"
       },
       "new_findings": [
         {
@@ -5023,14 +5023,14 @@
         {
           "column": 14,
           "evidence_sha256": "sha256:7f15d31a724558c2e34e35fc096c1326948ce8cda70c58a91f7d3b3bbf4c1862",
-          "line": 419,
+          "line": 422,
           "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
           "rule_id": "state.public_mutable_field"
         },
         {
           "column": 27,
           "evidence_sha256": "sha256:cb7f5da03555e98658e25e524ab3038db349821e968ac5ae952cfe6e59e5d581",
-          "line": 420,
+          "line": 423,
           "path": "src/test/cpp/tests1/workbench/SessionLogsTest.cpp",
           "rule_id": "state.public_mutable_field"
         }
