@@ -10,6 +10,9 @@
     <Filter Include="Test Files">
       <UniqueIdentifier>{690c7184-b796-460a-8fed-595dfa1930f4}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Test Files\charset">
+      <UniqueIdentifier>{35ba6e06-2a38-4a36-a974-0191c42aeb8d}</UniqueIdentifier>
+    </Filter>
 
     <Filter Include="Other Files">
       <UniqueIdentifier>{0eefa0df-ca7f-489c-9844-9a182e1dba18}</UniqueIdentifier>
@@ -1057,6 +1060,9 @@
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-ccodebase.cpp">
       <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\charset\CodecGoldenCorpusTest.cpp">
+      <Filter>Test Files\charset</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-cdlgopenfile.cpp">
       <Filter>Test Files</Filter>
