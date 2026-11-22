@@ -9,10 +9,15 @@
 
 #include "platform/foundation/NativeWorkerThread.h"
 
+#include <array>
+#include <barrier>
 #include <chrono>
 #include <condition_variable>
+#include <future>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace platform::foundation {
@@ -108,6 +113,26 @@ private:
 	CNativeWorkerThread m_worker;
 };
 
+struct ThrowingWorker {
+	void ThrowStandardException() { throw std::runtime_error("worker failure"); }
+	void ThrowUnknownException() { throw 1; }
+};
+
+struct SelfReleasingWorker {
+	void Run()
+	{
+		// Wait for the caller to install the handle and transfer this owner.
+		auto self = ownership.get();
+		auto completion = std::move(self->released);
+		self.reset();
+		completion.set_value();
+	}
+
+	std::future<std::unique_ptr<SelfReleasingWorker>> ownership;
+	std::promise<void> released;
+	CNativeWorkerThread worker;
+};
+
 TEST(NativeWorkerThread, JoinsTheWorkerWhenTheOwnerHoldingItIsDestroyed)
 {
 	auto record = std::make_shared<Record>();
@@ -134,11 +159,13 @@ TEST(NativeWorkerThread, MovesTheJoinWithTheHandleAndPerformsItExactlyOnce)
 	EXPECT_TRUE(moved.Started());
 
 	record->RequestStop();
-	moved.Join();
+	const auto result = moved.Join();
+	EXPECT_EQ(SakuraWorkerThreadStatus::Ok, result.status);
+	EXPECT_EQ(SakuraWorkerBodyOutcome::Completed, result.outcome);
 	EXPECT_FALSE(moved.Started());
 	// Joining again, and the destructor after it, each find nothing left to
 	// wait for: the handle forgot the worker as it joined it.
-	moved.Join();
+	EXPECT_EQ(SakuraWorkerThreadStatus::InvalidArgument, moved.Join().status);
 	EXPECT_EQ(1, record->Completions());
 }
 
@@ -175,6 +202,82 @@ TEST(NativeWorkerThread, OwnsNothingWhenItWasNeverStarted)
 
 	const CNativeWorkerThread adopted = std::move(idle);
 	EXPECT_FALSE(adopted.Started());
+}
+
+TEST(NativeWorkerThread, ReportsStandardExceptionsAsRedactedOutcomes)
+{
+	ThrowingWorker owner;
+	auto worker = CNativeWorkerThread::Start<ThrowingWorker, &ThrowingWorker::ThrowStandardException>(&owner);
+	const auto result = worker.Join();
+	EXPECT_EQ(SakuraWorkerThreadStatus::Ok, result.status);
+	EXPECT_EQ(SakuraWorkerBodyOutcome::ThrewException, result.outcome);
+}
+
+TEST(NativeWorkerThread, ReportsUnknownExceptionsAsRedactedOutcomes)
+{
+	ThrowingWorker owner;
+	auto worker = CNativeWorkerThread::Start<ThrowingWorker, &ThrowingWorker::ThrowUnknownException>(&owner);
+	const auto result = worker.Join();
+	EXPECT_EQ(SakuraWorkerThreadStatus::Ok, result.status);
+	EXPECT_EQ(SakuraWorkerBodyOutcome::ThrewUnknown, result.outcome);
+}
+
+TEST(NativeWorkerThread, CanDestroyItsHandleFromTheWorkerThread)
+{
+	std::promise<std::unique_ptr<SelfReleasingWorker>> transfer;
+	auto owner = std::make_unique<SelfReleasingWorker>();
+	owner->ownership = transfer.get_future();
+	auto released = owner->released.get_future();
+	owner->worker = CNativeWorkerThread::Start<SelfReleasingWorker, &SelfReleasingWorker::Run>(owner.get());
+	transfer.set_value(std::move(owner));
+
+	ASSERT_EQ(std::future_status::ready, released.wait_for(std::chrono::seconds(5)));
+	released.get();
+}
+
+TEST(NativeWorkerThread, ConcurrentJoinsConsumeOnlyOneTokenCopy)
+{
+	using Status = SakuraWorkerThreadStatus;
+	using Outcome = SakuraWorkerBodyOutcome;
+	constexpr int callerCount = 4;
+	struct Attempt {
+		std::uint64_t token;
+		Status status;
+		Outcome outcome;
+	};
+
+	ThrowingWorker owner;
+	std::uint64_t issued = 0;
+	ASSERT_EQ(Status::Ok, ::sakura_worker_thread_start_v2(
+		&detail::InvokeWorkerBody<ThrowingWorker, &ThrowingWorker::ThrowStandardException>, &owner, &issued));
+	std::barrier gate(callerCount);
+	std::array<Attempt, callerCount> attempts;
+	{
+		std::array<std::jthread, callerCount> callers;
+		for (std::size_t i = 0; i < callers.size(); ++i) {
+			callers[i] = std::jthread([&, i] {
+				auto& attempt = attempts[i];
+				attempt.token = issued;
+				attempt.outcome = Outcome::Completed;
+				gate.arrive_and_wait();
+				attempt.status = ::sakura_worker_thread_join_v2(&attempt.token, &attempt.outcome);
+			});
+		}
+	}
+
+	int successes = 0;
+	for (const auto& attempt : attempts) {
+		if (attempt.status == Status::Ok) {
+			++successes;
+			EXPECT_EQ(0u, attempt.token);
+			EXPECT_EQ(Outcome::ThrewException, attempt.outcome);
+		} else {
+			EXPECT_EQ(Status::NotFound, attempt.status);
+			EXPECT_EQ(issued, attempt.token);
+			EXPECT_EQ(Outcome::Completed, attempt.outcome);
+		}
+	}
+	EXPECT_EQ(1, successes);
 }
 
 } // namespace

@@ -5134,6 +5134,77 @@
         }
       ],
       "missing_touched_reductions": []
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#432 makes the C++ worker trampoline contain every exception before control returns to Rust (#267 G2.2). Each new finding was reviewed. The error.catch_all in NativeWorkerThread.h is the trampoline's catch (...): the worker ABI v2 contract requires that nothing unwinds across the C boundary, and the handler does not swallow the failure but returns the redacted SakuraWorkerBodyOutcome::ThrewUnknown terminal that Join() reports. The test findings are test-local: SelfReleasingWorker's ownership/released/worker members and Attempt's token/outcome/status are plain fixture aggregates in NativeWorkerThreadTest.cpp, and the std::jthread callers in ConcurrentJoinsConsumeOnlyOneTokenCopy are joined at the end of their scope. None of them holds product state. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "tracking_issue": 389,
+      "created": "2026-11-22",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/platform/foundation/NativeWorkerThread.h": "sha256:4c76b73e202548146e49d4f907095a6cc2abecc4e139697edc788454280608ee",
+        "src/test/cpp/tests1/platform/foundation/NativeWorkerThreadTest.cpp": "sha256:f9cc2362f5c51b6a8fb205bec2481decf5e4d55d7547559edb051af1c8af3fab"
+      },
+      "new_findings": [
+        {
+          "column": 4,
+          "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
+          "line": 36,
+          "path": "sakura_core/platform/foundation/NativeWorkerThread.h",
+          "rule_id": "error.catch_all"
+        },
+        {
+          "column": 52,
+          "evidence_sha256": "sha256:457c14f2972895588d7b6ab654bc32f9b05cd1192ecd9e5a15d5e43c581f2294",
+          "line": 131,
+          "path": "src/test/cpp/tests1/platform/foundation/NativeWorkerThreadTest.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 21,
+          "evidence_sha256": "sha256:93a6b7f4cbbd0418d015035a16d07b0497dcfb50353d718541202e2bbdaab263",
+          "line": 132,
+          "path": "src/test/cpp/tests1/platform/foundation/NativeWorkerThreadTest.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 22,
+          "evidence_sha256": "sha256:ee97ac7166b658b212b98076b2cf71bd6afc4768091cc3306535f35b9efa97bb",
+          "line": 133,
+          "path": "src/test/cpp/tests1/platform/foundation/NativeWorkerThreadTest.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 17,
+          "evidence_sha256": "sha256:ffad7471f764dbb8c10d3695947e13efc09a9c7a43a6bca9dc64352622272722",
+          "line": 244,
+          "path": "src/test/cpp/tests1/platform/foundation/NativeWorkerThreadTest.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 10,
+          "evidence_sha256": "sha256:ed5f6f30dc27b95867648f42a04da8a197013e94a67f707e092cc12fc05deca0",
+          "line": 245,
+          "path": "src/test/cpp/tests1/platform/foundation/NativeWorkerThreadTest.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 11,
+          "evidence_sha256": "sha256:c0a6a298f563089a1941d033697df4c6e964ac690853df297cca14c984976e80",
+          "line": 246,
+          "path": "src/test/cpp/tests1/platform/foundation/NativeWorkerThreadTest.cpp",
+          "rule_id": "state.public_mutable_field"
+        },
+        {
+          "column": 17,
+          "evidence_sha256": "sha256:9b28e06cf08b003364fcc5914b9843f457886bd0410f9c30db9d867e25f15047",
+          "line": 258,
+          "path": "src/test/cpp/tests1/platform/foundation/NativeWorkerThreadTest.cpp",
+          "rule_id": "resource.stop_required_acquisition"
+        }
+      ],
+      "missing_touched_reductions": []
     }
   ]
 }

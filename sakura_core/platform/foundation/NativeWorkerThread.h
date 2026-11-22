@@ -10,6 +10,7 @@
 #include "platform/foundation/NativeWorkerThreadAbi.h"
 
 #include <cstdint>
+#include <exception>
 #include <system_error>
 #include <utility>
 
@@ -25,9 +26,16 @@ namespace detail {
 	owner.  Calling through the formed pointer performs no further check.
 */
 template <class Owner, void (Owner::*Method)()>
-void InvokeWorkerBody(void* context) noexcept
+SakuraWorkerBodyOutcome InvokeWorkerBody(void* context) noexcept
 {
-	(static_cast<Owner*>(context)->*Method)();
+	try {
+		(static_cast<Owner*>(context)->*Method)();
+		return SakuraWorkerBodyOutcome::Completed;
+	} catch (const std::exception&) {
+		return SakuraWorkerBodyOutcome::ThrewException;
+	} catch (...) {
+		return SakuraWorkerBodyOutcome::ThrewUnknown;
+	}
 }
 
 } // namespace detail
@@ -42,18 +50,21 @@ void InvokeWorkerBody(void* context) noexcept
 	and joins when the token is released, so this handle's destructor is the
 	join rather than a step teardown has to remember.
 
-	The handle is move-only.  Acquisition is the construction of one of these,
-	release is its destruction, and there is no third spelling for either.
-
-	Only the owner's own destructor may run last: the owner must still raise its
-	stop and wake its worker before this handle is destroyed, exactly as it did
-	before joining a `std::thread`.  A worker that never observes the stop blocks
-	in the join instead of running on against freed state.
+	The handle is move-only. The owner still signals its worker to stop before
+	joining or destroying the handle from another thread. On the worker itself,
+	releasing the handle detaches, and the body must manage any state it still
+	uses through its return.
 */
 class CNativeWorkerThread final {
 public:
+	//! The one terminal of a join. It is an immutable value.
+	struct JoinResult {
+		const SakuraWorkerThreadStatus status;
+		const SakuraWorkerBodyOutcome outcome; //!< Valid only when status is Ok.
+	};
+
 	CNativeWorkerThread() noexcept = default;
-	~CNativeWorkerThread() { Join(); }
+	~CNativeWorkerThread() { (void)Join(); }
 
 	CNativeWorkerThread(const CNativeWorkerThread&) = delete;
 	CNativeWorkerThread& operator=(const CNativeWorkerThread&) = delete;
@@ -66,7 +77,7 @@ public:
 	CNativeWorkerThread& operator=(CNativeWorkerThread&& other) noexcept
 	{
 		if (this != &other) {
-			Join();
+			(void)Join();
 			m_token = std::exchange(other.m_token, 0);
 		}
 		return *this;
@@ -83,12 +94,12 @@ public:
 	[[nodiscard]] static CNativeWorkerThread Start(Owner* owner)
 	{
 		CNativeWorkerThread worker;
-		const SakuraWorkerThreadStatus status = ::sakura_worker_thread_start_v1(
+		const SakuraWorkerThreadStatus status = ::sakura_worker_thread_start_v2(
 			&detail::InvokeWorkerBody<Owner, Method>, owner, &worker.m_token);
 		if (status != SakuraWorkerThreadStatus::Ok || !worker.Started()) {
 			throw std::system_error(
 				std::make_error_code(std::errc::resource_unavailable_try_again),
-				"sakura_worker_thread_start_v1");
+				"sakura_worker_thread_start_v2");
 		}
 		return worker;
 	}
@@ -97,16 +108,19 @@ public:
 	[[nodiscard]] bool Started() const noexcept { return m_token != 0; }
 
 	/*!
-		Waits for the worker body to return and releases the handle.
+		Releases the handle and reports the body's outcome after waiting. On the
+		worker itself, releases the handle immediately with WouldDeadlock.
 
-		Idempotent: a handle that was never started, was moved from, or was
-		already joined has nothing left to wait for.
+		An empty handle returns InvalidArgument. Callers must synchronize access
+		to this object when sharing it across threads.
 	*/
-	void Join() noexcept
+	JoinResult Join() noexcept
 	{
-		if (m_token == 0) return;
-		(void)::sakura_worker_thread_join_v1(&m_token);
-		m_token = 0;
+		auto token = std::exchange(m_token, 0);
+		auto outcome = SakuraWorkerBodyOutcome::Completed;
+		const auto status = token == 0 ? SakuraWorkerThreadStatus::InvalidArgument
+			: ::sakura_worker_thread_join_v2(&token, &outcome);
+		return {status, outcome};
 	}
 
 private:

@@ -13,7 +13,7 @@ CHECKER = ROOT / "tools/verify-native-rust-exports.py"
 ALLOWLIST = ROOT / "rust/native/sakura_native_ffi/exported-symbols.txt"
 PARSERS = runpy.run_path(str(CHECKER))
 
-# Trimmed from dumpbin /LINKERMEMBER:2 on the Release archive for #429.
+# Trimmed from dumpbin /LINKERMEMBER:2 for #429, with the worker ABI v2 name.
 DUMPBIN_OUTPUT = """\
 Dump of file sakura_native_ffi.lib
 
@@ -32,7 +32,7 @@ File Type: LIBRARY
        9C __adddf3
        14 __imp_ProcessPrng
         A sakura_native_initialize_v1
-        A sakura_worker_thread_start_v1
+        A sakura_worker_thread_start_v2
        2C sqrtf16
 
 Archive member name at 2548E: //
@@ -44,14 +44,14 @@ DUMPBIN_NAMES = {
     "__adddf3",
     "__imp_ProcessPrng",
     "sakura_native_initialize_v1",
-    "sakura_worker_thread_start_v1",
+    "sakura_worker_thread_start_v2",
     "sqrtf16",
 }
 
 NM_OUTPUT = """\
 libsakura_native_ffi.a[ffi.o]:
 sakura_native_initialize_v1 T 0 20
-sakura_worker_thread_start_v1 T 20 18
+sakura_worker_thread_start_v2 T 20 18
 local_helper t 38 4
 missing_import U
 
@@ -81,7 +81,7 @@ def test_dumpbin_parser_reads_the_public_symbol_table():
 def test_gnu_nm_parser_reads_defined_external_symbols():
     assert PARSERS["parse_nm"](NM_OUTPUT) == {
         "sakura_native_initialize_v1",
-        "sakura_worker_thread_start_v1",
+        "sakura_worker_thread_start_v2",
         "___chkstk_ms",
         "__adddf3",
     }
