@@ -133,11 +133,13 @@ SakuraStatus sakura_utf16_find_char_avx512bw_v2(
 	const std::uint16_t* data, std::uint64_t length, std::uint16_t target,
 	std::uint64_t* resultIndex) noexcept;
 
-// G2 exception (#433): the byte CR/LF exports are comparison-only and use
-// the C++-owned CPU/OS capability snapshot. Add a versioned byte operation
-// policy with an operation ID and minimum length before any production
-// dispatch through these exports. The current ABI V1 policy slots cover UTF-16.
-// The 512-byte handoff inside the kernels remains internal to the implementation.
+// G2 exception (#433): the byte CR/LF exports are direct comparison candidates only.
+// They reuse the C++-owned CPU/OS capability snapshot for ISA/OS gating, but
+// intentionally do not add a fourth operation-policy slot to ABI V1, whose three
+// slots cover the UTF-16 operations. Add a versioned byte operation policy with an
+// operation ID and minimum length before any production dispatch through these
+// exports. The 512-byte handoff inside the kernels is an implementation boundary,
+// not a policy minimum.
 SakuraStatus sakura_byte_find_cr_or_lf_avx128_candidate_v1(
 	const std::uint8_t* data, std::uint64_t length, std::uint64_t* resultIndex) noexcept;
 SakuraStatus sakura_byte_find_cr_or_lf_avx2_candidate_v1(
