@@ -99,6 +99,15 @@ def parse_gtest_list(output: str, runner_id: str) -> list[dict[str, Any]]:
     return sorted(tests, key=lambda item: item["test_id"])
 
 
+def _discovery_environment() -> dict[str, str]:
+    """Return an environment that lists the complete test set.
+
+    GoogleTest reads GTEST_* run configuration and applies the active selection
+    to --gtest_list_tests. CI sets GTEST_FILTER for the headless suite.
+    """
+    return {name: value for name, value in os.environ.items() if not name.upper().startswith("GTEST_")}
+
+
 def collect_gtest_inventory(
     executable: Path,
     runner_id: str,
@@ -116,6 +125,7 @@ def collect_gtest_inventory(
         completed = subprocess.run(
             [str(executable), "--gtest_list_tests"],
             cwd=repo_root,
+            env=_discovery_environment(),
             capture_output=True,
             text=True,
             encoding=locale.getpreferredencoding(False),

@@ -96,6 +96,9 @@ IDs in the commit message; never delete a stable ID and mint a replacement.
 Then run `test inventory verify-runtime`: both `missing_selectors` and
 `unexpected_selectors` must be empty for every runner. A test-only rename or
 addition still requires this inventory update (#294).
+Discovery runs each runner without any `GTEST_*` variables because GoogleTest
+applies `GTEST_FILTER` to `--gtest_list_tests` and CI sets it for the headless
+suite, so inheriting the CI environment would yield an incomplete listing (#325).
 
 Never point `test inventory collect` at this file. `collect` rebuilds one
 runner's discovery with fresh `tests1:` IDs, which is how #169 silently dropped
