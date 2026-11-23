@@ -247,10 +247,20 @@ bool ComparisonKeyIsByteExactAndTracksComponentPresence()
 
 bool NonFileCasePolicyIsExplicit()
 {
-	auto first = Uri::Parse(L"demo://Host/Path?Name=Value#Anchor");
-	auto second = Uri::Parse(L"demo://host/path?name=value#anchor");
-	return first && second && !UriIdentityService::IsEqual(*first.value, *second.value)
-		&& UriIdentityService::IsEqual(*first.value, *second.value, ENonFileUriCasePolicy::CaseInsensitive);
+	const auto original = Uri::Parse(L"demo://Host/Path?Name=Value#Anchor");
+	const auto lowerHost = Uri::Parse(L"demo://host/Path?Name=Value#Anchor");
+	const auto lowerPath = Uri::Parse(L"demo://Host/path?Name=Value#Anchor");
+	const auto lowerQuery = Uri::Parse(L"demo://Host/Path?name=value#Anchor");
+	const auto lowerFragment = Uri::Parse(L"demo://Host/Path?Name=Value#anchor");
+	if (!original || !lowerHost || !lowerPath || !lowerQuery || !lowerFragment) return false;
+
+	for (const auto policy : {ENonFileUriCasePolicy::CaseSensitive, ENonFileUriCasePolicy::CaseInsensitive}) {
+		if (!UriIdentityService::IsEqual(*original.value, *lowerHost.value, policy)
+			|| UriIdentityService::IsEqual(*original.value, *lowerQuery.value, policy)
+			|| UriIdentityService::IsEqual(*original.value, *lowerFragment.value, policy)) return false;
+	}
+	return !UriIdentityService::IsEqual(*original.value, *lowerPath.value, ENonFileUriCasePolicy::CaseSensitive)
+		&& UriIdentityService::IsEqual(*original.value, *lowerPath.value, ENonFileUriCasePolicy::CaseInsensitive);
 }
 
 bool FreezesUnicodeLowercaseSentinels()
@@ -294,9 +304,9 @@ bool FreezesFileAndNonFileKeyFields()
 		&& UriIdentityService::MakeComparisonKey(*unc.value) == ExpectedKey({
 			L"4:file", L"1", L"6:server", L"17:/share/readme.txt", L"0", L"0:", L"0", L"0:"})
 		&& UriIdentityService::MakeComparisonKey(*nonFile.value, ENonFileUriCasePolicy::CaseSensitive) == ExpectedKey({
-			L"4:demo", L"1", L"4:Host", L"5:/Path", L"1", L"5:Query", L"1", L"4:Frag"})
+			L"4:demo", L"1", L"4:host", L"5:/Path", L"1", L"5:Query", L"1", L"4:Frag"})
 		&& UriIdentityService::MakeComparisonKey(*nonFile.value, ENonFileUriCasePolicy::CaseInsensitive) == ExpectedKey({
-			L"4:demo", L"1", L"4:host", L"5:/path", L"1", L"5:query", L"1", L"4:frag"});
+			L"4:demo", L"1", L"4:host", L"5:/path", L"1", L"5:Query", L"1", L"4:Frag"});
 
 	const auto cyrillic = Uri::Parse(L"file:///C:/\u0414.txt");
 	const auto latinCapital = Uri::Parse(L"file:///C:/\u00c9.txt");
@@ -446,6 +456,83 @@ bool FileIdentityFoldsLatin1AndSupplementaryCapitals()
 		&& !UriIdentityService::IsEqual(*capitalSharpS.value, *doubleS.value);
 }
 
+bool NonFileHostIsLowercasedUnderEveryPathPolicy()
+{
+	const auto upperHost = Uri::Parse(L"demo://Host:8042/Path");
+	const auto mixedHost = Uri::Parse(L"demo://hOSt:8042/Path");
+	const auto lowerPath = Uri::Parse(L"demo://Host:8042/path");
+	if (!upperHost || !mixedHost || !lowerPath) return false;
+
+	const auto sensitiveKey = ExpectedKey({
+		L"4:demo", L"1", L"9:host:8042", L"5:/Path", L"0", L"0:", L"0", L"0:"});
+	return UriIdentityService::MakeComparisonKey(*upperHost.value) == sensitiveKey
+		&& UriIdentityService::MakeComparisonKey(*mixedHost.value) == sensitiveKey
+		&& !UriIdentityService::IsEqual(*upperHost.value, *lowerPath.value)
+		&& UriIdentityService::MakeComparisonKey(*upperHost.value, ENonFileUriCasePolicy::CaseInsensitive) == ExpectedKey({
+			L"4:demo", L"1", L"9:host:8042", L"5:/path", L"0", L"0:", L"0", L"0:"});
+}
+
+bool UserinfoKeepsItsCaseWhileTheHostFolds()
+{
+	const auto upperUserinfo = Uri::Parse(L"file://User:Pass@Server/C:/X");
+	const auto lowerUserinfo = Uri::Parse(L"file://user:pass@SERVER/C:/X");
+	const auto userOnly = Uri::Parse(L"demo://User@Host/Path");
+	const auto decodedAt = Uri::Parse(L"demo://User:p%40Ss@Host/Path");
+	return upperUserinfo && lowerUserinfo && userOnly && decodedAt
+		&& UriIdentityService::MakeComparisonKey(*upperUserinfo.value) == ExpectedKey({
+			L"4:file", L"1", L"16:User:Pass@server", L"5:/c:/x", L"0", L"0:", L"0", L"0:"})
+		&& UriIdentityService::MakeComparisonKey(*lowerUserinfo.value) == ExpectedKey({
+			L"4:file", L"1", L"16:user:pass@server", L"5:/c:/x", L"0", L"0:", L"0", L"0:"})
+		&& !UriIdentityService::IsEqual(*upperUserinfo.value, *lowerUserinfo.value)
+		&& UriIdentityService::MakeComparisonKey(*userOnly.value, ENonFileUriCasePolicy::CaseInsensitive) == ExpectedKey({
+			L"4:demo", L"1", L"9:User@host", L"5:/path", L"0", L"0:", L"0", L"0:"})
+		&& UriIdentityService::MakeComparisonKey(*decodedAt.value) == ExpectedKey({
+			L"4:demo", L"1", L"14:User:p@ss@host", L"5:/Path", L"0", L"0:", L"0", L"0:"});
+}
+
+bool QueryAndFragmentCaseSurvivesEveryPathPolicy()
+{
+	const auto original = Uri::Parse(L"demo://host/Path?Name=Value#Anchor");
+	const auto lowerQuery = Uri::Parse(L"demo://host/Path?name=value#Anchor");
+	const auto lowerFragment = Uri::Parse(L"demo://host/Path?Name=Value#anchor");
+	const auto file = Uri::Parse(L"file:///C:/X?Q#F");
+	if (!original || !lowerQuery || !lowerFragment || !file) return false;
+
+	for (const auto policy : {ENonFileUriCasePolicy::CaseSensitive, ENonFileUriCasePolicy::CaseInsensitive}) {
+		if (UriIdentityService::IsEqual(*original.value, *lowerQuery.value, policy)
+			|| UriIdentityService::IsEqual(*original.value, *lowerFragment.value, policy)) return false;
+	}
+	return UriIdentityService::MakeComparisonKey(*original.value, ENonFileUriCasePolicy::CaseInsensitive) == ExpectedKey({
+		L"4:demo", L"1", L"4:host", L"5:/path", L"1", L"10:Name=Value", L"1", L"6:Anchor"})
+		&& UriIdentityService::MakeComparisonKey(*file.value) == ExpectedKey({
+			L"4:file", L"1", L"0:", L"5:/c:/x", L"1", L"1:Q", L"1", L"1:F"});
+}
+
+bool DriveLetterPrefixFoldsForNonHttpSchemesLikeVsCode()
+{
+	const auto matches = [](std::wstring_view input, std::initializer_list<std::wstring_view> fields) {
+		const auto uri = Uri::Parse(input);
+		return uri && UriIdentityService::MakeComparisonKey(*uri.value) == ExpectedKey(fields);
+	};
+	const auto upperDrive = Uri::Parse(L"demo://host/C:/Path");
+	const auto lowerDrive = Uri::Parse(L"demo://host/c:/Path");
+	const auto lowerPath = Uri::Parse(L"demo://host/c:/path");
+	const auto https = Uri::Parse(L"https://host/C:/Path");
+	return upperDrive && lowerDrive && lowerPath && https
+		&& UriIdentityService::MakeComparisonKey(*upperDrive.value) == ExpectedKey({
+			L"4:demo", L"1", L"4:host", L"8:/c:/Path", L"0", L"0:", L"0", L"0:"})
+		&& matches(L"demo:C:Path", {L"4:demo", L"0", L"0:", L"6:c:Path", L"0", L"0:", L"0", L"0:"})
+		&& matches(L"demo:/C:", {L"4:demo", L"0", L"0:", L"3:/c:", L"0", L"0:", L"0", L"0:"})
+		&& matches(L"demo:/a/C:/Path", {L"4:demo", L"0", L"0:", L"10:/a/C:/Path", L"0", L"0:", L"0", L"0:"})
+		&& matches(L"http://host/C:/Path", {L"4:http", L"1", L"4:host", L"8:/C:/Path", L"0", L"0:", L"0", L"0:"})
+		&& UriIdentityService::MakeComparisonKey(*https.value) == ExpectedKey({
+			L"5:https", L"1", L"4:host", L"8:/C:/Path", L"0", L"0:", L"0", L"0:"})
+		&& UriIdentityService::MakeComparisonKey(*https.value, ENonFileUriCasePolicy::CaseInsensitive) == ExpectedKey({
+			L"5:https", L"1", L"4:host", L"8:/c:/path", L"0", L"0:", L"0", L"0:"})
+		&& UriIdentityService::IsEqual(*upperDrive.value, *lowerDrive.value)
+		&& !UriIdentityService::IsEqual(*upperDrive.value, *lowerPath.value);
+}
+
 bool RejectsInvalidComponentConstructionExplicitly()
 {
 	auto invalidScheme = Uri::FromComponents(L"1demo", L"", L"/path");
@@ -502,6 +589,10 @@ constexpr std::array kTests{
 	TestCase{"FoldIgnoresTheProcessLocale", FoldIgnoresTheProcessLocale},
 	TestCase{"AppliesFinalSigmaContextLikeVsCode", AppliesFinalSigmaContextLikeVsCode},
 	TestCase{"FileIdentityFoldsLatin1AndSupplementaryCapitals", FileIdentityFoldsLatin1AndSupplementaryCapitals},
+	TestCase{"NonFileHostIsLowercasedUnderEveryPathPolicy", NonFileHostIsLowercasedUnderEveryPathPolicy},
+	TestCase{"UserinfoKeepsItsCaseWhileTheHostFolds", UserinfoKeepsItsCaseWhileTheHostFolds},
+	TestCase{"QueryAndFragmentCaseSurvivesEveryPathPolicy", QueryAndFragmentCaseSurvivesEveryPathPolicy},
+	TestCase{"DriveLetterPrefixFoldsForNonHttpSchemesLikeVsCode", DriveLetterPrefixFoldsForNonHttpSchemesLikeVsCode},
 	TestCase{"RejectsInvalidComponentConstructionExplicitly", RejectsInvalidComponentConstructionExplicitly},
 	TestCase{"RejectsInvalidUriAndWindowsPathInputsExplicitly", RejectsInvalidUriAndWindowsPathInputsExplicitly},
 };

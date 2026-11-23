@@ -64,11 +64,27 @@ table and update the pins and test expectations together.
 The fold matches the `uri.path.toLowerCase()` operation in VS Code's
 `ExtUri.getComparisonKey`, subject to the Unicode version of its Electron/ICU.
 VS Code applies that operation when the scheme's provider lacks
-`PathCaseSensitive`. Issue #439 tracks component-level differences in host,
-userinfo, query and fragment, the localhost alias, scheme case, drive letter,
-and the policy source.
+`PathCaseSensitive`.
 [VS Code comparison key](https://github.com/microsoft/vscode/blob/733a99842b0e/src/vs/base/common/resources.ts#L162-L167)
 [VS Code provider capability check](https://github.com/microsoft/vscode/blob/733a99842b0e/src/vs/platform/uriIdentity/common/uriIdentityService.ts#L44-L51)
+
+#### Comparison-key components (#439)
+
+The key follows `ExtUri.getComparisonKey` when it lowercases the host for every
+scheme, preserves userinfo through the first decoded `@`, and preserves the
+case of query and fragment. It lowercases an ASCII drive letter at the start of
+a `/C:` or `C:` path for every scheme except `http` and `https`.
+`nonFilePolicy` controls only whole-path folding for non-file URIs.
+
+- Sakura keeps its framed key because durable workspace storage addresses use
+  those bytes. VS Code formats its key with `URI.toString()`.
+- File paths always fold because the sole file provider is the case-insensitive
+  Win32 provider. Item 7 of #439 tracks deriving the rule from the provider.
+- Local `file` URI spellings with `localhost`, empty or absent authority share
+  one key because they resolve to the same native drive path. Item 4 of #439
+  tracks alignment at this boundary.
+- Parsing lowercases the scheme because existing provider and path-conversion
+  checks rely on its canonical spelling. Item 5 of #439 tracks preserving case.
 
 ## P0 Gate
 

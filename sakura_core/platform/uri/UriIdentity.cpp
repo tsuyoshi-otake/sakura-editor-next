@@ -308,6 +308,30 @@ std::wstring ReplaceSlashWithBackslash(std::wstring value)
 	return value;
 }
 
+std::wstring NormalizeKeyAuthority(std::wstring_view authority)
+{
+	const auto userinfoEnd = authority.find(L'@');
+	if (userinfoEnd == std::wstring_view::npos) {
+		return internal::ToUnicodeLowercase(authority);
+	}
+	const auto hostStart = userinfoEnd + 1;
+	std::wstring normalized{authority.substr(0, hostStart)};
+	normalized.append(internal::ToUnicodeLowercase(authority.substr(hostStart)));
+	return normalized;
+}
+
+void NormalizeKeyDriveLetter(std::wstring_view scheme, std::wstring& path)
+{
+	if (scheme == L"http" || scheme == L"https") {
+		return;
+	}
+	if (path.size() >= 3 && path[0] == L'/' && path[2] == L':') {
+		path[1] = ToLowerAscii(path[1]);
+	} else if (path.size() >= 2 && path[1] == L':') {
+		path[0] = ToLowerAscii(path[0]);
+	}
+}
+
 void AppendKeyPart(std::wstring& key, std::wstring_view value)
 {
 	key.append(std::to_wstring(value.size()));
@@ -529,7 +553,7 @@ Uri::WindowsPathResult Uri::ToWindowsPath() const
 std::wstring UriIdentityService::MakeComparisonKey(const Uri& uri, ENonFileUriCasePolicy nonFilePolicy)
 {
 	const bool isFile = uri.Scheme() == L"file";
-	const bool foldAll = !isFile && nonFilePolicy == ENonFileUriCasePolicy::CaseInsensitive;
+	const bool foldPath = isFile || nonFilePolicy == ENonFileUriCasePolicy::CaseInsensitive;
 	const bool isLocalFileAuthority = isFile
 		&& (uri.Authority().empty() || internal::ToUnicodeLowercase(uri.Authority()) == L"localhost");
 	std::wstring key;
@@ -540,17 +564,18 @@ std::wstring UriIdentityService::MakeComparisonKey(const Uri& uri, ENonFileUriCa
 	// schemes while canonicalizing these local file aliases.
 	key.push_back(isFile ? L'1' : (uri.HasAuthority() ? L'1' : L'0'));
 	key.push_back(internal::kComparisonKeySeparator);
-	AppendKeyPart(key, isLocalFileAuthority ? std::wstring{}
-		: ((isFile || foldAll) ? internal::ToUnicodeLowercase(uri.Authority()) : uri.Authority()));
-	AppendKeyPart(key, (isFile || foldAll) ? internal::ToUnicodeLowercase(uri.Path()) : uri.Path());
+	AppendKeyPart(key, isLocalFileAuthority ? std::wstring{} : NormalizeKeyAuthority(uri.Authority()));
+	std::wstring path = foldPath ? internal::ToUnicodeLowercase(uri.Path()) : uri.Path();
+	NormalizeKeyDriveLetter(uri.Scheme(), path);
+	AppendKeyPart(key, path);
 	key.push_back(uri.Query().has_value() ? L'1' : L'0');
 	key.push_back(internal::kComparisonKeySeparator);
 	const std::wstring query = uri.Query() ? *uri.Query() : std::wstring{};
-	AppendKeyPart(key, foldAll ? internal::ToUnicodeLowercase(query) : query);
+	AppendKeyPart(key, query);
 	key.push_back(uri.Fragment().has_value() ? L'1' : L'0');
 	key.push_back(internal::kComparisonKeySeparator);
 	const std::wstring fragment = uri.Fragment() ? *uri.Fragment() : std::wstring{};
-	AppendKeyPart(key, foldAll ? internal::ToUnicodeLowercase(fragment) : fragment);
+	AppendKeyPart(key, fragment);
 	return key;
 }
 
