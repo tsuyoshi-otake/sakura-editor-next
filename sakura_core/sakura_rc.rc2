@@ -98,6 +98,11 @@ BEGIN
             VALUE "LegalCopyright", S_COPYRIGHT_FORK "; " S_COPYRIGHT
             VALUE "LegalTrademarks", " \0"
             VALUE "OriginalFilename", "sakura.exe\0"
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+            VALUE "SakuraUtf16Backend", "rust\0"
+#else
+            VALUE "SakuraUtf16Backend", "cpp\0"
+#endif
             VALUE "ProductName", _GSTR_APPNAME "\0"
             VALUE "ProductVersion", VERSION_STR VERSION_HASH    // e.g. "2.4.1.0 (4a0de579)"
         END

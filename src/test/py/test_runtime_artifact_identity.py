@@ -8,7 +8,9 @@ fail, without requiring a full ``build-all``.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import tempfile
 import unittest
 import zipfile
@@ -34,6 +36,7 @@ class RuntimeArtifactIdentityTests(unittest.TestCase):
 
     def _write_staged_files(self, staged: Path) -> dict[str, bytes]:
         payloads = {
+            "sakura.exe": b"sakura-application-bytes",
             "bregonig.dll": b"bregonig-bytes",
             "migemo.dll": b"migemo-bytes",
             "sakura-senp-tool.exe": b"senp-tool-bytes",
@@ -70,6 +73,8 @@ class RuntimeArtifactIdentityTests(unittest.TestCase):
             self.assertEqual(0, self.tool.main(argv))
             report = self.tool.collect(self.tool.parse_args(argv))
             self.assertTrue(report["ok"], report)
+            self.assertEqual(set(payloads), set(report["sources"]["staged"]))
+            self.assertEqual(set(payloads), set(report["sources"]["zip"]))
 
     def test_a_different_zip_payload_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -82,7 +87,9 @@ class RuntimeArtifactIdentityTests(unittest.TestCase):
                 for name, payload in payloads.items():
                     bundle.writestr(
                         name,
-                        b"shipped-other-bytes" if name == "bregonig.dll" else payload,
+                        b"shipped-other-bytes"
+                        if name in ("sakura.exe", "bregonig.dll")
+                        else payload,
                     )
             args = self.tool.parse_args(
                 [
@@ -98,7 +105,8 @@ class RuntimeArtifactIdentityTests(unittest.TestCase):
             )
             report = self.tool.collect(args)
             self.assertFalse(report["ok"])
-            self.assertTrue(report["mismatches"])
+            self.assertTrue(any(line.startswith("sakura.exe:") for line in report["mismatches"]))
+            self.assertTrue(any(line.startswith("bregonig.dll:") for line in report["mismatches"]))
 
     def test_missing_senp_runtime_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -125,6 +133,71 @@ class RuntimeArtifactIdentityTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(self.tool.IdentityError, "sakura-senp-host.exe"):
                 self.tool.collect(args)
+
+    def _run_zip_check(
+        self, root: Path, staged: Path, payloads: dict[str, bytes]
+    ) -> tuple[int, dict[str, object]]:
+        archive = root / "exe.zip"
+        with zipfile.ZipFile(archive, "w") as bundle:
+            for name, payload in payloads.items():
+                bundle.writestr(name, payload)
+        report_path = root / "report.json"
+        result = self.tool.main(
+            [
+                "--staged",
+                str(staged),
+                "--zip",
+                str(archive),
+                "--clean-extract",
+                str(root / "extract"),
+                "--report",
+                str(report_path),
+            ]
+        )
+        return result, json.loads(report_path.read_text(encoding="utf-8"))
+
+    def test_nested_staged_sakura_exe_copies_do_not_affect_the_top_level_comparison(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staged = root / "staged"
+            staged.mkdir()
+            payloads = self._write_staged_files(staged)
+            nested = staged / "avx2"
+            nested.mkdir()
+            (nested / "sakura.exe").write_bytes(b"different-experiment-bytes")
+
+            result, report = self._run_zip_check(root, staged, payloads)
+            self.assertEqual(0, result, report)
+            self.assertEqual(
+                hashlib.sha256(payloads["sakura.exe"]).hexdigest(),
+                report["sources"]["staged"]["sakura.exe"],
+            )
+
+    def test_staged_sakura_exe_must_be_the_top_level_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staged = root / "staged"
+            staged.mkdir()
+            payloads = self._write_staged_files(staged)
+            nested = staged / "avx2"
+            nested.mkdir()
+            (staged / "sakura.exe").rename(nested / "sakura.exe")
+
+            result, report = self._run_zip_check(root, staged, payloads)
+            self.assertEqual(1, result, report)
+            self.assertIn("directly under", report["error"])
+
+    def test_a_second_packaged_sakura_exe_is_still_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            staged = root / "staged"
+            staged.mkdir()
+            payloads = self._write_staged_files(staged)
+            payloads["nested/sakura.exe"] = payloads["sakura.exe"]
+
+            result, report = self._run_zip_check(root, staged, payloads)
+            self.assertEqual(1, result, report)
+            self.assertIn("more than one copy", report["error"])
 
 
 if __name__ == "__main__":

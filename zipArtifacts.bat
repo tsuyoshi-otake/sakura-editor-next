@@ -31,6 +31,14 @@ if "%configuration%" == "Release" (
 	exit /b 1
 )
 
+set "ERRORLEVEL="
+py -3 -I "%~dp0tools\verify_utf16_package_backend.py" --exe "%platform%\%configuration%\sakura.exe"
+set "UTF16_PACKAGE_BACKEND_EXIT=%ERRORLEVEL%"
+if not "%UTF16_PACKAGE_BACKEND_EXIT%" == "0" (
+	echo Error: UTF-16 package backend check failed for "%platform%\%configuration%\sakura.exe". 1>&2
+	exit /b %UTF16_PACKAGE_BACKEND_EXIT%
+)
+
 set ALPHA=1
 
 set ZIP_CMD=%~dp0tools\zip\zip.bat

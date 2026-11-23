@@ -5,6 +5,8 @@ is the DLL that packaging ships. This tool hashes the staged files, extracts
 packaging outputs into a fresh directory, and compares the bytes. Issue #260
 extends that same fail-closed contract to the two required SENP executables,
 and Issue #277 extends it to the three scoped terminal orchestration tools.
+Issue #427 compares the top-level staged sakura.exe with the single copy found
+recursively in each installer work tree or package payload.
 
 It is invoked from build-installer.bat and zipArtifacts.bat. A source-level
 script inspection is not a substitute for this comparison.
@@ -24,6 +26,7 @@ from pathlib import Path
 
 
 RUNTIME_NAMES = (
+    "sakura.exe",
     "bregonig.dll",
     "migemo.dll",
     "sakura-senp-tool.exe",
@@ -32,6 +35,9 @@ RUNTIME_NAMES = (
     "tmux.exe",
     "sakura-harness.exe",
 )
+# Both packagers copy only the top-level staged executable.
+# Nested copies are leftovers from unrelated builds.
+STAGED_ROOT_ONLY = frozenset({"sakura.exe"})
 CHUNK = 1024 * 1024
 
 
@@ -60,8 +66,19 @@ def _one_file(root: Path, name: str) -> Path:
     return matches[0]
 
 
-def _hash_named(root: Path) -> dict[str, str]:
-    return {name: _sha256_file(_one_file(root, name)) for name in RUNTIME_NAMES}
+def _hash_named(
+    root: Path, root_only: frozenset[str] = frozenset()
+) -> dict[str, str]:
+    hashes = {}
+    for name in RUNTIME_NAMES:
+        if name in root_only:
+            path = root / name
+            if not path.is_file():
+                raise IdentityError(f"{name} was not found directly under {root}")
+        else:
+            path = _one_file(root, name)
+        hashes[name] = _sha256_file(path)
+    return hashes
 
 
 def _reset_dir(path: Path) -> Path:
@@ -147,7 +164,7 @@ def collect(args: argparse.Namespace) -> dict[str, object]:
     staged_dir = args.staged.resolve()
     if not staged_dir.is_dir():
         raise IdentityError(f"staged directory is missing: {staged_dir}")
-    sources: dict[str, dict[str, str]] = {"staged": _hash_named(staged_dir)}
+    sources: dict[str, dict[str, str]] = {"staged": _hash_named(staged_dir, STAGED_ROOT_ONLY)}
     extract_root = _reset_dir(args.clean_extract.resolve())
 
     if args.installer_work is not None:

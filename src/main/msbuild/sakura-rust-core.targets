@@ -108,6 +108,9 @@
       <!-- An explicit Rust selection enables non-production actual-caller comparisons. -->
       <PreprocessorDefinitions>SAKURA_UTF16_BACKEND_RUST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>SAKURA_UTF16_BACKEND_RUST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
   </ItemDefinitionGroup>
 
   <ItemDefinitionGroup Condition="$([System.String]::CompareOrdinal('$(SAKURA_OUTPUT_BACKEND)', 'rust')) == 0">

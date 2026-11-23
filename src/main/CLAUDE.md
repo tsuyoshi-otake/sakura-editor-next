@@ -30,6 +30,12 @@ Keep the hand-written MSBuild path and the CMake/MinGW path behaviorally aligned
 - The Windows system libraries the archive needs are the same for both targets. `rustc --print native-static-libs --target x86_64-pc-windows-gnu` reports exactly `kernel32 ntdll userenv ws2_32 dbghelp`, which is the list already carried by the imported target's `INTERFACE_LINK_LIBRARIES`. Re-run that print instead of guessing when the native workspace gains a dependency. The MinGW executable links `-static`, so the unwinder and pthread objects Rust `std` expects are satisfied inside the image and linking the archive adds no runtime DLL.
 - `SAKURA_NATIVE_FFI_TARGET_DIR` is per build tree, so an MSVC and a MinGW configuration of the same checkout never share a Cargo output directory.
 
+The MSBuild and CMake resource builds embed the resolved UTF-16 backend in
+the `SakuraUtf16Backend` version string of `sakura.exe`. Both direct packagers
+require the compiled `cpp` marker before staging and verify that the packaged
+executable matches the staged SHA-256 (#427). Executables built before the
+marker was introduced are rejected by design.
+
 ## Staged Runtime Tools
 
 `ctags.cmake` and `diffutils.cmake` stage a third-party executable next to `sakura.exe`. Which provider supplies those bytes is a release decision, so each script selects it **by name** through a cache variable seeded from an environment variable of the same name — `SAKURA_CTAGS_SOURCE` (`archive` by default, plus `system` and `submodule`) and `SAKURA_DIFFUTILS_SOURCE` (`auto` by default, plus `system`, `archive`, and `none`). An unrecognized value is a `FATAL_ERROR`, not a silent fallback.

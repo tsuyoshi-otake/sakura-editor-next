@@ -87,6 +87,10 @@ include(${CMAKE_SOURCE_DIR}/src/main/cmake/sakura.cmake)
 # Create main executable
 add_executable(${PROJECT_NAME} WIN32 ${CMAKE_SOURCE_DIR}/sakura_core/StdAfx.cpp)
 target_sources(${PROJECT_NAME} PRIVATE ${SAKURA_LEGACY_RESOURCE_SCRIPTS})
+# The version resource records the same backend selected for sakura_core.
+if(SAKURA_UTF16_BACKEND STREQUAL "rust")
+  target_compile_definitions(${PROJECT_NAME} PRIVATE SAKURA_UTF16_BACKEND_RUST)
+endif()
 
 # link libraries
 target_link_libraries(${PROJECT_NAME}
