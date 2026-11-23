@@ -629,6 +629,15 @@ jobs:
           throw "component test runners failed with exit code $LASTEXITCODE."
         }
 
+    # Verify every declared runner exposes exactly the recorded selectors (#325).
+    # Run in Debug because the baseline is refreshed from the x64 Debug outputs.
+    - name: Verify the test inventory against the built runners
+      if: ${{ matrix.config == 'Debug' }}
+      timeout-minutes: 10
+      run: |
+        & py -3 tools/build/sakura_build.py --format json test inventory verify-runtime src/test/test-inventory.json
+        if ($LASTEXITCODE -ne 0) { throw "test inventory runtime verification failed with exit code $LASTEXITCODE." }
+
     # このジョブは checkout の前に「Validate build prerequisites」を走らせる。
     # そこで失敗するとリポジトリが無いまま always() のこのステップが動き、
     # 「スクリプトが見つからない」という二次エラーだけがログに残って、本当に

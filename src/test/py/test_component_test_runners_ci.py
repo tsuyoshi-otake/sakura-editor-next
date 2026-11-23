@@ -17,9 +17,10 @@ class ComponentTestRunnersCiTests(unittest.TestCase):
         names = [step.lstrip().splitlines()[0] for step in steps]
         headless = names.index("- name: Run headless tests")
         self.assertEqual(
-            names[headless + 1 : headless + 3],
+            names[headless + 1 : headless + 4],
             [
                 "- name: Run component test runners",
+                "- name: Verify the test inventory against the built runners",
                 "- name: Clean up test process survivors",
             ],
         )
@@ -37,6 +38,37 @@ class ComponentTestRunnersCiTests(unittest.TestCase):
             '          throw "component test runners failed with exit code $LASTEXITCODE."\n'
             '        }',
             component_tests,
+        )
+
+    def test_inventory_verification_follows_component_runners_in_debug(self) -> None:
+        workflow = read_workflow(BUILD)
+        inventory_name = "- name: Verify the test inventory against the built runners"
+        self.assertEqual(
+            sum(step.lstrip().splitlines()[0] == inventory_name for step in _steps(workflow)),
+            1,
+        )
+
+        steps = _steps(job(workflow, "build"))
+        names = [step.lstrip().splitlines()[0] for step in steps]
+        inventory_index = names.index(inventory_name)
+        self.assertGreater(inventory_index, names.index("- name: Run component test runners"))
+        inventory = steps[inventory_index]
+        self.assertEqual(
+            re.findall(r"(?m)^      if: (.*)$", inventory),
+            ["${{ matrix.config == 'Debug' }}"],
+        )
+        self.assertNotRegex(inventory, r"(?m)^      continue-on-error:")
+        self.assertIn("\n      timeout-minutes: 10\n", inventory)
+        self.assertIn(
+            "\n        & py -3 tools/build/sakura_build.py --format json "
+            "test inventory verify-runtime src/test/test-inventory.json\n",
+            inventory,
+        )
+        self.assertNotIn("--runner", inventory)
+        self.assertIn(
+            '\n        if ($LASTEXITCODE -ne 0) { throw "test inventory runtime verification '
+            'failed with exit code $LASTEXITCODE." }\n',
+            inventory,
         )
 
     def test_msvc_workflows_use_graph_selected_component_runners(self) -> None:

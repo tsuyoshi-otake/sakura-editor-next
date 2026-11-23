@@ -109,7 +109,10 @@ when the baseline's runner set differs from the declared one.
 
 Each leg of the required MSVC workflow runs `test components` after the headless
 `tests1` suite (#440). It runs the generated `kind: test` runners that support the
-leg's context in manifest order. To run that set locally for Debug, use
+leg's context in manifest order. The Debug leg then runs
+`test inventory verify-runtime src/test/test-inventory.json` against the built
+runners, so an unrecorded or missing selector fails the required check (#325).
+To run that set locally for Debug, use
 `py -3 tools/build/sakura_build.py test components --context msvc-x64-debug`.
 
 Full suite for a built configuration:
