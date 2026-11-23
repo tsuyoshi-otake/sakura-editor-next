@@ -618,6 +618,17 @@ jobs:
           throw "ctest failed with exit code $LASTEXITCODE."
         }
 
+    # The build tool selects every generated kind: test runner from modules.json
+    # (#440), so adding a runner needs no workflow edit.
+    - name: Run component test runners
+      timeout-minutes: 20
+      run: |
+        $context = "msvc-${{ matrix.platform }}-${{ matrix.config }}".ToLowerInvariant()
+        & py -3 tools/build/sakura_build.py test components --context $context --jobs 4
+        if ($LASTEXITCODE -ne 0) {
+          throw "component test runners failed with exit code $LASTEXITCODE."
+        }
+
     # このジョブは checkout の前に「Validate build prerequisites」を走らせる。
     # そこで失敗するとリポジトリが無いまま always() のこのステップが動き、
     # 「スクリプトが見つからない」という二次エラーだけがログに残って、本当に

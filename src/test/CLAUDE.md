@@ -107,6 +107,11 @@ six runners and every remapped stable ID; it now refuses to overwrite a
 `CheckedInTestInventoryTests` in `tools/build/tests/test_build_model.py` fails
 when the baseline's runner set differs from the declared one.
 
+Each leg of the required MSVC workflow runs `test components` after the headless
+`tests1` suite (#440). It runs the generated `kind: test` runners that support the
+leg's context in manifest order. To run that set locally for Debug, use
+`py -3 tools/build/sakura_build.py test components --context msvc-x64-debug`.
+
 Full suite for a built configuration:
 
 ```cmd

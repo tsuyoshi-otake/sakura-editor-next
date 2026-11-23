@@ -20,6 +20,7 @@ from sakura_build_lib.ci_plan import (
 )
 from sakura_build_lib.generator import generate, stale_component_outputs, stale_outputs
 from sakura_build_lib.component_evidence import ComponentEvidenceError, collect_component_evidence, write_component_evidence
+from sakura_build_lib.component_tests import select_component_test_runners
 from sakura_build_lib.coverage_map import (
     ChangedFile,
     CoverageMapError,
@@ -607,6 +608,9 @@ def parser() -> argparse.ArgumentParser:
     test_component.add_argument("component")
     test_component.add_argument("--context", required=True)
     add_execution_options(test_component)
+    test_components = test_commands.add_parser("components")
+    test_components.add_argument("--context", required=True)
+    add_execution_options(test_components)
     test_inventory = test_commands.add_parser("inventory")
     inventory_commands = test_inventory.add_subparsers(dest="inventory_command", required=True)
     inventory_collect = inventory_commands.add_parser("collect")
@@ -911,23 +915,23 @@ def _run_build(args, graph, events: EventWriter) -> int:
         return 0
 
 
-def _run_test_component(args, graph, events: EventWriter) -> int:
-    component = graph.components.get(args.component)
+def _run_test_component(component_id: str, args, graph, events: EventWriter) -> int:
+    component = graph.components.get(component_id)
     if component is None:
-        raise BuildError("COMPONENT_UNKNOWN", f"unknown component: {args.component}", EXIT_USAGE)
+        raise BuildError("COMPONENT_UNKNOWN", f"unknown component: {component_id}", EXIT_USAGE)
     if component.kind != "test":
-        raise BuildError("COMPONENT_NOT_TEST", f"component is not a test target: {args.component}", EXIT_USAGE)
-    stale = stale_component_outputs(graph, args.component, args.context)
+        raise BuildError("COMPONENT_NOT_TEST", f"component is not a test target: {component_id}", EXIT_USAGE)
+    stale = stale_component_outputs(graph, component_id, args.context)
     if stale:
         raise BuildError(
             "GENERATED_MODEL_STALE",
             f"committed build projections are stale ({', '.join(stale)}); run: py -3 tools/build/sakura_build.py generate",
             EXIT_STALE,
         )
-    intent = graph.build_intent((args.component,), args.context, ("generate", "compile", "link", "test"))
+    intent = graph.build_intent((component_id,), args.context, ("generate", "compile", "link", "test"))
     _ensure_package_closure(
         graph,
-        (args.component,),
+        (component_id,),
         args.context,
         dry_run=args.dry_run,
         timeout_seconds=args.package_timeout_seconds,
@@ -939,7 +943,7 @@ def _run_test_component(args, graph, events: EventWriter) -> int:
         raise BuildError("COMPONENT_TARGET_AMBIGUOUS", f"test component has {len(targets)} {context.backend} targets; exactly one is required", EXIT_USAGE)
     if context.backend == "msbuild":
         build_commands = [msbuild_command(graph.repo_root, graph.repo_root / targets[0], context.platform, context.configuration, args.jobs)]
-        executable = graph.repo_root / f"build/components/{args.context}/{args.component}/bin/{args.component}.exe"
+        executable = graph.repo_root / f"build/components/{args.context}/{component_id}/bin/{component_id}.exe"
         test_commands = [[str(executable)]]
         result = run_commands(build_commands, graph.repo_root, dry_run=args.dry_run, events=events, failure_exit_code=EXIT_BUILD)
         if result:
@@ -948,8 +952,8 @@ def _run_test_component(args, graph, events: EventWriter) -> int:
 
     if args.dry_run:
         execution_root = graph.repo_root
-        build_commands = cmake_component_commands(execution_root, args.component, args.context, context.configuration, context.toolchain, args.jobs)
-        test_commands = cmake_component_test_commands(execution_root, args.component, args.context, context.configuration, args.jobs)
+        build_commands = cmake_component_commands(execution_root, component_id, args.context, context.configuration, context.toolchain, args.jobs)
+        test_commands = cmake_component_test_commands(execution_root, component_id, args.context, context.configuration, args.jobs)
         environment = mingw_environment() if context.toolchain == "mingw" else None
         result = run_commands(build_commands, execution_root, dry_run=True, events=events, environment=environment, failure_exit_code=EXIT_BUILD, isolate_cmake_environment=True)
         if result:
@@ -957,15 +961,44 @@ def _run_test_component(args, graph, events: EventWriter) -> int:
         return run_commands(test_commands, execution_root, dry_run=True, events=events, environment=environment, failure_exit_code=EXIT_TEST, isolate_cmake_environment=True)
 
     with native_execution_root(graph.repo_root, events) as execution_root:
-        build_commands = cmake_component_commands(execution_root, args.component, args.context, context.configuration, context.toolchain, args.jobs)
-        test_commands = cmake_component_test_commands(execution_root, args.component, args.context, context.configuration, args.jobs)
+        build_commands = cmake_component_commands(execution_root, component_id, args.context, context.configuration, context.toolchain, args.jobs)
+        test_commands = cmake_component_test_commands(execution_root, component_id, args.context, context.configuration, args.jobs)
         environment = mingw_environment() if context.toolchain == "mingw" else (msvc_environment(execution_root) if context.toolchain == "msvc" else None)
         result = run_commands(build_commands, execution_root, dry_run=False, events=events, environment=environment, failure_exit_code=EXIT_BUILD, isolate_cmake_environment=True)
         if result:
             return result
-        build_dir = cmake_component_build_dir(execution_root, args.component, args.context)
+        build_dir = cmake_component_build_dir(execution_root, component_id, args.context)
         write_native_path_identity(build_dir, graph.repo_root, execution_root)
         return run_commands(test_commands, execution_root, dry_run=False, events=events, environment=environment, failure_exit_code=EXIT_TEST, isolate_cmake_environment=True)
+
+
+def _run_test_components(args, graph, events: EventWriter) -> int:
+    """Run the applicable component test runners in manifest order.
+
+    A dry run prints each runner's commands as test component --dry-run does
+    and records each planned runner as passed.
+    """
+    statuses = {0: "passed", EXIT_BUILD: "build_failed", EXIT_TEST: "test_failed"}
+    runners = []
+    exit_code = 0
+    for component_id in select_component_test_runners(graph, args.context):
+        runner_exit_code = _run_test_component(component_id, args, graph, events)
+        if runner_exit_code not in statuses:
+            raise BuildError(
+                "COMPONENT_TESTS_ABORTED",
+                f"component test execution stopped at {component_id} with exit code {runner_exit_code}",
+                runner_exit_code,
+            )
+        status = statuses[runner_exit_code]
+        runners.append({"component": component_id, "status": status, "exit_code": runner_exit_code})
+        print(f"component-test {component_id} {status}", flush=True)
+        if runner_exit_code and exit_code != EXIT_BUILD:
+            exit_code = runner_exit_code
+
+    output({"context": args.context, "ok": exit_code == 0, "runners": runners}, args.format)
+    passed = sum(runner["status"] == "passed" for runner in runners)
+    print(f"component-tests {args.context}: {passed}/{len(runners)} passed")
+    return exit_code
 
 
 def _run_compat(args, graph, events: EventWriter) -> int:
@@ -1857,7 +1890,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.test_command == "coverage-map":
                 return _run_test_coverage_map(args, repo)
             if args.test_command == "component":
-                return _run_test_component(args, graph, events)
+                return _run_test_component(args.component, args, graph, events)
+            if args.test_command == "components":
+                return _run_test_components(args, graph, events)
             validate_legacy_pair(args.platform, args.configuration, "MinGW")
             package_result = _ensure_package_closure(
                 graph,

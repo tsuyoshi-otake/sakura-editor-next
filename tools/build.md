@@ -834,6 +834,18 @@ x64\Debug\tests1.exe --gtest_filter=-MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:
 
 GitHub-hosted runner は非対話セッションのため、標準 CI でも同じフィルターを環境変数 `GTEST_FILTER` から適用します。CI では CTest と Actions の両方に上限時間を設け、失敗時を含めてリポジトリ配下の `tests1.exe`、`sakura.exe`、および関連するカバレッジプロセスを検査・終了します。完全な UI・連携テストは、対話可能な Windows セッションで別途実行してください。
 
+`py -3 tools/build/sakura_build.py test components --context <context>` は、
+`modules.json` に宣言された `kind: test`、`build_definition: generated` のランナーのうち、
+指定のコンテキストに対応するものを宣言順に実行します。レガシーの `tests1` は対象外です。
+ランナーのビルドやテストが失敗しても、残りのランナーを実行します。ランナーの実行前に構成エラー
+（生成済みのビルド定義が古い場合の `GENERATED_MODEL_STALE` や、バックエンドターゲットが
+1 件以外の場合など）を検出すると、そのエラーの終了コードでコマンドを直ちに終了します。
+各ランナーの結果は `component-test <id> <passed|build_failed|test_failed>` の形式で 1 行ずつ表示し、
+最後の行に成功したランナーの件数を表示します。全ランナーが成功した場合は
+終了コード `0`、ビルド失敗が 1 件でもあれば `6`（`EXIT_BUILD`）、ビルド失敗がなくテスト失敗が
+あれば `7`（`EXIT_TEST`）を返します。必須の MSVC ワークフローでは、Debug と Release の
+両方でヘッドレステストの直後に実行します（#440）。
+
 ### SENP v2 runtimeの受入検査
 
 `build-sln.bat x64 Debug`の後、`py -3 tools/verify-senp-runtime.py --offline`で、
