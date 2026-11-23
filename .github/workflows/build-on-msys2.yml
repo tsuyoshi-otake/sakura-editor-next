@@ -237,6 +237,9 @@ jobs:
       - name: Verify Output provider conformance execution
         run: py -3 tools/verify-gtest-suite-executed.py --xml tests1-googletest.xml --suite OutputServiceProviderConformance
 
+      - name: Verify native worker thread execution
+        run: py -3 tools/verify-gtest-suite-executed.py --xml tests1-googletest.xml --suite NativeWorkerThread --min-tests 8
+
       - name: Try gdb backtrace on test failure
         if: failure() && env.Configuration == 'Debug'
         continue-on-error: true

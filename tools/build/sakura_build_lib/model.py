@@ -65,6 +65,9 @@ PROPAGATIONS = {"none", "public"}
 IMPLEMENTATION_LANGUAGES = {"cpp", "rust"}
 AUTHORITY_MODES = {"none", "candidate-shadow", "production", "legacy-production", "retired"}
 PRODUCTION_AUTHORITY_MODES = {"production", "legacy-production"}
+# Owner decision (#435 item 3, 2026-11-23): Rust production authority on MinGW
+# is limited to these domains. Every other MinGW domain keeps C++ production.
+MINGW_RUST_PRODUCTION_DOMAINS = frozenset({"native-worker-lifecycle"})
 PRODUCTION_EDGE_PHASES = {"link", "runtime"}
 
 
@@ -1416,6 +1419,18 @@ def load_semantic_graph(
                 "RUNTIME_PROVIDER_CONTEXT_REFERENCE",
                 f"$.runtime_providers.{provider.id}.supported_contexts",
                 f"unknown contexts: {', '.join(unknown_contexts)}",
+            )
+        if (
+            provider.implementation_language == "rust"
+            and provider.authority_mode in PRODUCTION_AUTHORITY_MODES
+            and provider.authority_domain not in MINGW_RUST_PRODUCTION_DOMAINS
+            and any(contexts[context_id].toolchain == "mingw" for context_id in provider.supported_contexts)
+        ):
+            _fail(
+                "RUNTIME_PROVIDER_MINGW_RUST_PRODUCTION",
+                f"$.runtime_providers.{provider.id}.supported_contexts",
+                f"Rust production authority on MinGW is not allowed for {provider.authority_domain}; "
+                f"allowed domains: {', '.join(sorted(MINGW_RUST_PRODUCTION_DOMAINS))}",
             )
         build_component = components.get(provider.build_component)
         if build_component is None:

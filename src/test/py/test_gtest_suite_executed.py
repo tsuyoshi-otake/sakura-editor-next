@@ -1,4 +1,4 @@
-"""Contracts for the MinGW Output suite execution evidence (#435)."""
+"""Contracts for the MinGW Output and worker-thread suite evidence (#435)."""
 
 import re
 import subprocess
@@ -13,6 +13,9 @@ TOOL = REPO_ROOT / "tools/verify-gtest-suite-executed.py"
 WORKFLOW = REPO_ROOT / ".github/workflows/build-on-msys2.yml"
 CONFORMANCE = (
     REPO_ROOT / "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp"
+)
+WORKER_THREAD_TEST = (
+    REPO_ROOT / "src/test/cpp/tests1/platform/foundation/NativeWorkerThreadTest.cpp"
 )
 SUITE = "OutputServiceProviderConformance"
 EXECUTED_CASE = '<testcase name="First" status="run" result="completed"/>'
@@ -115,10 +118,14 @@ def test_checks_every_matching_suite(tmp_path: Path) -> None:
     assert "1 not executed" in result.stderr
 
 
-def test_mingw_verifies_the_suite_immediately_after_unit_tests() -> None:
+def mingw_workflow_steps() -> list[str]:
     text = WORKFLOW.read_text(encoding="utf-8-sig")
     mingw_job = text.split("\n  mingw:\n", 1)[1]
-    steps = re.split(r"(?m)^      - (?=(?:name|uses|run):)", mingw_job)
+    return re.split(r"(?m)^      - (?=(?:name|uses|run):)", mingw_job)
+
+
+def test_mingw_verifies_the_suite_immediately_after_unit_tests() -> None:
+    steps = mingw_workflow_steps()
     unit_tests = next(
         index for index, step in enumerate(steps)
         if step.startswith("name: Run unit tests\n")
@@ -131,6 +138,26 @@ def test_mingw_verifies_the_suite_immediately_after_unit_tests() -> None:
         evidence,
     )
     assert not re.search(r"(?m)^        (?:continue-on-error|if):", evidence)
+
+
+def test_mingw_verifies_native_worker_threads_immediately_after_output() -> None:
+    steps = mingw_workflow_steps()
+    output = next(
+        index for index, step in enumerate(steps)
+        if step.startswith("name: Verify Output provider conformance execution\n")
+    )
+    evidence = steps[output + 1]
+    assert evidence.startswith("name: Verify native worker thread execution\n")
+    assert (
+        "        run: py -3 tools/verify-gtest-suite-executed.py "
+        "--xml tests1-googletest.xml --suite NativeWorkerThread --min-tests 8"
+    ) in evidence.splitlines()
+    assert not re.search(r"(?m)^        (?:continue-on-error|if):", evidence)
+
+
+def test_native_worker_thread_source_declares_at_least_eight_cases() -> None:
+    text = WORKER_THREAD_TEST.read_text(encoding="utf-8-sig")
+    assert len(re.findall(r"(?m)^TEST\(NativeWorkerThread,", text)) >= 8
 
 
 def test_conformance_source_declares_the_expected_suite() -> None:

@@ -61,3 +61,30 @@ policy slots cover the three UTF-16 operations.
 The source guard is `test_byte_simd_candidates_are_comparison_only` in
 `src/test/py/test_native_rust_exports.py`.
 [#433](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/433)
+
+## 2026-11-23 / #435 item 3 / Option A: native worker lifecycle
+
+The Rust worker-thread ABI (`sakura_worker_thread_start_v2` and
+`sakura_worker_thread_join_v2`) is production infrastructure in all six build
+contexts. On MinGW, `native-worker-lifecycle` is the sole Rust production
+authority domain. The same ABI is linked from the native archive for each
+toolchain.
+
+The three C++ service owners own their queues, stop signals, cancellation, and
+callback context lifetimes. They are `CControlSenpComposition` (control-process
+SENP worker), `CSenpGitHubToolExecutor` (GitHub tool execution worker), and
+`CSenpControlToolReads` (editor-process control tool reads worker).
+`CNativeWorkerThread` owns the move-only token and consumes it on join or
+destruction. Rust owns the thread-handle registry, claims each handle exactly
+once, yields one join terminal per token, and reports body failures as redacted
+outcomes. A self-join detaches and returns `WouldDeadlock`.
+
+The build-model guard limits MinGW Rust production authority to this domain.
+The model tests cover one production provider and its archive in every context,
+and reject a Rust production provider for a different MinGW domain. Hosted
+MinGW verification checks the worker suite in `Verify native worker thread execution`
+and the ABI allowlist in `Verify native Rust C ABI exports (GNU nm)`. The hosted
+run IDs are recorded in #435.
+
+The UTF-16, Output, and URI authority policies are unchanged. This decision
+makes no performance claim.

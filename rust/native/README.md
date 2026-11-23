@@ -27,8 +27,12 @@ The native link boundary is deliberately one archive:
   An explicit C++ build is the rollback path. Each build uses a single Output
   provider.
 
-`sakura_native_ffi.lib` is therefore the only Rust library added to each
-native product/test link. The old `SakuraRustCore*` MSBuild property and target
+The worker-thread ABI (`sakura_worker_thread_*_v2`) is also production on
+MinGW, where it links from `libsakura_native_ffi.a` (#435).
+
+The only Rust library added to each native product/test link is
+`sakura_native_ffi.lib` on MSVC or `libsakura_native_ffi.a` on MinGW.
+The old `SakuraRustCore*` MSBuild property and target
 names remain compatibility shims, but resolve to this archive and to the
 `rust/native` workspace; they do not identify a second static library.
 

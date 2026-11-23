@@ -147,7 +147,8 @@
     "sakura-uri-cpp-provider",
     "sakura-uri-rust-candidate",
     "sakura-utf16-cpp-provider",
-    "sakura-utf16-rust-candidate"
+    "sakura-utf16-rust-candidate",
+    "sakura-worker-lifecycle-rust-provider"
   ],
   "compile_profiles": [
     "msvc-x64-debug",
@@ -173,11 +174,12 @@
   ],
   "production_runtime_providers": {
     "document-text-undo-layout": "sakura-document-cpp-provider",
+    "native-worker-lifecycle": "sakura-worker-lifecycle-rust-provider",
     "output-service-state": "sakura-output-rust-provider",
     "uri-identity": "sakura-uri-cpp-provider",
     "utf16-scan-backend": "sakura-utf16-cpp-provider"
   },
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:de62b918cfc9b5241d6bfb799f6e0df3f20985f5fd371fe6424e68eadf175273",
+  "semantic_graph_hash": "sha256:215070efde0cba5cdb962a10115f710d65123ea5857ba53d12762661209cece8",
   "staging_sets": []
 }

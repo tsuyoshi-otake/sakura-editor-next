@@ -1507,6 +1507,34 @@
       "side_effects": []
     },
     {
+      "id": "sakura-worker-lifecycle-rust-provider",
+      "authority_domain": "native-worker-lifecycle",
+      "authority_mode": "production",
+      "implementation_language": "rust",
+      "build_component": "sakura_app",
+      "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release"],
+      "cargo_package": "sakura-native-ffi",
+      "cargo_target": "sakura_native_ffi",
+      "link_artifact": "sakura-native-ffi-staticlib",
+      "thread_affinity": "any-thread",
+      "lifecycle_owner": "sakura_app",
+      "side_effects": ["worker-thread"]
+    },
+    {
+      "id": "sakura-worker-lifecycle-rust-gnu-provider",
+      "authority_domain": "native-worker-lifecycle",
+      "authority_mode": "production",
+      "implementation_language": "rust",
+      "build_component": "sakura_app",
+      "supported_contexts": ["mingw-x64-debug", "mingw-x64-release"],
+      "cargo_package": "sakura-native-ffi",
+      "cargo_target": "sakura_native_ffi",
+      "link_artifact": "sakura-native-ffi-gnu-staticlib",
+      "thread_affinity": "any-thread",
+      "lifecycle_owner": "sakura_app",
+      "side_effects": ["worker-thread"]
+    },
+    {
       "id": "sakura-document-cpp-provider",
       "authority_domain": "document-text-undo-layout",
       "authority_mode": "legacy-production",

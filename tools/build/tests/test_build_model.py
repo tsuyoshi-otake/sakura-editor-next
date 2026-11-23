@@ -22,7 +22,14 @@ from sakura_build_lib import generator as build_generator
 from sakura_build_lib.checkout_invariance import verify_checkout_invariance
 from sakura_build_lib import test_inventory as test_inventory_module
 from sakura_build_lib.generator import generate, stale_component_outputs, stale_outputs
-from sakura_build_lib.model import GENERATOR_VERSION, ManifestError, evaluate_condition, load_semantic_graph, normalize_condition
+from sakura_build_lib.model import (
+    GENERATOR_VERSION,
+    PRODUCTION_AUTHORITY_MODES,
+    ManifestError,
+    evaluate_condition,
+    load_semantic_graph,
+    normalize_condition,
+)
 from sakura_build_lib.runner import (
     COMPONENT_ISOLATED_ENVIRONMENT,
     BuildError,
@@ -399,6 +406,17 @@ class ManifestTests(unittest.TestCase):
                 else:
                     self.assertEqual("sakura-output-cpp-provider", production["output-service-state"].id)
 
+                workers = [
+                    provider for provider in graph.active_runtime_providers(context.id)
+                    if provider.authority_domain == "native-worker-lifecycle"
+                    and provider.authority_mode in PRODUCTION_AUTHORITY_MODES
+                ]
+                self.assertEqual(1, len(workers))
+                worker = workers[0]
+                self.assertEqual("production", worker.authority_mode)
+                self.assertEqual("rust", worker.implementation_language)
+                self.assertEqual(artifact_id, worker.link_artifact)
+
                 shadows = {
                     provider.authority_domain: provider
                     for provider in graph.active_runtime_providers(context.id)
@@ -409,6 +427,35 @@ class ManifestTests(unittest.TestCase):
                     self.assertEqual("rust", shadows[domain].implementation_language)
                     self.assertEqual(artifact_id, shadows[domain].link_artifact)
                     self.assertEqual((), shadows[domain].side_effects)
+
+    def test_rejects_mingw_rust_production_outside_worker_lifecycle(self):
+        graph = load_semantic_graph(REPO_ROOT)
+        manifest = graph.manifest_path
+        read_text = Path.read_text
+        value = json.loads(read_text(manifest, encoding="utf-8"))
+        candidate = next(
+            record for record in value["runtime_providers"]
+            if record["id"] == "sakura-output-rust-gnu-candidate"
+        )
+        value["runtime_providers"] = [
+            record for record in value["runtime_providers"]
+            if record["id"] != "sakura-output-cpp-provider"
+        ]
+        value["runtime_providers"].append({
+            **candidate,
+            "id": "sakura-output-rust-gnu-unapproved-provider",
+            "authority_mode": "production",
+        })
+
+        def read_fixture(path, *args, **kwargs):
+            if path == manifest:
+                return json.dumps(value)
+            return read_text(path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", read_fixture):
+            with self.assertRaises(ManifestError) as error:
+                load_semantic_graph(REPO_ROOT)
+        self.assertEqual("RUNTIME_PROVIDER_MINGW_RUST_PRODUCTION", error.exception.code)
 
     def test_document_candidate_cannot_be_a_second_production_authority(self):
         graph = load_semantic_graph(REPO_ROOT)
@@ -450,7 +497,15 @@ class ManifestTests(unittest.TestCase):
                 self.assertEqual(owner.id, fixture.production_runtime_providers(context_id)[domain].id)
 
             for variant, changes, diagnostic in (
-                ("duplicate", {"authority_mode": "production"}, "RUNTIME_AUTHORITY_PRODUCTION_COUNT"),
+                (
+                    "duplicate",
+                    {
+                        "authority_mode": "production",
+                        "supported_contexts": ["msvc-x64-debug"],
+                        "link_artifact": "sakura-native-ffi-staticlib",
+                    },
+                    "RUNTIME_AUTHORITY_PRODUCTION_COUNT",
+                ),
                 ("wrong context", {"supported_contexts": ["unknown"]}, "RUNTIME_PROVIDER_CONTEXT_REFERENCE"),
                 ("retired", {"authority_mode": "retired"}, "RUNTIME_PROVIDER_RETIRED_EDGE"),
                 ("side effects", {"side_effects": ["document-mutation"]}, "RUNTIME_PROVIDER_SHADOW_SIDE_EFFECTS"),
