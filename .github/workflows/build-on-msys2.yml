@@ -234,6 +234,9 @@ jobs:
           export PATH="$(cygpath --unix "${SAKURA_CARGO_BIN}"):${PATH}"
           ./build-gnu.bat ${{ env.BuildPlatform }} ${{ env.Configuration }}
 
+      - name: Verify Output provider conformance execution
+        run: py -3 tools/verify-gtest-suite-executed.py --xml tests1-googletest.xml --suite OutputServiceProviderConformance
+
       - name: Try gdb backtrace on test failure
         if: failure() && env.Configuration == 'Debug'
         continue-on-error: true

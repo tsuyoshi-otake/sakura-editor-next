@@ -232,8 +232,9 @@ remains the production Output authority. `SAKURA_OUTPUT_RUST_PROVIDER_COMPILED`
 enables the adapter when either the Rust backend is selected or the MinGW
 candidate is built. `OutputProviderFactory` selects the production Rust
 provider only through `SAKURA_OUTPUT_BACKEND_RUST`. Both MinGW legs run
-`OutputServiceProviderConformance.*` against the C++ authority, and MSVC runs
-the same corpus through its default Rust build. The MSVC C++ rollback build
+`OutputServiceProviderConformance.*` against the C++ authority and assert its
+execution from CTest's GoogleTest XML (#435). MSVC runs the same corpus through
+its default Rust build. The MSVC C++ rollback build
 keeps `OutputServiceRustProvider.obj` free of provider imports.
 
 `sakura_core/workbench/scm/GitOutputChannel.h`/`.cpp` (Issue #221) is this
