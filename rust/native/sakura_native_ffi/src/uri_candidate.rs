@@ -7,7 +7,7 @@
 
 use std::mem::size_of;
 
-use crate::ffi_pointer::is_aligned;
+use crate::ffi_pointer::{checked_address_range, checked_slice_range, overlaps, AddressRange};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 use std::slice;
@@ -138,46 +138,8 @@ struct CopiedComponents {
     has_authority: bool,
 }
 
-#[derive(Clone, Copy)]
-struct AddressRange {
-    start: usize,
-    end: usize,
-}
-
 fn catch_status(operation: impl FnOnce() -> SakuraUriCandidateStatus) -> SakuraUriCandidateStatus {
     catch_unwind(AssertUnwindSafe(operation)).unwrap_or(SakuraUriCandidateStatus::InternalError)
-}
-
-fn checked_address_range<T>(pointer: *const T) -> Option<AddressRange> {
-    if pointer.is_null() || !is_aligned(pointer) {
-        return None;
-    }
-    let start = pointer as usize;
-    let end = start.checked_add(size_of::<T>())?;
-    (end <= isize::MAX as usize).then_some(AddressRange { start, end })
-}
-
-fn checked_slice_range<T>(pointer: *const T, length: usize) -> Option<AddressRange> {
-    if length == 0 {
-        return Some(AddressRange { start: 0, end: 0 });
-    }
-    if pointer.is_null() || !is_aligned(pointer) {
-        return None;
-    }
-    let byte_length = length.checked_mul(size_of::<T>())?;
-    if byte_length > isize::MAX as usize {
-        return None;
-    }
-    let start = pointer as usize;
-    let end = start.checked_add(byte_length)?;
-    (end <= isize::MAX as usize).then_some(AddressRange { start, end })
-}
-
-fn overlaps(left: AddressRange, right: AddressRange) -> bool {
-    left.start != left.end
-        && right.start != right.end
-        && left.start < right.end
-        && right.start < left.end
 }
 
 fn validate_header(
