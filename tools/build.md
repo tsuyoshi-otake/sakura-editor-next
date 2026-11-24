@@ -203,6 +203,14 @@ URI の Rust 比較実装を呼び出すのは `tests1` の差分テストだけ
 `document-text-undo-layout` の `legacy-production` として宣言します。同じドメインとコンテキストに
 比較用プロバイダーを追加する場合は `candidate-shadow` を使用します。
 
+エンコード済み EOL（UTF-16LE/BE・UTF-32LE/BE）の走査は `CFileLoad` と `CReadManager` の
+既存 C++ 実装が所有し、`document-file-codec` の `legacy-production` として全 6 コンテキストで
+宣言します。Rust の `sakura_document_codec` は副作用のない `candidate-shadow` で、MSVC の 4
+コンテキストと MinGW の 2 コンテキストに 1 件ずつ記録します。呼び出すのは `tests1` の
+`EncodedEolRustCandidate` 差分テストだけで、本番の読み込み経路は変わりません。MinGW レッグは
+`Verify encoded EOL contract execution` と `Verify encoded EOL candidate execution` の 2 ステップで
+`EncodedEolContract`（7 件以上）と `EncodedEolRustCandidate`（10 件以上）の実行を確認します。
+
 ### 明示 package restore と runtime staging
 
 canonical driver は native build の前に、選択component/contextの宣言済み package closure だけを

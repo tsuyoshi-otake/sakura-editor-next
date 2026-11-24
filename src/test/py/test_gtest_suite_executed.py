@@ -1,4 +1,4 @@
-"""Contracts for the MinGW Output and worker-thread suite evidence (#435)."""
+"""Contracts for the MinGW Output, worker-thread, and encoded EOL suite evidence (#435, #441)."""
 
 import re
 import subprocess
@@ -16,6 +16,12 @@ CONFORMANCE = (
 )
 WORKER_THREAD_TEST = (
     REPO_ROOT / "src/test/cpp/tests1/platform/foundation/NativeWorkerThreadTest.cpp"
+)
+ENCODED_EOL_CONTRACT_TEST = (
+    REPO_ROOT / "src/test/cpp/tests1/charset/EncodedEolContractTest.cpp"
+)
+ENCODED_EOL_CANDIDATE_TEST = (
+    REPO_ROOT / "src/test/cpp/tests1/charset/EncodedEolRustCandidateTest.cpp"
 )
 SUITE = "OutputServiceProviderConformance"
 EXECUTED_CASE = '<testcase name="First" status="run" result="completed"/>'
@@ -163,3 +169,38 @@ def test_native_worker_thread_source_declares_at_least_eight_cases() -> None:
 def test_conformance_source_declares_the_expected_suite() -> None:
     text = CONFORMANCE.read_text(encoding="utf-8-sig")
     assert f"TEST({SUITE}," in text
+
+
+ENCODED_EOL_STEPS = (
+    ("Verify encoded EOL contract execution", "EncodedEolContract", 7),
+    ("Verify encoded EOL candidate execution", "EncodedEolRustCandidate", 10),
+)
+
+
+def test_mingw_verifies_the_encoded_eol_suites_immediately_after_native_worker_threads() -> None:
+    steps = mingw_workflow_steps()
+    worker = next(
+        index for index, step in enumerate(steps)
+        if step.startswith("name: Verify native worker thread execution\n")
+    )
+    for offset, (name, suite, minimum) in enumerate(ENCODED_EOL_STEPS, start=1):
+        evidence = steps[worker + offset]
+        assert evidence.startswith(f"name: {name}\n")
+        assert (
+            "        run: py -3 tools/verify-gtest-suite-executed.py "
+            f"--xml tests1-googletest.xml --suite {suite} --min-tests {minimum}"
+        ) in evidence.splitlines()
+        assert not re.search(r"(?m)^        (?:continue-on-error|if):", evidence)
+
+
+def test_encoded_eol_contract_source_declares_at_least_seven_cases() -> None:
+    text = ENCODED_EOL_CONTRACT_TEST.read_text(encoding="utf-8-sig")
+    assert len(re.findall(r"(?m)^TEST\(EncodedEolContract,", text)) >= 7
+
+
+def test_encoded_eol_candidate_source_declares_ten_cases_in_the_linked_branch() -> None:
+    # Only the branch compiled with the Rust archive counts: the single unlinked
+    # alternative after `#else` must never satisfy the minimum the workflow enforces.
+    text = ENCODED_EOL_CANDIDATE_TEST.read_text(encoding="utf-8-sig")
+    linked = text.partition("\n#else\n")[0]
+    assert len(re.findall(r"(?m)^TEST\(EncodedEolRustCandidate,", linked)) >= 10

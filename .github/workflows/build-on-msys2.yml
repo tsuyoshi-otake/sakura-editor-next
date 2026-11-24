@@ -240,6 +240,12 @@ jobs:
       - name: Verify native worker thread execution
         run: py -3 tools/verify-gtest-suite-executed.py --xml tests1-googletest.xml --suite NativeWorkerThread --min-tests 8
 
+      - name: Verify encoded EOL contract execution
+        run: py -3 tools/verify-gtest-suite-executed.py --xml tests1-googletest.xml --suite EncodedEolContract --min-tests 7
+
+      - name: Verify encoded EOL candidate execution
+        run: py -3 tools/verify-gtest-suite-executed.py --xml tests1-googletest.xml --suite EncodedEolRustCandidate --min-tests 10
+
       - name: Try gdb backtrace on test failure
         if: failure() && env.Configuration == 'Debug'
         continue-on-error: true

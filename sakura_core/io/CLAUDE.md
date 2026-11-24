@@ -69,3 +69,10 @@ offsets and wire numbers with `static_assert`.
 candidate with the production scan and the corpus: every aligned start and every byte end
 of each corpus case under a guard page, and the generated partition-threshold images. The
 injected-panic paths are covered by the Rust unit tests only.
+
+The module model declares the scan in the `document-file-codec` domain
+(`src/main/modules/modules.json`): `sakura-encoded-eol-cpp-provider` is `legacy-production` in
+all six contexts, and `sakura-encoded-eol-rust-candidate` (MSVC) and
+`sakura-encoded-eol-rust-gnu-candidate` (MinGW) are side-effect-free `candidate-shadow` records.
+The MinGW leg proves that both suites ran with `tools/verify-gtest-suite-executed.py`
+(`.github/CLAUDE.md`).

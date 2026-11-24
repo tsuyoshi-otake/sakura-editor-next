@@ -154,6 +154,8 @@
   ],
   "active_runtime_providers": [
     "sakura-document-cpp-provider",
+    "sakura-encoded-eol-cpp-provider",
+    "sakura-encoded-eol-rust-candidate",
     "sakura-output-rust-candidate",
     "sakura-output-rust-provider",
     "sakura-uri-cpp-provider",
@@ -185,6 +187,7 @@
     "root-vcpkg-package-set"
   ],
   "production_runtime_providers": {
+    "document-file-codec": "sakura-encoded-eol-cpp-provider",
     "document-text-undo-layout": "sakura-document-cpp-provider",
     "native-worker-lifecycle": "sakura-worker-lifecycle-rust-provider",
     "output-service-state": "sakura-output-rust-provider",
@@ -192,7 +195,7 @@
     "utf16-scan-backend": "sakura-utf16-cpp-provider"
   },
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:992300b8f9530cc129df53a38f8fafa5f7c0bef797e6c5eb0fa01135c885ca5f",
+  "semantic_graph_hash": "sha256:12f254d30a68dca6f8003a642af5591a8c9d38093a951f6b99b5c1c063e239f1",
   "staging_sets": [
     "sakura-editor-msvc-x64-debug-runtime-stage"
   ]
