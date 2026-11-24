@@ -389,6 +389,7 @@ class ManifestTests(unittest.TestCase):
                     "rust/native/rust-toolchain.toml",
                     "rust/native/sakura_simd/Cargo.toml",
                     "rust/native/sakura_unicode_core/Cargo.toml",
+                    "rust/native/sakura_document_codec/Cargo.toml",
                 }.issubset(artifact.inputs))
 
                 projection = graph.project(context.id)

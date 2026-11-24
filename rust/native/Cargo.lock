@@ -10,6 +10,7 @@ version = "0.1.0"
 name = "sakura-native-ffi"
 version = "0.1.0"
 dependencies = [
+ "sakura-document-codec",
  "sakura-simd",
  "sakura-unicode-core",
 ]

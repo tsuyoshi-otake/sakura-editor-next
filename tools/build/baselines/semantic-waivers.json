@@ -151,13 +151,13 @@
     },
     {
       "owner": "tsuyoshi-otake",
-      "reason": "The CI dependency-age fix in #390 touches an existing build workflow. Its two focused Rust integration filters are intentional additional tests with explicit executed-count checks; removing either would weaken coverage. #429 then adds the \"Verify native Rust C ABI exports\" step to the rust-tests job; it runs no test filter and adds no finding, and the two baseline findings are unchanged. The #429 follow-up makes that step collect vswhere's output before choosing dumpbin; it also runs no test filter and adds no finding. Track the pre-existing ratchet debt in #389 and reject further unreviewed workflow changes. #440 adds the \"Run component test runners\" step to the MSBuild job; it runs no test selection pattern and adds no finding, and the two baseline findings are unchanged. #325 adds the \"Verify the test inventory against the built runners\" step to the MSBuild job; it runs no test selection pattern and adds no finding, and the two baseline findings are unchanged.",
+      "reason": "The CI dependency-age fix in #390 touches an existing build workflow. Its two focused Rust integration filters are intentional additional tests with explicit executed-count checks; removing either would weaken coverage. #429 then adds the \"Verify native Rust C ABI exports\" step to the rust-tests job; it runs no test filter and adds no finding, and the two baseline findings are unchanged. The #429 follow-up makes that step collect vswhere's output before choosing dumpbin; it also runs no test filter and adds no finding. Track the pre-existing ratchet debt in #389 and reject further unreviewed workflow changes. #440 adds the \"Run component test runners\" step to the MSBuild job; it runs no test selection pattern and adds no finding, and the two baseline findings are unchanged. #325 adds the \"Verify the test inventory against the built runners\" step to the MSBuild job; it runs no test selection pattern and adds no finding, and the two baseline findings are unchanged. #441 extends the \"Rust static checks (Debug matrix cell)\" step with assertions that the native workspace contains the sakura-document-codec package, that it is a workspace member with exactly one rlib library target, and that sakura-native-ffi depends on it; it runs no test selection pattern and adds no finding, and the two baseline findings are unchanged.",
       "tracking_issue": 389,
       "created": "2026-11-22",
       "expires": "2027-02-07",
       "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
       "files": {
-        ".github/workflows/build-sakura.yml": "sha256:0aa0f6976810eb6060d4675ee1c8368a859c4d0fc9737e16c479a6971007340a"
+        ".github/workflows/build-sakura.yml": "sha256:02e09a92f3f5cb1397f196b33f14d6133fabb8c72ab9b5beb7c9426514741cc4"
       },
       "new_findings": [],
       "missing_touched_reductions": [

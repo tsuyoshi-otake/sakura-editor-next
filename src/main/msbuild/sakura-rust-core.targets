@@ -22,6 +22,7 @@
     <SakuraNativeFfiMemberManifest>$([MSBuild]::NormalizePath('$(SakuraNativeFfiWorkspace)', 'sakura_native_ffi\Cargo.toml'))</SakuraNativeFfiMemberManifest>
     <SakuraNativeFfiSimdManifest>$([MSBuild]::NormalizePath('$(SakuraNativeFfiWorkspace)', 'sakura_simd\Cargo.toml'))</SakuraNativeFfiSimdManifest>
     <SakuraNativeFfiUnicodeManifest>$([MSBuild]::NormalizePath('$(SakuraNativeFfiWorkspace)', 'sakura_unicode_core\Cargo.toml'))</SakuraNativeFfiUnicodeManifest>
+    <SakuraNativeFfiDocumentCodecManifest>$([MSBuild]::NormalizePath('$(SakuraNativeFfiWorkspace)', 'sakura_document_codec\Cargo.toml'))</SakuraNativeFfiDocumentCodecManifest>
     <SakuraNativeFfiCargo Condition="'$(SakuraNativeFfiCargo)'==''">cargo</SakuraNativeFfiCargo>
     <SakuraNativeFfiTargetDir>$([MSBuild]::NormalizePath('$(SakuraNativeFfiRepoRoot)', 'build\$(Platform)\$(Configuration)\rust\native'))</SakuraNativeFfiTargetDir>
     <SakuraNativeFfiCargoProfile Condition="'$(Configuration)'=='Debug'">dev</SakuraNativeFfiCargoProfile>
@@ -82,13 +83,16 @@
     <SakuraRustCoreSource Include="$(SakuraNativeFfiMemberManifest)" />
     <SakuraRustCoreSource Include="$(SakuraNativeFfiSimdManifest)" />
     <SakuraRustCoreSource Include="$(SakuraNativeFfiUnicodeManifest)" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiDocumentCodecManifest)" />
     <SakuraRustCoreSource Include="$([MSBuild]::NormalizePath('$(SakuraNativeFfiWorkspace)', 'Cargo.lock'))" />
     <SakuraRustCoreSource Include="$([MSBuild]::NormalizePath('$(SakuraNativeFfiWorkspace)', 'rust-toolchain.toml'))" />
     <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_simd\src\**\*.rs" />
     <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_unicode_core\src\**\*.rs" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_document_codec\src\**\*.rs" />
     <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_native_ffi\src\**\*.rs" />
     <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_simd\**\build.rs" />
     <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_unicode_core\**\build.rs" />
+    <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_document_codec\**\build.rs" />
     <SakuraRustCoreSource Include="$(SakuraNativeFfiWorkspace)\sakura_native_ffi\**\build.rs" />
   </ItemGroup>
 

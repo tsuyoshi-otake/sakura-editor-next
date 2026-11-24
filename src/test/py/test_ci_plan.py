@@ -75,11 +75,13 @@ class CiPlanDecisionTests(unittest.TestCase):
             "rust/native/sakura_simd/Cargo.toml",
             "rust/native/sakura_native_ffi/Cargo.toml",
             "rust/native/sakura_unicode_core/Cargo.toml",
+            "rust/native/sakura_document_codec/Cargo.toml",
             "rust/native/Cargo.lock",
             "rust/native/rust-toolchain.toml",
             "rust/native/sakura_simd/src/lib.rs",
             "rust/native/sakura_native_ffi/src/lib.rs",
             "rust/native/sakura_unicode_core/src/lib.rs",
+            "rust/native/sakura_document_codec/src/lib.rs",
             "rust/senp/Cargo.toml",
             "rust/senp/Cargo.lock",
             "sakura_core/util/CpuDispatchRust.cpp",
@@ -209,13 +211,25 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
             "$metadata.packages | Where-Object { $_.name -eq 'sakura-unicode-core' }",
             static_gate,
         )
+        self.assertIn(
+            "$metadata.packages | Where-Object { $_.name -eq 'sakura-document-codec' }",
+            static_gate,
+        )
         self.assertIn("sakura-native-ffi must own the final link edges", static_gate)
+        self.assertIn(
+            "sakura-native-ffi must own the final link edges to all native rlibs.",
+            static_gate,
+        )
         self.assertIn(
             "($simdTargets[0].kind -join ',') -ne 'rlib'",
             static_gate,
         )
         self.assertIn(
             "($unicodeTargets[0].kind -join ',') -ne 'rlib'",
+            static_gate,
+        )
+        self.assertIn(
+            "($codecTargets[0].kind -join ',') -ne 'rlib'",
             static_gate,
         )
         self.assertIn("'..\\senp\\Cargo.toml'", static_gate)

@@ -86,6 +86,9 @@ UTF-16走査バックエンドは`SAKURA_UTF16_BACKEND`で明示します。既�
 containmentを所有し、各exportはpanicを型付き`InternalError`へ変換してC++へunwind
 しません。allocation-freeのstrict UTF-8 primitiveは`no_std`の
 `sakura-unicode-core`に分離し、CESU-8や各subsystem固有policyとは混在させません。
+文書ファイルのコーデック方針（UTF-16LE/BEとUTF-32LE/BEの符号化済み改行走査）は、
+`no_std`と`forbid(unsafe_code)`の`sakura-document-codec`が所有し、自身のC ABIは持たず、
+`sakura_native_ffi`経由でのみ利用する比較専用の候補で、本番はC++が担います。
 
 Output authorityは別の`SAKURA_OUTPUT_BACKEND`で明示し、MSVCの既定は`rust`、MinGWは`cpp`です。
 MSVCで`cpp`を明示すればビルド単位で戻せます。UTF-16/SIMD backend、ISA dispatch、CPU feature
@@ -189,7 +192,7 @@ UTF-16 と URI は全コンテキストで C++ が本番を担います。MSVC �
 各コンテキストはツールチェーンに対応する `sakura_native_ffi` アーカイブをリンクします。
 アーカイブの `cargo_target_triple` は Cargo のコンパイル先を示し、プロバイダーの
 `cargo_target` はクレートのターゲット名です。両アーカイブは共通の
-`rust/native/rust-toolchain.toml` と `sakura_unicode_core/Cargo.toml` をビルド入力に持ちます。
+`rust/native/rust-toolchain.toml`、`sakura_unicode_core/Cargo.toml`、`sakura_document_codec/Cargo.toml` をビルド入力に持ちます。
 UTF-16・Output・URI の Rust 比較実装は副作用のない `candidate-shadow` として記録します。
 `active_runtime_providers` はそのコンテキストでリンクされる実装を示し、実行時に呼び出されることは
 示しません。Output の Rust shadow は C++ の Output authority にだけ接続されるため

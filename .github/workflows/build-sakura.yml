@@ -968,12 +968,16 @@ jobs:
         $unicodePackages = @(
           $metadata.packages | Where-Object { $_.name -eq 'sakura-unicode-core' }
         )
-        if ($ffiPackages.Count -ne 1 -or $simdPackages.Count -ne 1 -or $unicodePackages.Count -ne 1) {
-          throw "Native workspace must contain exactly one FFI, SIMD, and Unicode core package."
+        $codecPackages = @(
+          $metadata.packages | Where-Object { $_.name -eq 'sakura-document-codec' }
+        )
+        if ($ffiPackages.Count -ne 1 -or $simdPackages.Count -ne 1 -or $unicodePackages.Count -ne 1 -or $codecPackages.Count -ne 1) {
+          throw "Native workspace must contain exactly one FFI, SIMD, Unicode core, and document codec package."
         }
         $ffiPackage = $ffiPackages[0]
         $simdPackage = $simdPackages[0]
         $unicodePackage = $unicodePackages[0]
+        $codecPackage = $codecPackages[0]
         $ffiMemberMatches = @(
           $metadata.workspace_members | Where-Object { $_ -eq $ffiPackage.id }
         )
@@ -983,7 +987,10 @@ jobs:
         $unicodeMemberMatches = @(
           $metadata.workspace_members | Where-Object { $_ -eq $unicodePackage.id }
         )
-        if ($ffiMemberMatches.Count -ne 1 -or $simdMemberMatches.Count -ne 1 -or $unicodeMemberMatches.Count -ne 1) {
+        $codecMemberMatches = @(
+          $metadata.workspace_members | Where-Object { $_ -eq $codecPackage.id }
+        )
+        if ($ffiMemberMatches.Count -ne 1 -or $simdMemberMatches.Count -ne 1 -or $unicodeMemberMatches.Count -ne 1 -or $codecMemberMatches.Count -ne 1) {
           throw 'All native crates must be workspace members.'
         }
         $staticlibTargets = @(
@@ -1017,12 +1024,23 @@ jobs:
         ) {
           throw 'sakura-unicode-core must expose exactly one rlib target.'
         }
+        $codecTargets = @(
+          $codecPackage.targets | Where-Object { @($_.crate_types) -contains 'rlib' }
+        )
+        if (
+          $codecTargets.Count -ne 1 -or
+          ($codecTargets[0].kind -join ',') -ne 'rlib' -or
+          ($codecTargets[0].crate_types -join ',') -ne 'rlib'
+        ) {
+          throw 'sakura-document-codec must expose exactly one rlib library target.'
+        }
         $ffiDependencyNames = @($ffiPackage.dependencies | ForEach-Object { $_.name })
         if (
           $ffiDependencyNames -notcontains 'sakura-simd' -or
-          $ffiDependencyNames -notcontains 'sakura-unicode-core'
+          $ffiDependencyNames -notcontains 'sakura-unicode-core' -or
+          $ffiDependencyNames -notcontains 'sakura-document-codec'
         ) {
-          throw 'sakura-native-ffi must own the final link edges to both native rlibs.'
+          throw 'sakura-native-ffi must own the final link edges to all native rlibs.'
         }
         cargo $toolchainArgument clippy --workspace --all-targets --all-features --locked -- -D warnings
         if ($LASTEXITCODE -ne 0) {

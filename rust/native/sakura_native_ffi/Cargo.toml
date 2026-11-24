@@ -12,3 +12,4 @@ crate-type = ["staticlib"]
 [dependencies]
 sakura-simd = { path = "../sakura_simd" }
 sakura-unicode-core = { path = "../sakura_unicode_core" }
+sakura-document-codec = { path = "../sakura_document_codec" }

@@ -164,9 +164,11 @@ class CMakeGenerationContractTests(unittest.TestCase):
         self.assertIn("SAKURA_NATIVE_FFI_MEMBER_MANIFEST", sakura_cmake)
         self.assertIn("SAKURA_NATIVE_FFI_SIMD_MANIFEST", sakura_cmake)
         self.assertIn("SAKURA_NATIVE_FFI_UNICODE_MANIFEST", sakura_cmake)
+        self.assertIn("SAKURA_NATIVE_FFI_DOCUMENT_CODEC_MANIFEST", sakura_cmake)
         self.assertIn("${SAKURA_NATIVE_FFI_MEMBER_MANIFEST}", sakura_cmake)
         self.assertIn("${SAKURA_NATIVE_FFI_SIMD_MANIFEST}", sakura_cmake)
         self.assertIn("${SAKURA_NATIVE_FFI_UNICODE_MANIFEST}", sakura_cmake)
+        self.assertIn("${SAKURA_NATIVE_FFI_DOCUMENT_CODEC_MANIFEST}", sakura_cmake)
         self.assertIn("rust/native", sakura_cmake)
         self.assertIn("sakura_native_ffi.lib", sakura_cmake)
         self.assertIn(
@@ -183,6 +185,7 @@ class CMakeGenerationContractTests(unittest.TestCase):
         self.assertIn("SAKURA_NATIVE_FFI_SOURCE_DIR", rust_helper)
         self.assertIn("SAKURA_NATIVE_FFI_SIMD_MANIFEST", rust_helper)
         self.assertIn("SAKURA_NATIVE_FFI_UNICODE_MANIFEST", rust_helper)
+        self.assertIn("SAKURA_NATIVE_FFI_DOCUMENT_CODEC_MANIFEST", rust_helper)
         self.assertIn("--package sakura-native-ffi", rust_helper)
         self.assertNotIn("sakura-rust-core", rust_helper)
         self.assertIn("Cargo.toml", msbuild_target)
@@ -218,6 +221,10 @@ class CMakeGenerationContractTests(unittest.TestCase):
         )
         self.assertIn(
             r'Include="$(SakuraNativeFfiWorkspace)\sakura_unicode_core\src\**\*.rs"',
+            msbuild_target,
+        )
+        self.assertIn(
+            r'Include="$(SakuraNativeFfiWorkspace)\sakura_document_codec\src\**\*.rs"',
             msbuild_target,
         )
         self.assertIn(
@@ -1048,28 +1055,34 @@ class CMakeGenerationContractTests(unittest.TestCase):
             ffi = workspace / "sakura_native_ffi"
             simd = workspace / "sakura_simd"
             unicode_core = workspace / "sakura_unicode_core"
+            document_codec = workspace / "sakura_document_codec"
             ffi.mkdir(parents=True)
             simd.mkdir(parents=True)
             unicode_core.mkdir(parents=True)
+            document_codec.mkdir(parents=True)
             manifest = workspace / "Cargo.toml"
             member_manifest = ffi / "Cargo.toml"
             simd_manifest = simd / "Cargo.toml"
             unicode_manifest = unicode_core / "Cargo.toml"
+            document_codec_manifest = document_codec / "Cargo.toml"
             lock = workspace / "Cargo.lock"
             toolchain = workspace / "rust-toolchain.toml"
             ffi_source = ffi / "src.rs"
             simd_source = simd / "src.rs"
             unicode_source = unicode_core / "src.rs"
+            document_codec_source = document_codec / "src.rs"
             for path in (
                 manifest,
                 member_manifest,
                 simd_manifest,
                 unicode_manifest,
+                document_codec_manifest,
                 lock,
                 toolchain,
                 ffi_source,
                 simd_source,
                 unicode_source,
+                document_codec_source,
             ):
                 path.write_text("fixture\n", encoding="utf-8")
             output = root / "build" / "x86_64-pc-windows-msvc" / "debug" / "sakura_native_ffi.lib"
@@ -1084,11 +1097,13 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 member_manifest,
                 simd_manifest,
                 unicode_manifest,
+                document_codec_manifest,
                 lock,
                 toolchain,
                 ffi_source,
                 simd_source,
                 unicode_source,
+                document_codec_source,
             ):
                 os.utime(path, ns=(inputs_mtime, inputs_mtime))
             before = output.stat()
@@ -1099,6 +1114,7 @@ class CMakeGenerationContractTests(unittest.TestCase):
                 f"-DSAKURA_NATIVE_FFI_MEMBER_MANIFEST={member_manifest.as_posix()}",
                 f"-DSAKURA_NATIVE_FFI_SIMD_MANIFEST={simd_manifest.as_posix()}",
                 f"-DSAKURA_NATIVE_FFI_UNICODE_MANIFEST={unicode_manifest.as_posix()}",
+                f"-DSAKURA_NATIVE_FFI_DOCUMENT_CODEC_MANIFEST={document_codec_manifest.as_posix()}",
                 f"-DSAKURA_NATIVE_FFI_LOCK={lock.as_posix()}",
                 f"-DSAKURA_NATIVE_FFI_TOOLCHAIN={toolchain.as_posix()}",
                 f"-DSAKURA_NATIVE_FFI_SOURCE_DIR={workspace.as_posix()}",
