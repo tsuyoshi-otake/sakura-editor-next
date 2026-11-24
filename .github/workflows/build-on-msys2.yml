@@ -203,8 +203,8 @@ jobs:
           ./build-gnu.bat ${{ env.BuildPlatform }} ${{ env.Configuration }} --no-test
 
       - name: Verify native Rust C ABI exports (GNU nm)
-        # Check the GNU archive against the same 32-name allowlist as the
-        # MSVC rust-tests leg (#429, #435).
+        # Check the GNU archive against the same exported-symbol allowlist as
+        # the MSVC rust-tests leg (#429, #435).
         run: |
           profile_dir="$(printf '%s' "${Configuration}" | tr '[:upper:]' '[:lower:]')"
           archive="build/MinGW/rust/native/x86_64-pc-windows-gnu/${profile_dir}/libsakura_native_ffi.a"
@@ -261,6 +261,43 @@ jobs:
             -ex "bt full" \
             -ex "info registers" \
             --args ./tests1.exe --gtest_repeat=100 --gtest_throw_on_failure
+
+      # Evidence for the encoded EOL candidate (#441): touching one Rust source the
+      # archive builds from must rebuild the archive and relink both executables,
+      # and a rebuild after no change must move nothing. tools/verify-rebuild-trace.py
+      # takes the snapshots and prints the verdict; run_build repeats the build step's
+      # command. The step follows the gdb diagnostics so a failed trace never starts gdb.
+      - name: Trace the rebuild after touching a native Rust source
+        timeout-minutes: 20
+        run: |
+          set -eo pipefail
+          export PATH="$(cygpath --unix "${SAKURA_CARGO_BIN}"):${PATH}"
+          run_build() {
+            ./build-gnu.bat ${{ env.BuildPlatform }} ${{ env.Configuration }} --no-test
+          }
+          profile_dir="$(printf '%s' "${Configuration}" | tr '[:upper:]' '[:lower:]')"
+          output_dir="${BuildPlatform}/${Configuration}"
+          snapshots="build/rebuild-trace"
+          mkdir -p "${snapshots}"
+          tracked=(
+            --track "archive=build/MinGW/rust/native/x86_64-pc-windows-gnu/${profile_dir}/libsakura_native_ffi.a"
+            --track "sakura=${output_dir}/sakura.exe"
+            --track "tests1=${output_dir}/tests1.exe"
+            --track "language-en-US=${output_dir}/sakura_lang_en_US.dll"
+            --track "language-zh-CN=${output_dir}/sakura_lang_zh_CN.dll"
+            --scan "${output_dir}"
+            --scan build/MinGW
+          )
+          py -3 tools/verify-rebuild-trace.py snapshot --out "${snapshots}/before.json" "${tracked[@]}"
+          run_build
+          py -3 tools/verify-rebuild-trace.py snapshot --out "${snapshots}/noop.json" "${tracked[@]}"
+          py -3 tools/verify-rebuild-trace.py touch rust/native/sakura_document_codec/src/encoded_eol.rs
+          run_build
+          py -3 tools/verify-rebuild-trace.py snapshot --out "${snapshots}/touched.json" "${tracked[@]}"
+          py -3 tools/verify-rebuild-trace.py report \
+            "${snapshots}/before.json" "${snapshots}/noop.json" "${snapshots}/touched.json" \
+            --expect-changed archive,sakura,tests1 \
+            --expect-unchanged language-en-US,language-zh-CN
 
       - name: Clean up test process survivors
         if: ${{ always() }}
