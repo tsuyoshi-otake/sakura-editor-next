@@ -463,6 +463,9 @@
     <ClInclude Include="..\sakura_core\io\CFileLoad.h">
       <Filter>Cpp Source Files\io</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\io\DocumentEncodedEolCandidate.h">
+      <Filter>Cpp Source Files\io</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\io\CIoBridge.h">
       <Filter>Cpp Source Files\io</Filter>
     </ClInclude>
@@ -2606,6 +2609,9 @@
       <Filter>Cpp Source Files\io</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\io\CFileLoad.cpp">
+      <Filter>Cpp Source Files\io</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\io\DocumentEncodedEolCandidate.cpp">
       <Filter>Cpp Source Files\io</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\io\CIoBridge.cpp">

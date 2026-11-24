@@ -47,3 +47,25 @@ Prepared regressions cover these state transitions through real file reads.
 This state initialization is independent of the mapping lease.
 
 The extended-EOL policy is captured on FileOpen and inherited by Prepare. UTF-7 decoded splitting and UTF-16 scanning use the same captured state as the byte scanner. A settings change takes effect on reopen, not halfway through a partition.
+
+## Encoded EOL Rust candidate (#441)
+
+`DocumentEncodedEolCandidate.{h,cpp}` is a comparison-only adapter over the Rust
+`sakura_document_codec_scan_eol_measure_v1` and `..._write_v1` exports. `CFileLoad`
+and the `CReadManager` partition arithmetic stay legacy-production: nothing outside
+tests calls the adapter, and linking the archive does not select a backend.
+
+The scan range is `[start, length)` over a byte image, and the finish offset is the
+supplied end, trailing partial units included. Records are byte offset, byte width and
+`EEolType`; a CR LF pair is one record of two units. Measure and write are independent
+calls with no receipt between them. A failed call leaves every caller byte unchanged,
+and a write with too little capacity writes nothing. The check order and the
+1,048,576-record ceiling are documented in
+`rust/native/sakura_native_ffi/src/encoded_eol.rs`; the C++ structs pin the same sizes,
+offsets and wire numbers with `static_assert`.
+
+`EncodedEolContract` freezes the production scan over
+`rust/native/fixtures/encoded-eol-corpus.tsv`. `EncodedEolRustCandidate` compares the
+candidate with the production scan and the corpus: every aligned start and every byte end
+of each corpus case under a guard page, and the generated partition-threshold images. The
+injected-panic paths are covered by the Rust unit tests only.

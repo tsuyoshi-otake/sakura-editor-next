@@ -398,6 +398,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-ccodebase.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\charset\CodecGoldenCorpusTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\charset\EncodedEolContractTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\charset\EncodedEolRustCandidateTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-ccommandline.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cconvert.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cdecode.cpp" />

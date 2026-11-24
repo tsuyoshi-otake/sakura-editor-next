@@ -356,6 +356,7 @@
     <ClInclude Include="..\sakura_core\io\CBinaryStream.h" />
     <ClInclude Include="..\sakura_core\io\CFile.h" />
     <ClInclude Include="..\sakura_core\io\CFileLoad.h" />
+    <ClInclude Include="..\sakura_core\io\DocumentEncodedEolCandidate.h" />
     <ClInclude Include="..\sakura_core\io\CIoBridge.h" />
     <ClInclude Include="..\sakura_core\io\CStream.h" />
     <ClInclude Include="..\sakura_core\io\CTextStream.h" />
@@ -1091,6 +1092,7 @@
     <ClCompile Include="..\sakura_core\io\CBinaryStream.cpp" />
     <ClCompile Include="..\sakura_core\io\CFile.cpp" />
     <ClCompile Include="..\sakura_core\io\CFileLoad.cpp" />
+    <ClCompile Include="..\sakura_core\io\DocumentEncodedEolCandidate.cpp" />
     <ClCompile Include="..\sakura_core\io\CIoBridge.cpp" />
     <ClCompile Include="..\sakura_core\io\CStream.cpp" />
     <ClCompile Include="..\sakura_core\io\CTextStream.cpp" />
