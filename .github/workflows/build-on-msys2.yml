@@ -267,13 +267,14 @@ jobs:
       # and a rebuild after no change must move nothing. tools/verify-rebuild-trace.py
       # takes the snapshots and prints the verdict; run_build repeats the build step's
       # command. The step follows the gdb diagnostics so a failed trace never starts gdb.
-      # The first build after the unit tests is not quiet: in the first hosted run it
-      # relinked sakura.exe, both language DLLs and tests1.exe with no source change,
-      # re-staged ppa_stub.dll and dll_plugin1.dll, and spent 77 s (Release) or 131 s
-      # (Debug) before CMake started, against 4 s or 10 s for every other build. The step
-      # records the package cache and why the next build would rebuild (read-only, never
-      # failing the step), runs that build once so the trace measures a settled tree, and
-      # records what that build changed in build.ninja. Delete record_* once the cause is fixed.
+      # The first build after the unit tests is not quiet (#442): the CTest pytest test
+      # writes bytecode into third_party/owned/bregonig-next, a declared input of the
+      # package plan, so the plan hash changes and that build restores the package closure
+      # again (77 s Release, 131 s Debug in the first hosted run, against 4 s or 10 s for
+      # every other build), re-stages the port DLLs and relinks sakura.exe, tests1.exe and
+      # both language DLLs without compiling. The step runs that build once before the
+      # first snapshot so the trace measures a settled tree. Remove it when #442 is fixed;
+      # the no-change phase then guards against the regression again.
       - name: Trace the rebuild after touching a native Rust source
         timeout-minutes: 20
         run: |
@@ -284,41 +285,8 @@ jobs:
           }
           profile_dir="$(printf '%s' "${Configuration}" | tr '[:upper:]' '[:lower:]')"
           output_dir="${BuildPlatform}/${Configuration}"
-          package_context="mingw-x64-${profile_dir}"
           snapshots="build/rebuild-trace"
           mkdir -p "${snapshots}"
-          record_package_cache() {
-            echo "== package cache $1 ($(date -u +%H:%M:%S) UTC)"
-            ls -la --time-style=full-iso build/pkg/v/a build/pkg/v/e build/pkg/v/l build/pkg/v/u
-            ls -l --time-style=full-iso build/pkg/v/e/*/installed/x64-mingw-static/bin build/pkg/v/e/*/installed/x64-mingw-static/debug/bin
-          }
-          record_package_plan() {
-            for metadata in build/pkg/v/e/*/complete.json; do
-              echo "== completion metadata ${metadata}"
-              cat "${metadata}"
-            done
-            echo "== current package plan"
-            py -3 tools/build/sakura_build.py --format json package plan sakura_app --context "${package_context}"
-            for component in sakura_app tests1; do
-              echo "== package validate ${component}"
-              py -3 tools/build/sakura_build.py --format json package validate "${component}" --context "${package_context}"
-            done
-          }
-          record_pending_rebuild() {
-            echo "== checkout changes left by the unit tests"
-            git status --short | head -40
-            echo "== why the next build would rebuild"
-            cmake --build build/MinGW --target sakura sakura_lang_en_US tests1 -- -n -d explain 2>&1 | grep -E 'older than|command line|doesn.t exist' | cut -c1-300 | head -40
-            cp build/MinGW/build.ninja "${snapshots}/build.ninja.before"
-          }
-          record_build_change() {
-            echo "== build.ninja change made by the first build"
-            if cmp -s "${snapshots}/build.ninja.before" build/MinGW/build.ninja; then
-              echo "build.ninja is unchanged"
-            else
-              diff <(tr ' ' '\n' < "${snapshots}/build.ninja.before") <(tr ' ' '\n' < build/MinGW/build.ninja) | cut -c1-200 | head -60
-            fi
-          }
           tracked=(
             --track "archive=build/MinGW/rust/native/x86_64-pc-windows-gnu/${profile_dir}/libsakura_native_ffi.a"
             --track "sakura=${output_dir}/sakura.exe"
@@ -328,12 +296,7 @@ jobs:
             --scan "${output_dir}"
             --scan build/MinGW
           )
-          record_package_cache "before the first build" || true
-          record_package_plan || true
-          record_pending_rebuild || true
           run_build
-          record_package_cache "after the first build" || true
-          record_build_change || true
           py -3 tools/verify-rebuild-trace.py snapshot --out "${snapshots}/before.json" "${tracked[@]}"
           run_build
           py -3 tools/verify-rebuild-trace.py snapshot --out "${snapshots}/noop.json" "${tracked[@]}"

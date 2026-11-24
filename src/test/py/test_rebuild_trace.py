@@ -53,18 +53,6 @@ TRACE_EVENTS = (
     ("py -3 tools/verify-rebuild-trace.py report ", "report"),
 )
 
-# The shell functions of the step that only look at the tree, with the calls that bracket the first build.
-DIAGNOSTICS = ("record_package_cache", "record_package_plan", "record_pending_rebuild", "record_build_change")
-DIAGNOSTICS_BEFORE_FIRST_BUILD = (
-    'record_package_cache "before the first build" || true',
-    "record_package_plan || true",
-    "record_pending_rebuild || true",
-)
-DIAGNOSTICS_AFTER_FIRST_BUILD = (
-    'record_package_cache "after the first build" || true',
-    "record_build_change || true",
-)
-
 
 def _load_tool():
     spec = importlib.util.spec_from_file_location("verify_rebuild_trace", TOOL)
@@ -620,13 +608,6 @@ def test_the_trace_takes_each_snapshot_around_the_rebuild_it_describes() -> None
     )
 
 
-def function_body(body: str, name: str) -> list[str]:
-    """The lines of one shell function the step defines, without its opening and closing lines."""
-    lines = body.splitlines()
-    start = lines.index(f"{name}() {{")
-    return lines[start + 1 : lines.index("}", start)]
-
-
 def test_the_first_build_settles_the_tree_before_the_trace_measures_it() -> None:
     lines = [line.strip() for line in run_body(STEP).splitlines()]
     builds = [index for index, line in enumerate(lines) if line == "run_build"]
@@ -636,52 +617,11 @@ def test_the_first_build_settles_the_tree_before_the_trace_measures_it() -> None
         if line.startswith('py -3 tools/verify-rebuild-trace.py snapshot --out "${snapshots}/before.json" ')
     )
     assert len(builds) == 3
-    # The first build after the unit tests relinks everything (first hosted run), so the snapshots bracket the others.
+    # The first build after the unit tests restores the packages and relinks (#442), so the snapshots bracket the other two.
+    # Remove this test together with the settle build when #442 is fixed.
     assert builds[0] < first_snapshot < builds[1]
 
 
-def test_the_diagnostics_bracket_the_first_build_and_never_fail_the_step() -> None:
-    lines = [line.strip() for line in run_body(STEP).splitlines()]
-    first_build = lines.index("run_build")
-    first_snapshot = next(
-        index for index, line in enumerate(lines) if line.startswith("py -3 tools/verify-rebuild-trace.py snapshot ")
-    )
-    for call in DIAGNOSTICS_BEFORE_FIRST_BUILD:
-        assert lines.count(call) == 1
-        assert lines.index(call) < first_build
-    for call in DIAGNOSTICS_AFTER_FIRST_BUILD:
-        assert lines.count(call) == 1
-        assert first_build < lines.index(call) < first_snapshot
-    # Every line that calls a diagnostic is one of those five, so none runs without `|| true`.
-    started = [line for line in lines if re.match(rf"(?:{'|'.join(DIAGNOSTICS)})(?![\w(])", line)]
-    assert sorted(started) == sorted(DIAGNOSTICS_BEFORE_FIRST_BUILD + DIAGNOSTICS_AFTER_FIRST_BUILD)
-
-
-def test_the_diagnostics_only_read_the_tree() -> None:
-    body = run_body(STEP)
-    lines = [line.strip() for name in DIAGNOSTICS for line in function_body(body, name)]
-    text = "\n".join(lines)
-    assert len(lines) > len(DIAGNOSTICS)
-
-    def commands(prefix: str) -> list[str]:
-        return [line for line in lines if line.startswith(prefix)]
-
-    # They never run a build, remove, move or create anything, and never redirect output into a file.
-    assert not re.search(r"(?m)^(?:rm|mv|touch|ln|tee|mkdir|run_build)\b", text)
-    assert "build-gnu" not in text
-    assert ">" not in text.replace("2>&1", "")
-    # The one file they write is the copy of build.ninja that record_build_change compares against.
-    assert commands("cp ") == ['cp build/MinGW/build.ninja "${snapshots}/build.ninja.before"']
-    assert any("${snapshots}/build.ninja.before" in line for line in function_body(body, "record_build_change"))
-    # The package tool is only asked to plan or validate, CMake only to describe what a build would do,
-    # and git only for its status.
-    package_calls = [line for line in lines if "sakura_build.py" in line]
-    assert package_calls
-    assert all(re.search(r"sakura_build\.py --format json package (?:plan|validate) ", line) for line in package_calls)
-    cmake_calls = commands("cmake ")
-    assert cmake_calls
-    assert all(" -- -n -d explain " in line + " " for line in cmake_calls)
-    assert all(line.startswith("git status --short") for line in commands("git "))
 def test_the_touched_file_feeds_the_archive() -> None:
     touched = re.search(r"verify-rebuild-trace\.py touch (\S+)", run_body(STEP))
     assert touched is not None
