@@ -3,6 +3,7 @@ members = [
     "sakura_simd",
     "sakura_native_ffi",
     "sakura_unicode_core",
+    "sakura_document_codec",
 ]
 resolver = "2"
 
