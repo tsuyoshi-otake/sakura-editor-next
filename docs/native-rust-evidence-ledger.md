@@ -88,3 +88,58 @@ run IDs are recorded in #435.
 
 The UTF-16, Output, and URI authority policies are unchanged. This decision
 makes no performance claim.
+
+## 2026-11-25 / #441 A2 encoded EOL candidate (comparison-only)
+
+C++ keeps production authority. The Rust encoded EOL scanner is a
+`candidate-shadow` provider of the `document-file-codec` domain
+(`sakura-encoded-eol-rust-candidate` for the four MSVC contexts and
+`sakura-encoded-eol-rust-gnu-candidate` for the two MinGW contexts), while
+`sakura-encoded-eol-cpp-provider` stays `legacy-production` in all six. Nothing
+outside the tests calls the Rust provider. It reports the delimiter offsets,
+widths and kinds (CRLF, LF, CR, NEL, LS, PS) of UTF-16LE/BE and UTF-32LE/BE text
+through two checked exports, `sakura_document_codec_scan_eol_measure_v1` and
+`sakura_document_codec_scan_eol_write_v1`, with 16-byte records and at most
+1,048,576 records per call. The native C ABI allowlist grows from 32 to 34 names.
+Adopting any Rust scan for production needs its own review per operation and
+format (#267 G2.5); this entry decides nothing of the kind.
+
+Correctness is recorded apart from performance. One shared corpus,
+`rust/native/fixtures/encoded-eol-corpus.tsv` (59 rows in 13 classes, with 104
+end-of-region terminal cases), is read by the C++ `EncodedEolContract` suite
+(7 tests) and by the safe Rust crate `sakura_document_codec`
+(`forbid(unsafe_code)`), which also checks an independent model on 3,364,428
+small regions. The `EncodedEolRustCandidate` suite (10 tests) compares the Rust
+exports with the production scan on direct, guard-page and partition-replay
+cases: 8,872 compared ranges and 3,984 refused starts.
+
+Execution evidence. MSVC: run 45414147222 (commit `1e551f72a`) ran both suites
+in Debug and Release; `tools/verify-gtest-suite-executed.py` on the hosted
+`test-results-x64-<configuration>` artifacts reports 7 executed and 0 failed for
+`EncodedEolContract` and 10 executed and 0 failed for `EncodedEolRustCandidate`
+in each configuration, with the two counters above recorded in both. MinGW:
+runs 45428222387 (commit `1b6267937`) and 45453344382 (commit `a55b88631`)
+executed the same suites in both legs, 7 and 10 executed with 0 failed in all
+four legs, through the `Verify encoded EOL contract execution` and `Verify
+encoded EOL candidate execution` steps. Run 45453344382 also passed the GNU nm
+allowlist check.
+
+Rebuild trace (the MinGW/CMake trace that #267 G1 item 5 deferred). In run
+45453344382 each leg rebuilt after the unit tests with no source change, then
+after touching `rust/native/sakura_document_codec/src/encoded_eol.rs`
+(modification time only). With no change, the archive, `sakura.exe`, `tests1.exe`
+and both language DLLs kept their modification time and digest. After the touch
+the archive, `sakura.exe` and `tests1.exe` were rebuilt (strictly later
+modification time) and both language DLLs stayed identical; both legs report
+PASS. The first build after the unit tests is not quiet: it restores the package
+closure again and relinks, because the CTest `pytest` test writes bytecode into a
+declared package input and changes the package plan hash (#442). The step
+therefore runs that build once before measuring; run 45428222387 shows the
+no-change phase failing on both legs without it. The scan of other changed
+binaries lists one informational entry,
+`build/MinGW/tests1_resources/test-dllplugin/dll_plugin1.dll`.
+
+This entry makes no performance claim, says nothing about MSVC rebuild behavior
+(the trace runs on MinGW only), and adopts nothing for production.
+[#441](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/441),
+[#442](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/442)
