@@ -1,0 +1,80 @@
+# Encoded EOL corpus for the A2 candidate (#441). Shared by the C++ contract tests and, later, the Rust tests.
+# Tab-separated, UTF-8, LF. Lines that are empty or start with '#' are comments. The first other line is the header.
+# Columns: id, class, formats, start, units, records_off, records_on.
+#   formats   : all | utf16 | utf32 | a comma list of utf16le,utf16be,utf32le,utf32be.
+#   start     : first unit scanned (decimal). The region always ends after the last byte of the units column.
+#   units     : '-' for no bytes, or tokens separated by one space. Tokens: CR LF NEL LS PS NUL A B C D,
+#               uXXXX (a 16-bit unit, hex) and UXXXXXXXX (a 32-bit unit, hex, UTF-32 formats only).
+#               A suffix ~N on the LAST token keeps only the first N bytes of that unit (a partial final unit).
+#   records_* : '-' for none, or offset:width:KIND separated by ';'. Offsets and widths count units from the region start.
+#               KIND is CRLF LF CR NEL LS PS. records_off is for extended EOL off, records_on for extended EOL on
+#               ('=' repeats records_off).
+# Expectations are literal; they do not come from either implementation.
+id	class	formats	start	units	records_off	records_on
+# --- empty and sub-unit regions ---
+empty	empty	all	0	-	-	=
+sub-unit-a1	sub-unit	all	0	A~1	-	=
+sub-unit-a2	sub-unit	utf32	0	A~2	-	=
+sub-unit-a3	sub-unit	utf32	0	A~3	-	=
+sub-unit-lf1	sub-unit	all	0	LF~1	-	=
+sub-unit-cr1	sub-unit	all	0	CR~1	-	=
+# --- delimiter-free text ---
+text-only	no-eol	all	0	A B C	-	=
+embedded-nul	no-eol	all	0	A NUL B NUL	-	=
+surrogate-high	surrogate	all	0	A uD800 B	-	=
+surrogate-low-high	surrogate	all	0	uDC00 uD800	-	=
+byte-lookalikes	lookalike	all	0	u010A u0D01 u0A0D u0A00 u0D00	-	=
+# --- basic delimiters ---
+leading-lf	positions	all	0	LF A	0:1:LF	=
+trailing-lf	positions	all	0	A LF	1:1:LF	=
+lone-lf	basic	all	0	A LF B	1:1:LF	=
+lone-cr	basic	all	0	A CR B	1:1:CR	=
+crlf	basic	all	0	A CR LF B	1:2:CRLF	=
+crlf-only	basic	all	0	CR LF	0:2:CRLF	=
+lf-then-cr	basic	all	0	A LF CR B	1:1:LF;2:1:CR	=
+# --- runs and mixes ---
+cr-cr	runs	all	0	CR CR	0:1:CR;1:1:CR	=
+lf-lf	runs	all	0	LF LF	0:1:LF;1:1:LF	=
+cr-cr-lf	runs	all	0	CR CR LF	0:1:CR;1:2:CRLF	=
+crlf-crlf	runs	all	0	CR LF CR LF	0:2:CRLF;2:2:CRLF	=
+crlf-lf	runs	all	0	CR LF LF	0:2:CRLF;2:1:LF	=
+lf-crlf	runs	all	0	LF CR LF	0:1:LF;1:2:CRLF	=
+mixed	runs	all	0	A CR B LF C CR LF D	1:1:CR;3:1:LF;5:2:CRLF	=
+# --- extended EOL (NEL, LS, PS); with extended EOL off they are ordinary text ---
+nel	extended	all	0	A NEL B	-	1:1:NEL
+ls	extended	all	0	A LS B	-	1:1:LS
+ps	extended	all	0	A PS B	-	1:1:PS
+cr-nel	extended	all	0	CR NEL	0:1:CR	0:1:CR;1:1:NEL
+nel-lf	extended	all	0	NEL LF	1:1:LF	0:1:NEL;1:1:LF
+ls-crlf	extended	all	0	LS CR LF	1:2:CRLF	0:1:LS;1:2:CRLF
+ps-ps	extended	all	0	PS PS	-	0:1:PS;1:1:PS
+nel-ls-ps	extended	all	0	NEL LS PS	-	0:1:NEL;1:1:LS;2:1:PS
+crlf-nel	extended	all	0	CR LF NEL	0:2:CRLF	0:2:CRLF;2:1:NEL
+lf-nel-cr	extended	all	0	LF NEL CR	0:1:LF;2:1:CR	0:1:LF;1:1:NEL;2:1:CR
+# --- partial final units: never a marker, never paired with a CR ---
+tail-after-lf	short-tail	all	0	LF A~1	0:1:LF	=
+tail-after-crlf	short-tail	all	0	CR LF A~1	0:2:CRLF	=
+tail-after-lf-2	short-tail	utf32	0	LF A~2	0:1:LF	=
+tail-after-lf-3	short-tail	utf32	0	LF A~3	0:1:LF	=
+tail-after-text	short-tail	all	0	A B C~1	-	=
+tail-after-nel	short-tail	all	0	NEL A~1	-	0:1:NEL
+cr-truncated-lf-1	truncated-pair	all	0	A CR LF~1	1:1:CR	=
+cr-truncated-lf-2	truncated-pair	utf32	0	CR LF~2	0:1:CR	=
+cr-truncated-lf-3	truncated-pair	utf32	0	CR LF~3	0:1:CR	=
+truncated-nel	truncated-pair	all	0	A NEL~1	-	=
+# --- UTF-32 units whose upper 16 bits are not zero are never delimiters ---
+high-bits-lf	utf32-high-bits	utf32	0	A U0001000A B	-	=
+high-bits-cr-then-lf	utf32-high-bits	utf32	0	U0001000D LF	1:1:LF	=
+cr-then-high-bits-lf	utf32-high-bits	utf32	0	CR U0001000A	0:1:CR	=
+high-half-lf	utf32-high-bits	utf32	0	U000A0000 A	-	=
+high-bits-nel	utf32-high-bits	utf32	0	U00010085 NEL	-	1:1:NEL
+cr-then-high-bits-nel	utf32-high-bits	utf32	0	CR U00010085	0:1:CR	=
+# --- start offsets (units from the region base; the end stays the region end) ---
+start-aligned	start	all	2	A B LF C CR	2:1:LF;4:1:CR	=
+start-after-first	start	all	3	A B LF C CR	4:1:CR	=
+start-at-end	start	all	2	A LF	-	=
+start-at-lf-of-crlf	start	all	2	A CR LF B	2:1:LF	=
+start-at-cr-of-crlf	start	all	1	A CR LF B	1:2:CRLF	=
+start-extended	start	all	1	A NEL B	-	1:1:NEL
+start-past-extended	start	all	2	A NEL B	-	=
+start-at-tail	start	all	1	LF A~1	-	=

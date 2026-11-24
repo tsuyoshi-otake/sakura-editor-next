@@ -1064,6 +1064,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\charset\CodecGoldenCorpusTest.cpp">
       <Filter>Test Files\charset</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\charset\EncodedEolContractTest.cpp">
+      <Filter>Test Files\charset</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-cdlgopenfile.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>

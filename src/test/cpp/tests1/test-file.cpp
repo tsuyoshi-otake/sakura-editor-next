@@ -894,32 +894,7 @@ TEST(CFilePath, GetDirPath102)
 #include "env/ShareDataTestSuite.hpp"
 #include "window/EditorTestSuite.hpp"
 #include "view/CEditView.h"
-
-namespace {
-
-class CFileLoadScannerForTest final : public CFileLoad {
-public:
-	struct Result {
-		const size_t lineLength;
-		const size_t nextOffset;
-		const size_t eolLength;
-		const EEolType eolType;
-	};
-
-	Result Scan(EEncodingTrait trait, const char* data, size_t length, bool extendedEol = false)
-	{
-		m_encodingTrait = trait;
-		m_bEolEx = extendedEol;
-		size_t lineLength = 0;
-		size_t nextOffset = 0;
-		size_t eolLength = 0;
-		CEol eol;
-		GetNextLineCharCode(data, length, &lineLength, &nextOffset, &eol, &eolLength);
-		return {lineLength, nextOffset, eolLength, eol.GetType()};
-	}
-};
-
-} // namespace
+#include "CFileLoadScannerForTest.hpp"
 
 TEST(CFileLoadScannerBounds, Utf32ShortInputLengthsAreSafeAndPreserved)
 {
