@@ -86,8 +86,8 @@ private:
 };
 
 struct Range {
-	size_t begin;
-	size_t end;
+	const size_t begin;
+	const size_t end;
 };
 
 // Records found by repeated production scans of [start, end) of data; offsets are bytes from data[0].
@@ -128,8 +128,8 @@ std::vector<Range> PlanPartitions(CFileLoadScannerForTest& planner, size_t fileS
 		}
 		ranges.push_back({offsetBegin, offsetEnd});
 	}
-	std::reverse(ranges.begin(), ranges.end());
-	return ranges;
+	// Collected from the end of the file backwards; Range is immutable, so the ascending result is copied out in reverse.
+	return std::vector<Range>(ranges.rbegin(), ranges.rend());
 }
 
 std::vector<Record> ReplayRanges(
@@ -138,7 +138,9 @@ std::vector<Record> ReplayRanges(
 	std::vector<Record> records;
 	for (const auto& range : ranges) {
 		const auto part = ScanRange(scanner, format, extendedEol, data, range.begin, range.end);
-		records.insert(records.end(), part.begin(), part.end());
+		for (const auto& record : part) {
+			records.push_back(record);
+		}
 	}
 	return records;
 }
@@ -183,9 +185,9 @@ void ExpectSameRecords(const std::vector<Record>& expected, const std::vector<Re
 enum class PlannedEnd { None, CompleteUnits, WholeSize };
 
 struct EofTerminal {
-	const char* id;
-	PlannedEnd extendedOff;
-	PlannedEnd extendedOn;
+	const char* const id;
+	const PlannedEnd extendedOff;
+	const PlannedEnd extendedOn;
 };
 
 constexpr std::array kEofTerminals{
@@ -453,10 +455,10 @@ TEST(EncodedEolContract, GeneratedFilesAtThePartitionThresholdReplayTheSingleSca
 	constexpr size_t kMiB = 1024 * 1024;
 	constexpr size_t kSeed = kMiB / 2;
 	struct Fixture {
-		const char* name;
-		size_t extraUnits;
-		size_t strayBytes;
-		int expectedThreads;
+		const char* const name;
+		const size_t extraUnits;
+		const size_t strayBytes;
+		const int expectedThreads;
 	};
 	constexpr std::array fixtures{
 		Fixture{"1MiB", 0, 0, 1},
@@ -500,9 +502,10 @@ TEST(EncodedEolContract, GeneratedFilesAtThePartitionThresholdReplayTheSingleSca
 				const auto planned = PlanPartitions(scanner, size, fixture.expectedThreads);
 				std::vector<Range> expectedRanges;
 				if (fixture.expectedThreads == 1) {
-					expectedRanges = {{0, plannedEnd}};
+					expectedRanges.push_back({0, plannedEnd});
 				} else {
-					expectedRanges = {{0, kSeed + width}, {kSeed + width, plannedEnd}};
+					expectedRanges.push_back({0, kSeed + width});
+					expectedRanges.push_back({kSeed + width, plannedEnd});
 				}
 				ASSERT_EQ(expectedRanges.size(), planned.size());
 				for (size_t i = 0; i < planned.size(); ++i) {

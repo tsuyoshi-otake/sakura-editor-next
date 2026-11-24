@@ -24,10 +24,10 @@ enum class Format { Utf16Le, Utf16Be, Utf32Le, Utf32Be };
 namespace detail {
 
 struct FormatInfo {
-	const char* name;
-	EEncodingTrait trait;
-	size_t width;
-	bool bigEndian;
+	const char* const name;
+	const EEncodingTrait trait;
+	const size_t width;
+	const bool bigEndian;
 };
 
 inline constexpr std::array kFormats{
@@ -43,8 +43,8 @@ constexpr const FormatInfo& Info(Format format)
 }
 
 struct KindInfo {
-	std::string_view name;
-	EEolType kind;
+	const std::string_view name;
+	const EEolType kind;
 };
 
 inline constexpr std::array kKinds{
@@ -83,10 +83,11 @@ inline void AppendUnit(std::string& bytes, Format format, std::uint32_t value, s
 	}
 }
 
+// Immutable: a record is built once, so the containers of records below are appended to one element at a time.
 struct Record {
-	size_t offset;
-	size_t width;
-	EEolType kind;
+	const size_t offset;
+	const size_t width;
+	const EEolType kind;
 };
 
 inline std::string ToString(const std::vector<Record>& records)
@@ -106,15 +107,16 @@ inline std::string ToString(const std::vector<Record>& records)
 	return result;
 }
 
+// Immutable: LoadCases builds every case in one expression and the tests only read it.
 struct Case {
-	std::string id;
-	std::string cls;
-	Format format;
-	bool extendedEol;
-	size_t start;
-	std::string bytes;
-	std::vector<Record> records;
-	bool hasTail;
+	const std::string id;
+	const std::string cls;
+	const Format format;
+	const bool extendedEol;
+	const size_t start;
+	const std::string bytes;
+	const std::vector<Record> records;
+	const bool hasTail;
 
 	std::string Describe() const
 	{
