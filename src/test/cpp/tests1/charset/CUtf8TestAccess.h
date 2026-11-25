@@ -23,4 +23,10 @@ public:
 	{
 		return _Utf8ToUni_char(source, sourceLength, destination, cesu8Mode);
 	}
+
+	static int EncodeForTest(const wchar_t* source, int sourceLength, char* destination, bool* lossy,
+		bool cesu8Mode)
+	{
+		return UniToUtf8(source, sourceLength, destination, lossy, cesu8Mode);
+	}
 };

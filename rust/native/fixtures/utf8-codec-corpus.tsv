@@ -1,0 +1,223 @@
+# UTF-8 and CESU-8 whole-buffer codec corpus (Issue #443, parent #267).
+#
+# One row freezes one conversion of the production converters CUtf8::Utf8ToUni and CUtf8::UniToUtf8
+# (sakura_core/charset/CUtf8.cpp). C++ production, the Rust candidate (sakura_document_codec) and an
+# independent Rust scalar model must all agree with every row; the C++ suite Utf8CodecContract proves the
+# rows against production, so a row never records anything production does not do.
+#
+# Columns (tab separated; blank lines and lines starting with '#' are ignored):
+#   id         unique, lower-case letters, digits and '-'
+#   class      the behavior the row exercises (the contract suite requires every class to be present)
+#   direction  decode: bytes -> UTF-16 units; encode: UTF-16 units -> bytes
+#   variants   both: UTF-8 and CESU-8 give the same expectation; utf8 or cesu8: that mode only
+#   input      decode: bytes as 2-digit hex tokens; encode: UTF-16 units as 4-digit hex tokens;
+#              tokens are separated by one space and '-' is the empty sequence
+#   output     decode: UTF-16 units (4 digits); encode: bytes (2 digits)
+#   lossy      1 when the production result is RESULT_LOSESOME (an unpaired surrogate outside
+#              U+DC00..U+DCFF became '?'), else 0; always 0 for decode
+#
+# Rules the rows pin: every byte that does not start a complete valid sequence becomes the unit
+# 0xDC00 + byte and the scan resumes at the next byte; a unit in U+DC00..U+DCFF that is not the low half of a pair
+# encodes back to its low 8 bits as one byte; any other unpaired surrogate encodes to '?' and sets lossy.
+# CESU-8 reads a surrogate pair only as two consecutive three-byte forms (high then low) and never
+# reads a four-byte form.
+
+id	class	direction	variants	input	output	lossy
+decode-empty-input	empty	decode	both	-	-	0
+decode-ascii-text	ascii	decode	both	48 65 6C 6C 6F	0048 0065 006C 006C 006F	0
+decode-ascii-controls	ascii	decode	both	01 09 0A 0D 1B 7F	0001 0009 000A 000D 001B 007F	0
+decode-ascii-line-breaks	ascii	decode	both	61 0D 0A 62 0A 63 0D 64	0061 000D 000A 0062 000A 0063 000D 0064	0
+decode-nul-alone	nul	decode	both	00	0000	0
+decode-nul-between-ascii	nul	decode	both	41 00 42	0041 0000 0042	0
+decode-nul-run	nul	decode	both	00 00 00	0000 0000 0000	0
+decode-two-byte-minimum	two-byte	decode	both	C2 80	0080	0
+decode-two-byte-maximum	two-byte	decode	both	DF BF	07FF	0
+decode-two-byte-latin	two-byte	decode	both	C3 A9	00E9	0
+decode-two-byte-greek-cyrillic	two-byte	decode	both	CE B1 D0 96	03B1 0416	0
+decode-two-byte-between-ascii	two-byte	decode	both	41 C3 A9 42	0041 00E9 0042	0
+decode-three-byte-minimum	three-byte	decode	both	E0 A0 80	0800	0
+decode-three-byte-hiragana	three-byte	decode	both	E3 81 82	3042	0
+decode-three-byte-han	three-byte	decode	both	E6 BC A2 E5 AD 97	6F22 5B57	0
+decode-three-byte-below-surrogates	three-byte	decode	both	ED 9F BF	D7FF	0
+decode-three-byte-above-surrogates	three-byte	decode	both	EE 80 80	E000	0
+decode-three-byte-private-use-end	three-byte	decode	both	EF A3 BF	F8FF	0
+decode-three-byte-halfwidth-kana	three-byte	decode	both	EF BD B6	FF76	0
+decode-three-byte-maximum	three-byte	decode	both	EF BF BF	FFFF	0
+decode-three-byte-between-ascii	three-byte	decode	both	41 E3 81 82 42	0041 3042 0042	0
+decode-four-byte-minimum-utf8	four-byte	decode	utf8	F0 90 80 80	D800 DC00	0
+decode-four-byte-minimum-cesu8	four-byte	decode	cesu8	F0 90 80 80	DCF0 DC90 DC80 DC80	0
+decode-four-byte-emoji-utf8	four-byte	decode	utf8	F0 9F 98 80	D83D DE00	0
+decode-four-byte-emoji-cesu8	four-byte	decode	cesu8	F0 9F 98 80	DCF0 DC9F DC98 DC80	0
+decode-four-byte-plane-two-utf8	four-byte	decode	utf8	F0 A0 80 80	D840 DC00	0
+decode-four-byte-plane-two-cesu8	four-byte	decode	cesu8	F0 A0 80 80	DCF0 DCA0 DC80 DC80	0
+decode-four-byte-plane-four-utf8	four-byte	decode	utf8	F1 80 80 80	D8C0 DC00	0
+decode-four-byte-plane-four-cesu8	four-byte	decode	cesu8	F1 80 80 80	DCF1 DC80 DC80 DC80	0
+decode-four-byte-last-plane-start-utf8	four-byte	decode	utf8	F4 80 80 80	DBC0 DC00	0
+decode-four-byte-last-plane-start-cesu8	four-byte	decode	cesu8	F4 80 80 80	DCF4 DC80 DC80 DC80	0
+decode-four-byte-maximum-utf8	four-byte	decode	utf8	F4 8F BF BF	DBFF DFFF	0
+decode-four-byte-maximum-cesu8	four-byte	decode	cesu8	F4 8F BF BF	DCF4 DC8F DCBF DCBF	0
+decode-four-byte-between-ascii-utf8	four-byte	decode	utf8	41 F0 9F 98 80 42	0041 D83D DE00 0042	0
+decode-four-byte-between-ascii-cesu8	four-byte	decode	cesu8	41 F0 9F 98 80 42	0041 DCF0 DC9F DC98 DC80 0042	0
+decode-four-byte-twice-utf8	four-byte	decode	utf8	F0 9F 98 80 F0 9F 98 80	D83D DE00 D83D DE00	0
+decode-four-byte-twice-cesu8	four-byte	decode	cesu8	F0 9F 98 80 F0 9F 98 80	DCF0 DC9F DC98 DC80 DCF0 DC9F DC98 DC80	0
+decode-overlong-c0-80	overlong	decode	both	C0 80	DCC0 DC80	0
+decode-overlong-c0-af	overlong	decode	both	C0 AF	DCC0 DCAF	0
+decode-overlong-c1-bf	overlong	decode	both	C1 BF	DCC1 DCBF	0
+decode-overlong-e0-80-80	overlong	decode	both	E0 80 80	DCE0 DC80 DC80	0
+decode-overlong-e0-9f-bf	overlong	decode	both	E0 9F BF	DCE0 DC9F DCBF	0
+decode-overlong-f0-80-80-80	overlong	decode	both	F0 80 80 80	DCF0 DC80 DC80 DC80	0
+decode-overlong-f0-8f-bf-bf	overlong	decode	both	F0 8F BF BF	DCF0 DC8F DCBF DCBF	0
+decode-out-of-range-f4-90	out-of-range	decode	both	F4 90 80 80	DCF4 DC90 DC80 DC80	0
+decode-out-of-range-f4-bf	out-of-range	decode	both	F4 BF BF BF	DCF4 DCBF DCBF DCBF	0
+decode-out-of-range-f5	out-of-range	decode	both	F5 80 80 80	DCF5 DC80 DC80 DC80	0
+decode-out-of-range-f7	out-of-range	decode	both	F7 BF BF BF	DCF7 DCBF DCBF DCBF	0
+decode-out-of-range-f8	out-of-range	decode	both	F8 88 80 80 80	DCF8 DC88 DC80 DC80 DC80	0
+decode-out-of-range-fc	out-of-range	decode	both	FC 84 80 80 80 80	DCFC DC84 DC80 DC80 DC80 DC80	0
+decode-out-of-range-fe-ff	out-of-range	decode	both	FE FF	DCFE DCFF	0
+decode-surrogate-lone-high	surrogate-encoding	decode	both	ED A0 80	DCED DCA0 DC80	0
+decode-surrogate-lone-high-last	surrogate-encoding	decode	both	ED AF BF	DCED DCAF DCBF	0
+decode-surrogate-lone-low	surrogate-encoding	decode	both	ED B0 80	DCED DCB0 DC80	0
+decode-surrogate-lone-low-last	surrogate-encoding	decode	both	ED BF BF	DCED DCBF DCBF	0
+decode-surrogate-then-ascii	surrogate-encoding	decode	both	ED A0 80 41	DCED DCA0 DC80 0041	0
+decode-surrogate-pair-form-utf8	surrogate-encoding	decode	utf8	ED A0 BD ED B8 80	DCED DCA0 DCBD DCED DCB8 DC80	0
+decode-surrogate-pair-form-cesu8	surrogate-encoding	decode	cesu8	ED A0 BD ED B8 80	D83D DE00	0
+decode-cesu8-pair-minimum-utf8	cesu8-pair	decode	utf8	ED A0 80 ED B0 80	DCED DCA0 DC80 DCED DCB0 DC80	0
+decode-cesu8-pair-minimum-cesu8	cesu8-pair	decode	cesu8	ED A0 80 ED B0 80	D800 DC00	0
+decode-cesu8-pair-emoji-utf8	cesu8-pair	decode	utf8	ED A0 BD ED B8 80	DCED DCA0 DCBD DCED DCB8 DC80	0
+decode-cesu8-pair-emoji-cesu8	cesu8-pair	decode	cesu8	ED A0 BD ED B8 80	D83D DE00	0
+decode-cesu8-pair-maximum-utf8	cesu8-pair	decode	utf8	ED AF BF ED BF BF	DCED DCAF DCBF DCED DCBF DCBF	0
+decode-cesu8-pair-maximum-cesu8	cesu8-pair	decode	cesu8	ED AF BF ED BF BF	DBFF DFFF	0
+decode-cesu8-pair-between-ascii-utf8	cesu8-pair	decode	utf8	41 ED A0 BD ED B8 80 42	0041 DCED DCA0 DCBD DCED DCB8 DC80 0042	0
+decode-cesu8-pair-between-ascii-cesu8	cesu8-pair	decode	cesu8	41 ED A0 BD ED B8 80 42	0041 D83D DE00 0042	0
+decode-cesu8-pair-twice-utf8	cesu8-pair	decode	utf8	ED A0 BD ED B8 80 ED A0 BD ED B8 80	DCED DCA0 DCBD DCED DCB8 DC80 DCED DCA0 DCBD DCED DCB8 DC80	0
+decode-cesu8-pair-twice-cesu8	cesu8-pair	decode	cesu8	ED A0 BD ED B8 80 ED A0 BD ED B8 80	D83D DE00 D83D DE00	0
+decode-cesu8-pair-then-bmp-utf8	cesu8-pair	decode	utf8	ED A0 BD ED B8 80 E3 81 82	DCED DCA0 DCBD DCED DCB8 DC80 3042	0
+decode-cesu8-pair-then-bmp-cesu8	cesu8-pair	decode	cesu8	ED A0 BD ED B8 80 E3 81 82	D83D DE00 3042	0
+decode-cesu8-low-then-high	cesu8-lone	decode	both	ED B8 80 ED A0 BD	DCED DCB8 DC80 DCED DCA0 DCBD	0
+decode-cesu8-high-then-high	cesu8-lone	decode	both	ED A0 BD ED A0 BD	DCED DCA0 DCBD DCED DCA0 DCBD	0
+decode-cesu8-high-then-bmp	cesu8-lone	decode	both	ED A0 BD E3 81 82	DCED DCA0 DCBD 3042	0
+decode-cesu8-high-then-ascii	cesu8-lone	decode	both	ED A0 BD 41	DCED DCA0 DCBD 0041	0
+decode-cesu8-high-then-two-byte	cesu8-lone	decode	both	ED A0 BD C3 A9	DCED DCA0 DCBD 00E9	0
+decode-cesu8-high-at-end	cesu8-lone	decode	both	41 ED A0 BD	0041 DCED DCA0 DCBD	0
+decode-cesu8-low-between-ascii	cesu8-lone	decode	both	41 ED B8 80 42	0041 DCED DCB8 DC80 0042	0
+decode-cesu8-high-then-truncated-low	cesu8-lone	decode	both	ED A0 BD ED B8	DCED DCA0 DCBD DCED DCB8	0
+decode-cesu8-high-then-broken-low	cesu8-lone	decode	both	ED A0 BD ED B8 41	DCED DCA0 DCBD DCED DCB8 0041	0
+decode-cesu8-pair-then-lone-low-utf8	cesu8-lone	decode	utf8	ED A0 BD ED B8 80 ED B8 80	DCED DCA0 DCBD DCED DCB8 DC80 DCED DCB8 DC80	0
+decode-cesu8-pair-then-lone-low-cesu8	cesu8-lone	decode	cesu8	ED A0 BD ED B8 80 ED B8 80	D83D DE00 DCED DCB8 DC80	0
+decode-cesu8-four-byte-form-utf8	cesu8-lone	decode	utf8	F0 9F 98 80	D83D DE00	0
+decode-cesu8-four-byte-form-cesu8	cesu8-lone	decode	cesu8	F0 9F 98 80	DCF0 DC9F DC98 DC80	0
+decode-truncated-two-byte-lead	truncated	decode	both	C3	DCC3	0
+decode-truncated-three-byte-lead	truncated	decode	both	E3	DCE3	0
+decode-truncated-three-byte-two	truncated	decode	both	E3 81	DCE3 DC81	0
+decode-truncated-four-byte-lead	truncated	decode	both	F0	DCF0	0
+decode-truncated-four-byte-two	truncated	decode	both	F0 9F	DCF0 DC9F	0
+decode-truncated-four-byte-three	truncated	decode	both	F0 9F 98	DCF0 DC9F DC98	0
+decode-truncated-after-ascii-two	truncated	decode	both	41 C3	0041 DCC3	0
+decode-truncated-after-ascii-three	truncated	decode	both	41 E3 81	0041 DCE3 DC81	0
+decode-truncated-after-ascii-four	truncated	decode	both	41 F0 9F 98	0041 DCF0 DC9F DC98	0
+decode-truncated-surrogate-form	truncated	decode	both	ED A0	DCED DCA0	0
+decode-bad-continuation-two-byte	bad-continuation	decode	both	C3 41	DCC3 0041	0
+decode-bad-continuation-three-byte-last	bad-continuation	decode	both	E3 81 41	DCE3 DC81 0041	0
+decode-bad-continuation-three-byte-middle	bad-continuation	decode	both	E3 41 82	DCE3 0041 DC82	0
+decode-bad-continuation-four-byte-third	bad-continuation	decode	both	F0 9F 41 80	DCF0 DC9F 0041 DC80	0
+decode-bad-continuation-four-byte-last	bad-continuation	decode	both	F0 9F 98 41	DCF0 DC9F DC98 0041	0
+decode-bad-continuation-two-byte-lead	bad-continuation	decode	both	C3 C3 A9	DCC3 00E9	0
+decode-lone-continuation-80	lone-continuation	decode	both	80	DC80	0
+decode-lone-continuation-bf	lone-continuation	decode	both	BF	DCBF	0
+decode-lone-continuation-between-ascii	lone-continuation	decode	both	41 80 42	0041 DC80 0042	0
+decode-lone-continuation-run	lone-continuation	decode	both	80 80 80	DC80 DC80 DC80	0
+decode-lone-continuation-a0-a0	lone-continuation	decode	both	A0 A0	DCA0 DCA0	0
+decode-resume-three-byte-then-two-byte	resume	decode	both	E3 81 C3 A9	DCE3 DC81 00E9	0
+decode-resume-four-byte-then-three-byte	resume	decode	both	F0 9F 98 E3 81 82	DCF0 DC9F DC98 3042	0
+decode-resume-overlong-three	resume	decode	both	E0 80 A0	DCE0 DC80 DCA0	0
+decode-resume-overlong-then-ascii	resume	decode	both	C0 80 41	DCC0 DC80 0041	0
+decode-resume-lead-then-lead	resume	decode	both	E3 E3 81 82	DCE3 3042	0
+decode-resume-four-lead-then-two-byte	resume	decode	both	F0 C3 A9	DCF0 00E9	0
+decode-resume-out-of-range-then-valid	resume	decode	both	F5 80 80 80 41	DCF5 DC80 DC80 DC80 0041	0
+decode-mixed-english-japanese-emoji-utf8	mixed	decode	utf8	48 65 6C 6C 6F 20 E4 B8 96 E7 95 8C 20 F0 9F 98 80 21	0048 0065 006C 006C 006F 0020 4E16 754C 0020 D83D DE00 0021	0
+decode-mixed-english-japanese-emoji-cesu8	mixed	decode	cesu8	48 65 6C 6C 6F 20 E4 B8 96 E7 95 8C 20 F0 9F 98 80 21	0048 0065 006C 006C 006F 0020 4E16 754C 0020 DCF0 DC9F DC98 DC80 0021	0
+decode-mixed-valid-and-broken	mixed	decode	both	41 C3 A9 80 E3 81 82 FF 42	0041 00E9 DC80 3042 DCFF 0042	0
+decode-mixed-all-lengths-utf8	mixed	decode	utf8	41 C3 A9 E3 81 82 F0 9F 98 80	0041 00E9 3042 D83D DE00	0
+decode-mixed-all-lengths-cesu8	mixed	decode	cesu8	41 C3 A9 E3 81 82 F0 9F 98 80	0041 00E9 3042 DCF0 DC9F DC98 DC80	0
+decode-mixed-lines-with-han	mixed	decode	both	61 0D 0A E3 81 82 0A E6 BC A2 0D	0061 000D 000A 3042 000A 6F22 000D	0
+decode-bom-then-ascii	bom	decode	both	EF BB BF 41	FEFF 0041	0
+decode-bom-alone	bom	decode	both	EF BB BF	FEFF	0
+decode-bom-utf16le-bytes	bom	decode	both	FF FE 41 00	DCFF DCFE 0041 0000	0
+decode-bom-utf16be-bytes	bom	decode	both	FE FF 00 41	DCFE DCFF 0000 0041	0
+decode-non-character-fffe	non-character	decode	both	EF BF BE	FFFE	0
+decode-non-character-ffff	non-character	decode	both	EF BF BF	FFFF	0
+decode-non-character-fdd0	non-character	decode	both	EF B7 90	FDD0	0
+decode-non-character-fdef	non-character	decode	both	EF B7 AF	FDEF	0
+decode-non-character-1fffe-utf8	non-character	decode	utf8	F0 9F BF BE	D83F DFFE	0
+decode-non-character-1fffe-cesu8	non-character	decode	cesu8	F0 9F BF BE	DCF0 DC9F DCBF DCBE	0
+decode-non-character-10fffe-utf8	non-character	decode	utf8	F4 8F BF BE	DBFF DFFE	0
+decode-non-character-10fffe-cesu8	non-character	decode	cesu8	F4 8F BF BE	DCF4 DC8F DCBF DCBE	0
+decode-non-character-replacement	non-character	decode	both	EF BF BD	FFFD	0
+encode-empty-input	empty	encode	both	-	-	0
+encode-ascii-text	ascii	encode	both	0048 0065 006C 006C 006F	48 65 6C 6C 6F	0
+encode-ascii-nul	ascii	encode	both	0000	00	0
+encode-ascii-delete	ascii	encode	both	007F	7F	0
+encode-ascii-nul-between	ascii	encode	both	0041 0000 0042	41 00 42	0
+encode-ascii-line-breaks	ascii	encode	both	0061 000D 000A 0062 000A 0063 000D 0064	61 0D 0A 62 0A 63 0D 64	0
+encode-bmp-two-byte-minimum	bmp	encode	both	0080	C2 80	0
+encode-bmp-two-byte-maximum	bmp	encode	both	07FF	DF BF	0
+encode-bmp-three-byte-minimum	bmp	encode	both	0800	E0 A0 80	0
+encode-bmp-hiragana	bmp	encode	both	3042	E3 81 82	0
+encode-bmp-below-surrogates	bmp	encode	both	D7FF	ED 9F BF	0
+encode-bmp-above-surrogates	bmp	encode	both	E000	EE 80 80	0
+encode-bmp-bom	bmp	encode	both	FEFF	EF BB BF	0
+encode-bmp-replacement	bmp	encode	both	FFFD	EF BF BD	0
+encode-bmp-non-characters	bmp	encode	both	FFFE FFFF	EF BF BE EF BF BF	0
+encode-bmp-mixed	bmp	encode	both	0048 3042 00E9 0021	48 E3 81 82 C3 A9 21	0
+encode-pair-minimum-utf8	pair	encode	utf8	D800 DC00	F0 90 80 80	0
+encode-pair-minimum-cesu8	pair	encode	cesu8	D800 DC00	ED A0 80 ED B0 80	0
+encode-pair-emoji-utf8	pair	encode	utf8	D83D DE00	F0 9F 98 80	0
+encode-pair-emoji-cesu8	pair	encode	cesu8	D83D DE00	ED A0 BD ED B8 80	0
+encode-pair-maximum-utf8	pair	encode	utf8	DBFF DFFF	F4 8F BF BF	0
+encode-pair-maximum-cesu8	pair	encode	cesu8	DBFF DFFF	ED AF BF ED BF BF	0
+encode-pair-between-ascii-utf8	pair	encode	utf8	0041 D83D DE00 0042	41 F0 9F 98 80 42	0
+encode-pair-between-ascii-cesu8	pair	encode	cesu8	0041 D83D DE00 0042	41 ED A0 BD ED B8 80 42	0
+encode-pair-twice-utf8	pair	encode	utf8	D83D DE00 D83D DE00	F0 9F 98 80 F0 9F 98 80	0
+encode-pair-twice-cesu8	pair	encode	cesu8	D83D DE00 D83D DE00	ED A0 BD ED B8 80 ED A0 BD ED B8 80	0
+encode-pair-high-with-binary-range-low-utf8	pair	encode	utf8	D800 DC80	F0 90 82 80	0
+encode-pair-high-with-binary-range-low-cesu8	pair	encode	cesu8	D800 DC80	ED A0 80 ED B2 80	0
+encode-pair-then-bmp-utf8	pair	encode	utf8	D83D DE00 3042	F0 9F 98 80 E3 81 82	0
+encode-pair-then-bmp-cesu8	pair	encode	cesu8	D83D DE00 3042	ED A0 BD ED B8 80 E3 81 82	0
+encode-binary-low-minimum	binary-low	encode	both	DC00	00	0
+encode-binary-low-80	binary-low	encode	both	DC80	80	0
+encode-binary-low-maximum	binary-low	encode	both	DCFF	FF	0
+encode-binary-low-lead-and-trail	binary-low	encode	both	DCC3 DCA9	C3 A9	0
+encode-binary-low-between-ascii	binary-low	encode	both	0041 DC80 0042	41 80 42	0
+encode-binary-low-overlong-nul	binary-low	encode	both	DCC0 DC80	C0 80	0
+encode-binary-low-after-pair-utf8	binary-low	encode	utf8	D83D DE00 DC80	F0 9F 98 80 80	0
+encode-binary-low-after-pair-cesu8	binary-low	encode	cesu8	D83D DE00 DC80	ED A0 BD ED B8 80 80	0
+encode-lone-low-dd00	lone-low-lossy	encode	both	DD00	3F	1
+encode-lone-low-dfff	lone-low-lossy	encode	both	DFFF	3F	1
+encode-lone-low-between-ascii	lone-low-lossy	encode	both	0041 DE00 0042	41 3F 42	1
+encode-lone-low-run	lone-low-lossy	encode	both	DD00 DE00 DF00	3F 3F 3F	1
+encode-lone-high-d800	lone-high-lossy	encode	both	D800	3F	1
+encode-lone-high-dbff	lone-high-lossy	encode	both	DBFF	3F	1
+encode-lone-high-then-ascii	lone-high-lossy	encode	both	D83D 0041	3F 41	1
+encode-lone-high-at-end	lone-high-lossy	encode	both	0041 D83D	41 3F	1
+encode-lone-high-then-high	lone-high-lossy	encode	both	D83D D83D	3F 3F	1
+encode-lone-high-then-bmp	lone-high-lossy	encode	both	D83D 3042	3F E3 81 82	1
+encode-edge-low-then-high	surrogate-edges	encode	both	DE00 D83D	3F 3F	1
+encode-edge-high-high-low-utf8	surrogate-edges	encode	utf8	D800 D83D DE00	3F F0 9F 98 80	1
+encode-edge-high-high-low-cesu8	surrogate-edges	encode	cesu8	D800 D83D DE00	3F ED A0 BD ED B8 80	1
+encode-edge-binary-then-pair-utf8	surrogate-edges	encode	utf8	DC80 D800 DC00	80 F0 90 80 80	0
+encode-edge-binary-then-pair-cesu8	surrogate-edges	encode	cesu8	DC80 D800 DC00	80 ED A0 80 ED B0 80	0
+encode-edge-pair-then-lone-low-utf8	surrogate-edges	encode	utf8	D83D DE00 DE00	F0 9F 98 80 3F	1
+encode-edge-pair-then-lone-low-cesu8	surrogate-edges	encode	cesu8	D83D DE00 DE00	ED A0 BD ED B8 80 3F	1
+encode-edge-lone-low-then-pair-utf8	surrogate-edges	encode	utf8	DE00 D83D DE00	3F F0 9F 98 80	1
+encode-edge-lone-low-then-pair-cesu8	surrogate-edges	encode	cesu8	DE00 D83D DE00	3F ED A0 BD ED B8 80	1
+encode-edge-high-then-binary-low-then-ascii-utf8	surrogate-edges	encode	utf8	D800 DC80 0041	F0 90 82 80 41	0
+encode-edge-high-then-binary-low-then-ascii-cesu8	surrogate-edges	encode	cesu8	D800 DC80 0041	ED A0 80 ED B2 80 41	0
+encode-mixed-lossy-text	mixed-lossy	encode	both	0041 D800 3042 DE00 0042	41 3F E3 81 82 3F 42	1
+encode-mixed-lossy-binary-and-lone	mixed-lossy	encode	both	DC80 D800 0041	80 3F 41	1
+encode-mixed-lossy-pair-and-lone-utf8	mixed-lossy	encode	utf8	D83D DE00 DD00 D800	F0 9F 98 80 3F 3F	1
+encode-mixed-lossy-pair-and-lone-cesu8	mixed-lossy	encode	cesu8	D83D DE00 DD00 D800	ED A0 BD ED B8 80 3F 3F	1
+encode-round-trip-overlong-and-valid	round-trip	encode	both	DCC0 DC80 0041 00E9	C0 80 41 C3 A9	0
+encode-round-trip-broken-three-byte	round-trip	encode	both	DCE3 DC81 00E9	E3 81 C3 A9	0
+encode-round-trip-surrogate-form	round-trip	encode	both	DCED DCA0 DC80 0041	ED A0 80 41	0
+encode-round-trip-four-byte-as-binary	round-trip	encode	both	DCF0 DC9F DC98 DC80	F0 9F 98 80	0
+encode-round-trip-every-binary-lead	round-trip	encode	both	DCF8 DCFC DCFE DCFF	F8 FC FE FF	0
