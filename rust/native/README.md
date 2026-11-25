@@ -13,7 +13,9 @@ The native link boundary is deliberately one archive:
   replacement or escaping policies remain outside this crate.
 - `sakura-document-codec` is a safe, allocation-free `no_std` `rlib`
   (`forbid(unsafe_code)`) that owns the comparison-only encoded-EOL scan
-  for UTF-16LE/BE and UTF-32LE/BE. It has no C ABI and no panic handler.
+  for UTF-16LE/BE and UTF-32LE/BE and the comparison-only one-shot UTF-8 and
+  CESU-8 conversion with loss reporting, which builds on the strict scalar
+  primitives of `sakura-unicode-core`. It has no C ABI and no panic handler.
 - `sakura-native-ffi` is the only `staticlib`. It uses `std` to own the C ABI
   wrappers and catches a panic at every export, returning the typed
   `InternalError` status rather than unwinding into C++. Its fixed-width V2

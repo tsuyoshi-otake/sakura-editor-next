@@ -7,3 +7,6 @@ publish = false
 
 [lib]
 crate-type = ["rlib"]
+
+[dependencies]
+sakura-unicode-core = { path = "../sakura_unicode_core" }

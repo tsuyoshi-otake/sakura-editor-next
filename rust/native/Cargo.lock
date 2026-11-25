@@ -5,6 +5,9 @@ version = 4
 [[package]]
 name = "sakura-document-codec"
 version = "0.1.0"
+dependencies = [
+ "sakura-unicode-core",
+]
 
 [[package]]
 name = "sakura-native-ffi"
