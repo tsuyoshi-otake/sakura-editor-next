@@ -9,6 +9,7 @@
 #include "util/CpuDispatch.h"
 #include "util/RustUtf16Scan.h"
 #include "charset/CUtf8.h"
+#include "charset/CUtf8TestAccess.h"
 #include "charset/codechecker.h"
 
 #include <algorithm>
@@ -111,20 +112,6 @@ struct VirtualAllocationDeleter {
 		if (allocation != nullptr) {
 			::VirtualFree(allocation, 0, MEM_RELEASE);
 		}
-	}
-};
-
-class CUtf8Access final : public CUtf8 {
-public:
-	static int DecodeForTest(const char* source, int sourceLength, wchar_t* destination, bool cesu8Mode)
-	{
-		return Utf8ToUni(source, sourceLength, destination, cesu8Mode);
-	}
-
-	static int DecodeCharacterForTest(const unsigned char* source, int sourceLength,
-		unsigned short* destination, bool cesu8Mode)
-	{
-		return _Utf8ToUni_char(source, sourceLength, destination, cesu8Mode);
 	}
 };
 
@@ -892,9 +879,9 @@ std::size_t RustFindCharAvx512Bw(
 
 struct RustUtf16Implementation {
 	const char* name;
-	RustUtf16ScanFunction crOrLf;
-	RustUtf16ScanFunction markdownSpecial;
-	RustUtf16FindCharFunction findChar;
+	const RustUtf16ScanFunction crOrLf;
+	const RustUtf16ScanFunction markdownSpecial;
+	const RustUtf16FindCharFunction findChar;
 };
 
 std::array<RustUtf16Implementation, 3> GetRustUtf16Implementations()

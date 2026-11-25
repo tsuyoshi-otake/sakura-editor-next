@@ -2,20 +2,18 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <vector>
 
 #include "basis/CEol.h"
 #include "charset/CCodePage.h"
+
+#include "RustFixtureTsv.h"
 
 namespace encoded_eol_corpus {
 
@@ -124,55 +122,7 @@ struct Case {
 	}
 };
 
-inline std::filesystem::path LocateCorpusFile()
-{
-	const std::filesystem::path relative = "rust/native/fixtures/encoded-eol-corpus.tsv";
-	const auto start = std::filesystem::current_path();
-	auto directory = start;
-	for (size_t level = 0; level < 8; ++level) {
-		const auto candidate = directory / relative;
-		std::error_code error;
-		if (std::filesystem::is_regular_file(candidate, error)) {
-			return candidate;
-		}
-		const auto parent = directory.parent_path();
-		if (parent == directory) {
-			break;
-		}
-		directory = parent;
-	}
-	throw std::runtime_error("Cannot find " + relative.generic_string() + " from " + start.string());
-}
-
 namespace detail {
-
-inline std::vector<std::string_view> Split(std::string_view text, char delimiter)
-{
-	std::vector<std::string_view> parts;
-	for (;;) {
-		const auto pos = text.find(delimiter);
-		parts.push_back(text.substr(0, pos));
-		if (pos == std::string_view::npos) {
-			return parts;
-		}
-		text.remove_prefix(pos + 1);
-	}
-}
-
-template <class UInt>
-UInt ParseNumber(std::string_view text, int base, const char* reason)
-{
-	if (text.empty()) {
-		throw std::runtime_error(reason);
-	}
-	UInt value{};
-	const auto end = text.data() + text.size();
-	const auto parsed = std::from_chars(text.data(), end, value, base);
-	if (parsed.ec != std::errc{} || parsed.ptr != end) {
-		throw std::runtime_error(reason);
-	}
-	return value;
-}
 
 inline std::array<bool, kFormats.size()> ParseFormats(std::string_view text)
 {
@@ -187,7 +137,7 @@ inline std::array<bool, kFormats.size()> ParseFormats(std::string_view text)
 	}
 
 	std::array<bool, kFormats.size()> selected{};
-	for (const auto name : Split(text, ',')) {
+	for (const auto name : rust_fixture_tsv::Split(text, ',')) {
 		const auto format = std::ranges::find_if(kFormats, [name](const auto& info) {
 			return name == info.name;
 		});
@@ -211,13 +161,13 @@ inline std::uint32_t ParseUnit(std::string_view token, size_t unitWidth)
 		return static_cast<std::uint32_t>(token.front());
 	}
 	if (token.size() == 5 && token.front() == 'u') {
-		return ParseNumber<std::uint32_t>(token.substr(1), 16, "invalid 16-bit hex unit");
+		return rust_fixture_tsv::ParseNumber<std::uint32_t>(token.substr(1), 16, "invalid 16-bit hex unit");
 	}
 	if (token.size() == 9 && token.front() == 'U') {
 		if (unitWidth == 2) {
 			throw std::runtime_error("32-bit unit in a UTF-16 format");
 		}
-		return ParseNumber<std::uint32_t>(token.substr(1), 16, "invalid 32-bit hex unit");
+		return rust_fixture_tsv::ParseNumber<std::uint32_t>(token.substr(1), 16, "invalid 32-bit hex unit");
 	}
 	throw std::runtime_error("invalid unit token: " + std::string(token));
 }
@@ -229,7 +179,7 @@ inline std::string EncodeUnits(std::string_view text, Format format)
 	}
 
 	const auto& info = Info(format);
-	const auto tokens = Split(text, ' ');
+	const auto tokens = rust_fixture_tsv::Split(text, ' ');
 	std::string bytes;
 	for (size_t i = 0; i < tokens.size(); ++i) {
 		auto token = tokens[i];
@@ -261,13 +211,13 @@ inline std::vector<Record> ParseRecords(
 
 	std::vector<Record> records;
 	size_t nextAllowed = start;
-	for (const auto record : Split(text, ';')) {
-		const auto parts = Split(record, ':');
+	for (const auto record : rust_fixture_tsv::Split(text, ';')) {
+		const auto parts = rust_fixture_tsv::Split(record, ':');
 		if (parts.size() != 3) {
 			throw std::runtime_error("expected offset:width:KIND");
 		}
-		const size_t offset = ParseNumber<size_t>(parts[0], 10, "invalid record offset");
-		const size_t width = ParseNumber<size_t>(parts[1], 10, "invalid record width");
+		const size_t offset = rust_fixture_tsv::ParseNumber<size_t>(parts[0], 10, "invalid record offset");
+		const size_t width = rust_fixture_tsv::ParseNumber<size_t>(parts[1], 10, "invalid record width");
 		const auto kind = std::ranges::find(kKinds, parts[2], &KindInfo::name);
 		if (kind == kKinds.end()) {
 			throw std::runtime_error("unknown record kind: " + std::string(parts[2]));
@@ -285,48 +235,15 @@ inline std::vector<Record> ParseRecords(
 	return records;
 }
 
-inline std::runtime_error LineError(
-	const std::filesystem::path& path, size_t line, const char* reason)
-{
-	return std::runtime_error(path.string() + ':' + std::to_string(line) + ": " + reason);
-}
-
 } // namespace detail
 
 inline std::vector<Case> LoadCases()
 {
-	const auto path = LocateCorpusFile();
-	std::ifstream input(path, std::ios::binary);
-	if (!input) {
-		throw detail::LineError(path, 1, "cannot open corpus");
-	}
-
 	constexpr std::string_view header = "id\tclass\tformats\tstart\tunits\trecords_off\trecords_on";
 	std::vector<Case> cases;
 	std::set<std::string> ids;
-	size_t lineNumber = 0;
-	bool sawHeader = false;
-	for (std::string line; std::getline(input, line);) {
-		++lineNumber;
-		if (!line.empty() && line.back() == '\r') {
-			line.pop_back();
-		}
-		if (line.empty() || line.front() == '#') {
-			continue;
-		}
-		try {
-			if (!sawHeader) {
-				if (line != header) {
-					throw std::runtime_error("invalid header");
-				}
-				sawHeader = true;
-				continue;
-			}
-
-			const auto fields = detail::Split(line, '\t');
-			if (fields.size() != 7) {
-				throw std::runtime_error("expected seven tab-separated fields");
-			}
+	rust_fixture_tsv::ForEachRow(rust_fixture_tsv::Locate("encoded-eol-corpus.tsv"), header, 7,
+		[&](const auto& fields) {
 			const auto id = fields[0];
 			if (id.empty() || id.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-") != std::string_view::npos) {
 				throw std::runtime_error("invalid id");
@@ -338,7 +255,7 @@ inline std::vector<Case> LoadCases()
 				throw std::runtime_error("empty class");
 			}
 			const auto formats = detail::ParseFormats(fields[2]);
-			const size_t start = detail::ParseNumber<size_t>(fields[3], 10, "invalid start");
+			const size_t start = rust_fixture_tsv::ParseNumber<size_t>(fields[3], 10, "invalid start");
 			for (size_t i = 0; i < formats.size(); ++i) {
 				if (!formats[i]) {
 					continue;
@@ -358,16 +275,7 @@ inline std::vector<Case> LoadCases()
 					});
 				}
 			}
-		} catch (const std::runtime_error& error) {
-			throw detail::LineError(path, lineNumber, error.what());
-		}
-	}
-	if (input.bad() || !input.eof()) {
-		throw detail::LineError(path, lineNumber + 1, "cannot read corpus");
-	}
-	if (!sawHeader) {
-		throw detail::LineError(path, lineNumber + 1, "missing header");
-	}
+		});
 	return cases;
 }
 
