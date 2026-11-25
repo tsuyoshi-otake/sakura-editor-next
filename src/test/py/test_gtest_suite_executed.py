@@ -1,4 +1,4 @@
-"""Contracts for the MinGW Output, worker-thread, and encoded EOL suite evidence (#435, #441)."""
+"""Contracts for the MinGW Output, worker-thread, encoded EOL, and UTF-8 codec suite evidence (#435, #441, #443)."""
 
 import re
 import subprocess
@@ -22,6 +22,12 @@ ENCODED_EOL_CONTRACT_TEST = (
 )
 ENCODED_EOL_CANDIDATE_TEST = (
     REPO_ROOT / "src/test/cpp/tests1/charset/EncodedEolRustCandidateTest.cpp"
+)
+UTF8_CODEC_CONTRACT_TEST = (
+    REPO_ROOT / "src/test/cpp/tests1/charset/Utf8CodecContractTest.cpp"
+)
+UTF8_CODEC_CANDIDATE_TEST = (
+    REPO_ROOT / "src/test/cpp/tests1/charset/Utf8CodecRustCandidateTest.cpp"
 )
 SUITE = "OutputServiceProviderConformance"
 EXECUTED_CASE = '<testcase name="First" status="run" result="completed"/>'
@@ -204,3 +210,38 @@ def test_encoded_eol_candidate_source_declares_ten_cases_in_the_linked_branch() 
     text = ENCODED_EOL_CANDIDATE_TEST.read_text(encoding="utf-8-sig")
     linked = text.partition("\n#else\n")[0]
     assert len(re.findall(r"(?m)^TEST\(EncodedEolRustCandidate,", linked)) >= 10
+
+
+UTF8_CODEC_STEPS = (
+    ("Verify UTF-8 codec contract execution", "Utf8CodecContract", 7),
+    ("Verify UTF-8 codec candidate execution", "Utf8CodecRustCandidate", 15),
+)
+
+
+def test_mingw_verifies_the_utf8_codec_suites_immediately_after_the_encoded_eol_suites() -> None:
+    steps = mingw_workflow_steps()
+    eol_candidate = next(
+        index for index, step in enumerate(steps)
+        if step.startswith("name: Verify encoded EOL candidate execution\n")
+    )
+    for offset, (name, suite, minimum) in enumerate(UTF8_CODEC_STEPS, start=1):
+        evidence = steps[eol_candidate + offset]
+        assert evidence.startswith(f"name: {name}\n")
+        assert (
+            "        run: py -3 tools/verify-gtest-suite-executed.py "
+            f"--xml tests1-googletest.xml --suite {suite} --min-tests {minimum}"
+        ) in evidence.splitlines()
+        assert not re.search(r"(?m)^        (?:continue-on-error|if):", evidence)
+
+
+def test_utf8_codec_contract_source_declares_at_least_seven_cases() -> None:
+    text = UTF8_CODEC_CONTRACT_TEST.read_text(encoding="utf-8-sig")
+    assert len(re.findall(r"(?m)^TEST\(Utf8CodecContract,", text)) >= 7
+
+
+def test_utf8_codec_candidate_source_declares_fifteen_cases_in_the_linked_branch() -> None:
+    # Same rule as the encoded EOL candidate: the one unlinked alternative after
+    # `#else` must never satisfy the minimum the workflow enforces.
+    text = UTF8_CODEC_CANDIDATE_TEST.read_text(encoding="utf-8-sig")
+    linked = text.partition("\n#else\n")[0]
+    assert len(re.findall(r"(?m)^TEST\(Utf8CodecRustCandidate,", linked)) >= 15

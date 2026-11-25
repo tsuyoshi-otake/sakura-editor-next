@@ -246,6 +246,12 @@ jobs:
       - name: Verify encoded EOL candidate execution
         run: py -3 tools/verify-gtest-suite-executed.py --xml tests1-googletest.xml --suite EncodedEolRustCandidate --min-tests 10
 
+      - name: Verify UTF-8 codec contract execution
+        run: py -3 tools/verify-gtest-suite-executed.py --xml tests1-googletest.xml --suite Utf8CodecContract --min-tests 7
+
+      - name: Verify UTF-8 codec candidate execution
+        run: py -3 tools/verify-gtest-suite-executed.py --xml tests1-googletest.xml --suite Utf8CodecRustCandidate --min-tests 15
+
       - name: Try gdb backtrace on test failure
         if: failure() && env.Configuration == 'Debug'
         continue-on-error: true

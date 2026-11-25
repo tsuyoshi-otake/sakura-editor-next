@@ -211,6 +211,15 @@ URI の Rust 比較実装を呼び出すのは `tests1` の差分テストだけ
 `Verify encoded EOL contract execution` と `Verify encoded EOL candidate execution` の 2 ステップで
 `EncodedEolContract`（7 件以上）と `EncodedEolRustCandidate`（10 件以上）の実行を確認します。
 
+UTF-8/CESU-8 の全バッファ変換（`CUtf8` / `CCesu8`）も、同じ `document-file-codec` の 2 つ目の能力として
+Rust の `candidate-shadow` を持ちます。1 つのドメインは 1 コンテキストにつき本番プロバイダーを 1 件だけ
+持つため、プロバイダー記録は能力ごとに増やさず、`sakura-document-file-codec-cpp-provider`、
+`sakura-document-file-codec-rust-candidate`、`sakura-document-file-codec-rust-gnu-candidate` の 3 件を
+EOL 走査と共有します。MinGW レッグは `Verify UTF-8 codec contract execution` と
+`Verify UTF-8 codec candidate execution` の 2 ステップで `Utf8CodecContract`（7 件以上）と
+`Utf8CodecRustCandidate`（15 件以上）の実行を確認します。呼び出すのは `tests1` の差分テストだけで、
+本番の読み込み・保存経路は変わりません。
+
 ### 明示 package restore と runtime staging
 
 canonical driver は native build の前に、選択component/contextの宣言済み package closure だけを

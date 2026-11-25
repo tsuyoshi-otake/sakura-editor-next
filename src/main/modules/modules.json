@@ -1549,7 +1549,7 @@
       "side_effects": ["document-mutation"]
     },
     {
-      "id": "sakura-encoded-eol-cpp-provider",
+      "id": "sakura-document-file-codec-cpp-provider",
       "authority_domain": "document-file-codec",
       "authority_mode": "legacy-production",
       "implementation_language": "cpp",
@@ -1563,7 +1563,7 @@
       "side_effects": []
     },
     {
-      "id": "sakura-encoded-eol-rust-candidate",
+      "id": "sakura-document-file-codec-rust-candidate",
       "authority_domain": "document-file-codec",
       "authority_mode": "candidate-shadow",
       "implementation_language": "rust",
@@ -1577,7 +1577,7 @@
       "side_effects": []
     },
     {
-      "id": "sakura-encoded-eol-rust-gnu-candidate",
+      "id": "sakura-document-file-codec-rust-gnu-candidate",
       "authority_domain": "document-file-codec",
       "authority_mode": "candidate-shadow",
       "implementation_language": "rust",

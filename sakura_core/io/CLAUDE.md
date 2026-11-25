@@ -71,11 +71,13 @@ of each corpus case under a guard page, and the generated partition-threshold im
 injected-panic paths are covered by the Rust unit tests only.
 
 The module model declares the scan in the `document-file-codec` domain
-(`src/main/modules/modules.json`): `sakura-encoded-eol-cpp-provider` is `legacy-production` in
-all six contexts, and `sakura-encoded-eol-rust-candidate` (MSVC) and
-`sakura-encoded-eol-rust-gnu-candidate` (MinGW) are side-effect-free `candidate-shadow` records.
-The MinGW leg proves that both suites ran with `tools/verify-gtest-suite-executed.py`
-(`.github/CLAUDE.md`).
+(`src/main/modules/modules.json`): `sakura-document-file-codec-cpp-provider` is
+`legacy-production` in all six contexts, and `sakura-document-file-codec-rust-candidate`
+(MSVC) and `sakura-document-file-codec-rust-gnu-candidate` (MinGW) are side-effect-free
+`candidate-shadow` records. The ids name the domain's authority, not one capability: a domain
+has exactly one production provider per context, so the UTF-8/CESU-8 candidate below shares
+these three records (they were `sakura-encoded-eol-*` until #443). The MinGW leg proves that
+the suites ran with `tools/verify-gtest-suite-executed.py` (`.github/CLAUDE.md`).
 
 ## UTF-8/CESU-8 Rust candidate (#443)
 
@@ -116,6 +118,11 @@ check order, overlaps) run once per direction, and conversions run with input an
 at a guard page. The injected-panic paths and the acceptance of an input at the 2 GiB bound are
 covered by the Rust unit tests only, because C++ can neither inject a panic nor supply that much
 input.
+
+The MinGW leg requires at least 7 executed `Utf8CodecContract` cases and at least 15 executed
+`Utf8CodecRustCandidate` cases. Only the branch linked with the GNU archive reaches 15; the
+single unlinked alternative after `#else` cannot, so a leg that compiled the comparison away
+fails its step. The module model needs no record of its own for this capability.
 
 Known production limit, outside this candidate: `_UnicodeToUTF8` sizes its worst case as three
 bytes per unit in an `int`, which overflows above 715,827,882 units. The candidate has no such
