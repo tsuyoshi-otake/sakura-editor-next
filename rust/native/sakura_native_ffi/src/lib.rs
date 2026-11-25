@@ -12,11 +12,13 @@ use sakura_simd as native_simd;
 
 use crate::ffi_pointer::is_aligned;
 
+mod document_codec_abi;
 mod encoded_eol;
 mod ffi_pointer;
 mod output_provider;
 mod output_shadow;
 mod uri_candidate;
+mod utf8_codec;
 mod worker_thread;
 
 const ABI_VERSION_V1: u32 = 1;

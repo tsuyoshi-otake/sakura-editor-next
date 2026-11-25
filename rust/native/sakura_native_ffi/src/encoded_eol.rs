@@ -14,26 +14,18 @@
 //! Every failure leaves caller bytes unchanged (no poisoning, unlike the URI candidate).
 
 use std::mem::size_of;
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::{ptr, slice};
 
 use sakura_document_codec::{scan_encoded_eol, EncodedEolFormat, EncodedEolScan, EolRecord};
 
-use crate::ffi_pointer::{checked_address_range, checked_slice_range, overlaps, AddressRange};
-
-pub const DOCUMENT_CODEC_ABI_VERSION_V1: u32 = 1;
+use crate::document_codec_abi::{
+    catch_status, read_descriptor, validate_header, SakuraDocumentCodecStatus,
+    DOCUMENT_CODEC_ABI_VERSION_V1,
+};
+use crate::ffi_pointer::{checked_slice_range, overlaps, overlaps_any, AddressRange};
 
 /// Comparison-only memory bound of 16 MiB of staged records, not an adoption threshold.
 pub const ENCODED_EOL_MAX_RECORDS_V1: u64 = 1_048_576;
-
-#[repr(u32)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SakuraDocumentCodecStatus {
-    Ok = 0,
-    InvalidArgument = 1,
-    InvalidCapacity = 2,
-    InternalError = 12,
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -139,40 +131,6 @@ fn reserve_record(
     staged.try_reserve(1).map_err(|_| InternalError)
 }
 
-fn catch_status<F>(operation: F) -> SakuraDocumentCodecStatus
-where
-    F: FnOnce() -> Result<(), SakuraDocumentCodecStatus>,
-{
-    match catch_unwind(AssertUnwindSafe(operation)) {
-        Ok(Ok(())) => SakuraDocumentCodecStatus::Ok,
-        Ok(Err(status)) => status,
-        Err(_) => InternalError,
-    }
-}
-
-fn read_descriptor<T: Copy>(
-    pointer: *const T,
-) -> Result<(T, AddressRange), SakuraDocumentCodecStatus> {
-    let range = checked_address_range(pointer).ok_or(InvalidArgument)?;
-    // SAFETY: The address range was checked. The ABI requires that descriptors
-    // at accepted addresses are fully initialized and readable during the call.
-    Ok((unsafe { pointer.read() }, range))
-}
-
-fn validate_header<T>(
-    struct_size: u32,
-    abi_version: u32,
-    reserved: [u64; 2],
-) -> Result<(), SakuraDocumentCodecStatus> {
-    if u32::try_from(size_of::<T>()) != Ok(struct_size)
-        || abi_version != DOCUMENT_CODEC_ABI_VERSION_V1
-        || reserved != [0; 2]
-    {
-        return Err(InvalidArgument);
-    }
-    Ok(())
-}
-
 fn validate_output(
     output: *mut SakuraDocumentCodecEolMeasureV1,
 ) -> Result<AddressRange, SakuraDocumentCodecStatus> {
@@ -180,7 +138,7 @@ fn validate_output(
     validate_header::<SakuraDocumentCodecEolMeasureV1>(
         descriptor.struct_size,
         descriptor.abi_version,
-        descriptor.reserved,
+        descriptor.reserved == [0; 2],
     )?;
     Ok(range)
 }
@@ -192,7 +150,7 @@ fn validate_request(
     validate_header::<SakuraDocumentCodecEolRequestV1>(
         request.struct_size,
         request.abi_version,
-        request.reserved,
+        request.reserved == [0; 2],
     )?;
     let format = EncodedEolFormat::from_wire(request.format).ok_or(InvalidArgument)?;
     let extended_eol = match request.extended_eol {
@@ -226,7 +184,7 @@ fn validate_buffer(
     validate_header::<SakuraDocumentCodecEolBufferV1>(
         buffer.struct_size,
         buffer.abi_version,
-        buffer.reserved,
+        buffer.reserved == [0; 2],
     )?;
     let capacity = usize::try_from(buffer.capacity_records).map_err(|_| InvalidCapacity)?;
     let byte_capacity = capacity
@@ -248,10 +206,6 @@ fn validate_buffer(
         descriptor_range,
         records_range,
     })
-}
-
-fn overlaps_any(range: AddressRange, others: &[AddressRange]) -> bool {
-    others.iter().any(|&other| overlaps(range, other))
 }
 
 fn validated_scan(
@@ -622,11 +576,6 @@ mod tests {
             Measure, 40, 8, struct_size: 0, abi_version: 4, record_count: 8,
             finish_byte_offset: 16, reserved: 24,
         );
-        assert_eq!(Status::Ok as u32, 0);
-        assert_eq!(InvalidArgument as u32, 1);
-        assert_eq!(InvalidCapacity as u32, 2);
-        assert_eq!(InternalError as u32, 12);
-        assert_eq!(DOCUMENT_CODEC_ABI_VERSION_V1, 1);
         assert_eq!(ENCODED_EOL_MAX_RECORDS_V1, 1_048_576);
         assert_eq!(FORMATS.map(|format| format as u32), [2, 3, 4, 5]);
         assert_eq!(
@@ -1220,7 +1169,7 @@ mod tests {
         let (production, _) = source.split_once("mod tests {").unwrap();
         assert_eq!(production.matches("pub unsafe extern \"C\" fn ").count(), 2);
         assert_eq!(production.matches("catch_status(").count(), 2);
-        assert_eq!(production.matches("catch_unwind(").count(), 1);
+        assert_eq!(production.matches("catch_unwind(").count(), 0);
         assert!(!production.contains("unwrap("));
         assert!(!production.contains("expect("));
     }

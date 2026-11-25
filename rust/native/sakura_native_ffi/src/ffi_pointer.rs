@@ -77,6 +77,11 @@ pub(crate) fn overlaps(left: AddressRange, right: AddressRange) -> bool {
         && right.start < left.end
 }
 
+/// Reports whether `range` shares at least one byte with any of `others`.
+pub(crate) fn overlaps_any(range: AddressRange, others: &[AddressRange]) -> bool {
+    others.iter().any(|&other| overlaps(range, other))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +195,17 @@ mod tests {
         assert!(!overlaps(range(4, 8), range(0, 4)));
         assert!(!overlaps(range(0, 0), range(0, 8)));
         assert!(!overlaps(range(0, 8), range(3, 3)));
+    }
+
+    #[test]
+    fn overlap_with_any_needs_one_overlapping_range_among_the_others() {
+        let range = |start, end| AddressRange { start, end };
+        let others = [range(0, 4), range(10, 10), range(20, 24)];
+        assert!(overlaps_any(range(3, 5), &others));
+        assert!(overlaps_any(range(23, 30), &others));
+        assert!(!overlaps_any(range(4, 20), &others));
+        assert!(!overlaps_any(range(10, 10), &others));
+        assert!(!overlaps_any(range(0, 8), &[]));
     }
 
     #[test]

@@ -22,11 +22,12 @@ The native link boundary is deliberately one archive:
   UTF-16 scan ABI delegates to the internal kernels in `sakura-simd`. #239
   keeps all nine production UTF-16 cells in C++. The Rust scan ABI and kernels
   remain available for tests and explicit non-production MSVC comparisons. The
-  archive also owns the stateless encoded-EOL scan candidate alongside the
-  stateless URI candidate, the replay-only Output state candidate, and the
-  callback-free Output authority provider. All three copy
-  caller input and retain no foreign pointer. Candidates have no callback or
-  external side-effect authority. In a
+  archive also owns the stateless encoded-EOL scan and UTF-8/CESU-8 conversion
+  candidates alongside the stateless URI candidate, the replay-only Output state
+  candidate, and the callback-free Output authority provider. The last three
+  copy caller input and retain no foreign pointer; the two document-codec
+  candidates read caller input in place and retain none. Candidates have no
+  callback or external side-effect authority. In a
   `SAKURA_OUTPUT_BACKEND_RUST` build, the provider owns the Output model behind
   a separate opaque-token family while its C++ adapter owns advisory listener
   dispatch. Rust Output is the MSVC default (#274). MinGW uses C++ Output.
@@ -70,6 +71,7 @@ independent writable outputs, including slots passed to destroy or join.
 | Output shadow (6) | Callable from any thread. The model registry lock serializes model access. No callbacks. Measure and write are separate calls and can see an intervening mutation. | A caught panic returns shadow InternalError. Once poisoned, a token returns InternalError on every call except destroy, without accessing the model. |
 | URI candidate (4) | Stateless, with independent measure/write calls and no callbacks. | Typed validation or capacity errors. A caught panic returns URI InternalError. Consume output only on Ok. |
 | Document codec EOL scan (2) | Stateless, with independent measure/write calls and no callbacks. | Typed validation or capacity errors. A caught panic returns InternalError. Every failure leaves all caller bytes unchanged. Consume output only on Ok. |
+| Document codec UTF-8/CESU-8 conversion (4) | Stateless, with independent decode and encode measure/write calls and no callbacks. | Typed validation or capacity errors. A caught panic or a failed staging reservation returns InternalError. Every failure leaves all caller bytes unchanged. Consume output only on Ok. |
 | UTF-16 scan (9) | Concurrent readers share the immutable CPU snapshot. No callbacks. | NotInitialized before snapshot publication, Unsupported for missing CPU/OS support, and typed span errors. A caught panic returns InternalError. The result slot is initialized to the input length before scanning. |
 | Byte scan (3) | Concurrent readers share the immutable CPU snapshot. No callbacks. Accepted G2 exception: comparison-only through the CPU/OS capability gate. Before adding any production caller, add a versioned byte operation policy with an operation ID and minimum length. | NotInitialized, Unsupported, and typed span errors. A caught panic returns InternalError. The result slot is initialized to the input length before scanning. See [#433](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/433). |
 | Worker thread (2, ABI v2) | One-shot launch: one successful start runs one body on a new thread and yields exactly one join terminal. The registry lock is released before waiting and is never held across the callback. The opaque context must stay valid for the body, including after a self-join detaches. | Spawn failure returns SpawnFailed. Join consumes the token before waiting. Ok writes the redacted body outcome (Completed, ThrewException, or ThrewUnknown). A self-join detaches and returns WouldDeadlock. Competing joins return NotFound after the token is claimed. Rust panics return InternalError. An undefined callback outcome also returns InternalError. |
