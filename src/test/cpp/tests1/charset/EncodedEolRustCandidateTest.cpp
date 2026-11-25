@@ -20,6 +20,7 @@
 
 #include "EncodedEolCorpus.h"
 #include "EncodedEolTestSupport.h"
+#include "TestMemoryPlacement.h"
 #include "io/DocumentEncodedEolCandidate.h"
 
 // Differential suite of the Rust encoded-EOL candidate (#441). The production scan (CFileLoad, as exposed by
@@ -35,25 +36,7 @@ namespace rust_candidate = document_codec::rust_candidate;
 
 using CodecStatus = SakuraDocumentCodecStatus;
 
-// Raw, unsized storage in which a test places descriptors, data and records at chosen offsets, so every overlap is
-// deliberate. Objects are copied in as bytes and only the callee reads or writes them through the returned pointers.
-struct alignas(16) Arena {
-	std::array<unsigned char, 512> bytes{};
-};
-
 constexpr SakuraDocumentCodecEolRecordV1 kPoison{0x0123456789abcdefull, 0xa5a5a5a5u, 0x5a5a5a5au};
-
-template <class T>
-T* PlaceAt(Arena& arena, std::size_t offset, const T& value)
-{
-	std::memcpy(arena.bytes.data() + offset, &value, sizeof(T));
-	return reinterpret_cast<T*>(arena.bytes.data() + offset);
-}
-
-bool SameArena(const Arena& left, const Arena& right) noexcept
-{
-	return std::memcmp(left.bytes.data(), right.bytes.data(), left.bytes.size()) == 0;
-}
 
 std::string Utf16Le(std::initializer_list<std::uint32_t> units)
 {

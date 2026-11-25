@@ -14,25 +14,15 @@
 
 #include "basis/CEol.h"
 #include "charset/CCodePage.h"
+#include "io/DocumentCodecAbi.h"
 
 // Comparison-only (#441). C++ stays legacy-production: CFileLoad and the CReadManager partition arithmetic decide every
 // real load, and nothing outside tests calls this adapter. The structs mirror rust/native/sakura_native_ffi/src/encoded_eol.rs;
 // both sides pin the same sizes, offsets and wire numbers, so a drift on either side fails to compile or fails a test.
-
-constexpr std::uint32_t SAKURA_DOCUMENT_CODEC_ABI_VERSION_V1 = 1;
+// The ABI version and the typed status come from DocumentCodecAbi.h, which every document-codec candidate shares.
 
 //! Comparison-only bound of one call (16 MiB of staged records), not an adoption threshold.
 constexpr std::uint64_t SAKURA_DOCUMENT_CODEC_ENCODED_EOL_MAX_RECORDS_V1 = 1048576;
-
-//! Typed status of the encoded-EOL exports. The numbers share the candidate status space of the URI candidate.
-enum class SakuraDocumentCodecStatus : std::uint32_t {
-	Ok = 0,
-	InvalidArgument = 1,
-	InvalidCapacity = 2,
-	InternalError = 12,
-	// Adapter-only result when the Rust candidate is not linked. The Rust exports never return this value.
-	Unsupported = 13,
-};
 
 //! One marker. Offsets are bytes from data[0]; the width is in bytes; a CR LF pair is one marker of two units.
 //! `kind` uses the EEolType numbers (1 CRLF, 2 LF, 3 CR, 4 NEL, 5 LS, 6 PS).

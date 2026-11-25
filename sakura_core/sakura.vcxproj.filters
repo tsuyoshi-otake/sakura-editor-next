@@ -463,6 +463,9 @@
     <ClInclude Include="..\sakura_core\io\CFileLoad.h">
       <Filter>Cpp Source Files\io</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\io\DocumentCodecAbi.h">
+      <Filter>Cpp Source Files\io</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\io\DocumentEncodedEolCandidate.h">
       <Filter>Cpp Source Files\io</Filter>
     </ClInclude>

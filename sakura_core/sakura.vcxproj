@@ -356,6 +356,7 @@
     <ClInclude Include="..\sakura_core\io\CBinaryStream.h" />
     <ClInclude Include="..\sakura_core\io\CFile.h" />
     <ClInclude Include="..\sakura_core\io\CFileLoad.h" />
+    <ClInclude Include="..\sakura_core\io\DocumentCodecAbi.h" />
     <ClInclude Include="..\sakura_core\io\DocumentEncodedEolCandidate.h" />
     <ClInclude Include="..\sakura_core\io\CIoBridge.h" />
     <ClInclude Include="..\sakura_core\io\CStream.h" />

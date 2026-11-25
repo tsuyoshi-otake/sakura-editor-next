@@ -21,6 +21,7 @@
 #include "CFileLoadScannerForTest.hpp"
 #include "EncodedEolCorpus.h"
 #include "EncodedEolTestSupport.h"
+#include "TestMemoryPlacement.h"
 #include "env/CReadManager.h"
 
 namespace {

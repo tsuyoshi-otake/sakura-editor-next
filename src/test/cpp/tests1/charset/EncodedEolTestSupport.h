@@ -1,86 +1,22 @@
 #pragma once
 
-#include <Windows.h>
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <array>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
-#include <stdexcept>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "CFileLoadScannerForTest.hpp"
 #include "EncodedEolCorpus.h"
 
 // Shared helpers for EncodedEolContract and EncodedEolRustCandidate.
-// They provide guard-page placement, the production range scan and partition
-// planner, comparison helpers, and the 1 MiB image builder.
+// They provide the production range scan and partition planner, comparison
+// helpers, and the 1 MiB image builder.
 // They live in encoded_eol_corpus next to the corpus loader.
 
 namespace encoded_eol_corpus {
-
-class GuardedRegion {
-public:
-	GuardedRegion()
-	{
-		SYSTEM_INFO systemInfo{};
-		::GetSystemInfo(&systemInfo);
-		m_pageSize = systemInfo.dwPageSize;
-		if (m_pageSize <= 3) {
-			throw std::runtime_error("Invalid system page size");
-		}
-		m_page = static_cast<char*>(
-			::VirtualAlloc(nullptr, m_pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-		if (m_page == nullptr) {
-			throw std::runtime_error("Cannot allocate the corpus guard-page region");
-		}
-		DWORD oldProtection = 0;
-		if (!::VirtualProtect(m_page + m_pageSize, m_pageSize, PAGE_NOACCESS, &oldProtection)) {
-			::VirtualFree(m_page, 0, MEM_RELEASE);
-			throw std::runtime_error("Cannot protect the corpus guard page");
-		}
-	}
-
-	~GuardedRegion()
-	{
-		::VirtualFree(m_page, 0, MEM_RELEASE);
-	}
-
-	GuardedRegion(const GuardedRegion&) = delete;
-	GuardedRegion& operator=(const GuardedRegion&) = delete;
-
-	const char* PlaceAtEnd(std::string_view bytes)
-	{
-		return Place(bytes, m_pageSize - bytes.size());
-	}
-
-	const char* PlaceAtOddAddress(std::string_view bytes)
-	{
-		return Place(bytes, 1);
-	}
-
-private:
-	const char* Place(std::string_view bytes, size_t offset)
-	{
-		assert(bytes.size() < m_pageSize - 1);
-		if (bytes.size() >= m_pageSize - 1) {
-			throw std::runtime_error("Corpus case does not fit in the guard-page region");
-		}
-		std::memset(m_page, 0, m_pageSize);
-		char* const data = m_page + offset;
-		if (!bytes.empty()) {
-			std::memcpy(data, bytes.data(), bytes.size());
-		}
-		return data;
-	}
-
-	size_t m_pageSize;
-	char* m_page;
-};
 
 struct Range {
 	const size_t begin;
