@@ -31,6 +31,72 @@ const FORM_MIDDLES: [u8; 10] = [0x7F, 0x80, 0x9F, 0xA0, 0xA1, 0xAF, 0xB0, 0xB1, 
 const FORM_TAILS: [u8; 4] = [0x7F, 0x80, 0xBF, 0xC0];
 const SECOND_FORM_LEADS: [u8; 4] = [0xED, 0xEC, 0xEE, 0x41];
 const FOLLOWERS: [&[u8]; 3] = [&[], &[0x41], &[0x80]];
+/// What breaks a run of ASCII in the handoff sweeps, as a decoder reads, rejects or finds it cut
+/// short: a valid two-, three- and four-byte form, a CESU-8 pair, a lone continuation byte, a lead
+/// that no form starts with, a three-byte form cut after two bytes, NUL, a lone high half in its
+/// three-byte form and U+FFFF. The three-byte form is the one the C++ fast-path test uses.
+const HANDOFF_BREAKERS: [&[u8]; 10] = [
+    &[0xE6, 0x97, 0xA5],
+    &[0xC3, 0xA9],
+    &[0xF0, 0x9F, 0x98, 0x80],
+    &[0xED, 0xA0, 0xBD, 0xED, 0xB8, 0x80],
+    &[0x80],
+    &[0xFF],
+    &[0xE3, 0x81],
+    &[0x00],
+    &[0xED, 0xA0, 0xBD],
+    &[0xEF, 0xBF, 0xBF],
+];
+/// What breaks a run of ASCII units in the encode handoff sweep: a BMP unit, a pair, each half
+/// alone, a binary unit, a half that has no mate, the last unit and NUL.
+const HANDOFF_UNIT_BREAKERS: [&[u16]; 9] = [
+    &[0x3042],
+    &[0xD83D, 0xDE00],
+    &[0xD83D],
+    &[0xDE00],
+    &[0xDC80],
+    &[0xDC41],
+    &[0xFFFF],
+    &[0x0000],
+    &[0xDFFF, 0xD800],
+];
+/// The buffer a breaker is placed into and the last position it is placed at. The C++ fast-path
+/// test of `CUtf8::Utf8ToUni` places a three-byte form at every position of the first 130 bytes of
+/// 160, so a widening kernel of up to 128 bytes meets its handoff at each of these offsets.
+const HANDOFF_BUFFER_LENGTH: usize = 160;
+const HANDOFF_LAST_POSITION: usize = 130;
+/// The longest buffer of the length sweeps, in bytes for decoding and in units for encoding.
+const LARGE_BUFFER: usize = 4096;
+/// Whole and cut-short forms that the pseudo-random byte buffers are built from.
+const RANDOM_BYTE_TOKENS: [&[u8]; 14] = [
+    b"A",
+    b"\n",
+    b"\0",
+    &[0xC3, 0xA9],
+    &[0xE3, 0x81, 0x82],
+    &[0xEF, 0xBF, 0xBF],
+    &[0xF0, 0x9F, 0x98, 0x80],
+    &[0xF4, 0x8F, 0xBF, 0xBF],
+    &[0xED, 0xA0, 0xBD, 0xED, 0xB8, 0x80],
+    &[0xED, 0xA0, 0xBD],
+    &[0xED, 0xB8, 0x80],
+    &[0xE3, 0x81],
+    &[0x80],
+    &[0xFF],
+];
+/// Whole pairs, halves and edge units that the pseudo-random unit buffers are built from.
+const RANDOM_UNIT_TOKENS: [&[u16]; 10] = [
+    &[0x41],
+    &[0x3042],
+    &[0xD83D, 0xDE00],
+    &[0xD83D],
+    &[0xDE00],
+    &[0xDC80],
+    &[0xDC41],
+    &[0xDFFF, 0xD800],
+    &[0xFFFF],
+    &[0],
+];
 
 fn hex_bytes(bytes: &[u8]) -> String {
     if bytes.is_empty() {
@@ -656,34 +722,6 @@ impl Lcg {
 
 #[test]
 fn pseudo_random_inputs_match_the_model_and_round_trip() {
-    const TOKENS: [&[u8]; 14] = [
-        b"A",
-        b"\n",
-        b"\0",
-        &[0xC3, 0xA9],
-        &[0xE3, 0x81, 0x82],
-        &[0xEF, 0xBF, 0xBF],
-        &[0xF0, 0x9F, 0x98, 0x80],
-        &[0xF4, 0x8F, 0xBF, 0xBF],
-        &[0xED, 0xA0, 0xBD, 0xED, 0xB8, 0x80],
-        &[0xED, 0xA0, 0xBD],
-        &[0xED, 0xB8, 0x80],
-        &[0xE3, 0x81],
-        &[0x80],
-        &[0xFF],
-    ];
-    const UNIT_TOKENS: [&[u16]; 10] = [
-        &[0x41],
-        &[0x3042],
-        &[0xD83D, 0xDE00],
-        &[0xD83D],
-        &[0xDE00],
-        &[0xDC80],
-        &[0xDC41],
-        &[0xDFFF, 0xD800],
-        &[0xFFFF],
-        &[0],
-    ];
     let mut random = Lcg(0x5EED_0443);
     let mut candidate = Candidate::new();
     let mut sweep = Sweep::default();
@@ -691,8 +729,8 @@ fn pseudo_random_inputs_match_the_model_and_round_trip() {
         let mut bytes = Vec::new();
         let mut units = Vec::new();
         for _ in 0..random.next(48) {
-            bytes.extend_from_slice(TOKENS[random.next(TOKENS.len())]);
-            units.extend_from_slice(UNIT_TOKENS[random.next(UNIT_TOKENS.len())]);
+            bytes.extend_from_slice(RANDOM_BYTE_TOKENS[random.next(RANDOM_BYTE_TOKENS.len())]);
+            units.extend_from_slice(RANDOM_UNIT_TOKENS[random.next(RANDOM_UNIT_TOKENS.len())]);
         }
         for variant in VARIANTS {
             check_decode(&mut candidate, &mut sweep, &bytes, variant);
@@ -701,6 +739,128 @@ fn pseudo_random_inputs_match_the_model_and_round_trip() {
         }
     }
     sweep.finish(4000 * 2 * 2);
+}
+
+#[test]
+fn ascii_runs_of_every_length_up_to_4096_convert_like_the_model() {
+    let mut candidate = Candidate::new();
+    let mut sweep = Sweep::default();
+    for variant in VARIANTS {
+        for length in 0..=LARGE_BUFFER {
+            // The stride of 31 visits every ASCII value, NUL included, as the C++ fast-path test does.
+            let bytes: Vec<u8> = (0..length)
+                .map(|index| u8::try_from((index * 31) % 0x80).expect("an ASCII value"))
+                .collect();
+            let units: Vec<u16> = bytes.iter().map(|&byte| u16::from(byte)).collect();
+            check_decode(&mut candidate, &mut sweep, &bytes, variant);
+            check_round_trip(&mut candidate, &mut sweep, &bytes, variant);
+            check_encode(&mut candidate, &mut sweep, &units, variant);
+        }
+    }
+    sweep.finish(2 * (LARGE_BUFFER + 1) * 2);
+}
+
+#[test]
+fn every_ascii_handoff_position_decodes_like_the_model() {
+    let mut candidate = Candidate::new();
+    let mut sweep = Sweep::default();
+    for variant in VARIANTS {
+        for position in 0..=HANDOFF_LAST_POSITION {
+            for breaker in HANDOFF_BREAKERS {
+                // The breaker inside a run of ASCII that goes on after it.
+                let mut embedded = vec![b'a'; HANDOFF_BUFFER_LENGTH];
+                embedded[position..position + breaker.len()].copy_from_slice(breaker);
+                check_decode(&mut candidate, &mut sweep, &embedded, variant);
+                check_round_trip(&mut candidate, &mut sweep, &embedded, variant);
+                // The breaker and each of its prefixes at the very end of the run.
+                for length in 1..=breaker.len() {
+                    let mut ended = vec![b'a'; position];
+                    ended.extend_from_slice(&breaker[..length]);
+                    check_decode(&mut candidate, &mut sweep, &ended, variant);
+                    check_round_trip(&mut candidate, &mut sweep, &ended, variant);
+                }
+            }
+        }
+    }
+    let per_position: usize = HANDOFF_BREAKERS
+        .iter()
+        .map(|breaker| 1 + breaker.len())
+        .sum();
+    sweep.finish(2 * (HANDOFF_LAST_POSITION + 1) * per_position);
+}
+
+#[test]
+fn every_ascii_handoff_position_encodes_like_the_model() {
+    let mut candidate = Candidate::new();
+    let mut sweep = Sweep::default();
+    for variant in VARIANTS {
+        for position in 0..=HANDOFF_LAST_POSITION {
+            for breaker in HANDOFF_UNIT_BREAKERS {
+                let mut embedded = vec![0x61_u16; HANDOFF_BUFFER_LENGTH];
+                embedded[position..position + breaker.len()].copy_from_slice(breaker);
+                check_encode(&mut candidate, &mut sweep, &embedded, variant);
+                let mut ended = vec![0x61_u16; position];
+                ended.extend_from_slice(breaker);
+                check_encode(&mut candidate, &mut sweep, &ended, variant);
+            }
+        }
+    }
+    sweep.finish(2 * (HANDOFF_LAST_POSITION + 1) * HANDOFF_UNIT_BREAKERS.len() * 2);
+}
+
+#[test]
+fn pseudo_random_buffers_up_to_4096_match_the_model_and_round_trip() {
+    const ROUNDS: usize = 300;
+    let mut random = Lcg(0x5EED_1000);
+    let mut candidate = Candidate::new();
+    let mut sweep = Sweep::default();
+    for _ in 0..ROUNDS {
+        // Arbitrary bytes: almost every byte after the first starts no valid form.
+        let length = random.next(LARGE_BUFFER + 1);
+        let uniform: Vec<u8> = (0..length)
+            .map(|_| u8::try_from(random.next(0x100)).expect("a byte"))
+            .collect();
+        // Mostly ASCII with the odd arbitrary byte: runs that end at arbitrary offsets.
+        let length = random.next(LARGE_BUFFER + 1);
+        let biased: Vec<u8> = (0..length)
+            .map(|_| {
+                let bound = if random.next(10) < 7 { 0x80 } else { 0x100 };
+                u8::try_from(random.next(bound)).expect("a byte")
+            })
+            .collect();
+        // Whole and cut-short forms in a random order, cut off at a random length.
+        let mut forms = Vec::new();
+        let length = random.next(LARGE_BUFFER + 1);
+        while forms.len() < length {
+            forms.extend_from_slice(RANDOM_BYTE_TOKENS[random.next(RANDOM_BYTE_TOKENS.len())]);
+        }
+        forms.truncate(length);
+        // Units: mostly ASCII, with whole pairs, any surrogate and any unit.
+        let length = random.next(LARGE_BUFFER + 1);
+        let mut units: Vec<u16> = Vec::new();
+        while units.len() < length {
+            match random.next(10) {
+                0..=5 => units.push(u16::try_from(random.next(0x80)).expect("an ASCII unit")),
+                6 => units
+                    .extend_from_slice(RANDOM_UNIT_TOKENS[random.next(RANDOM_UNIT_TOKENS.len())]),
+                7 => units.push(0xD800 + u16::try_from(random.next(0x800)).expect("an offset")),
+                8 => units.push(u16::try_from(random.next(0x1_0000)).expect("a unit")),
+                _ => units.extend([
+                    0xD800 + u16::try_from(random.next(0x400)).expect("an offset"),
+                    0xDC00 + u16::try_from(random.next(0x400)).expect("an offset"),
+                ]),
+            }
+        }
+        units.truncate(length);
+        for variant in VARIANTS {
+            for bytes in [&uniform, &biased, &forms] {
+                check_decode(&mut candidate, &mut sweep, bytes, variant);
+                check_round_trip(&mut candidate, &mut sweep, bytes, variant);
+            }
+            check_encode(&mut candidate, &mut sweep, &units, variant);
+        }
+    }
+    sweep.finish(ROUNDS * 2 * 4);
 }
 
 #[test]
