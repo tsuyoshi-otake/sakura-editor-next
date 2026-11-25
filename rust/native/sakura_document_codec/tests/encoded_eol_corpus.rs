@@ -1,4 +1,5 @@
 mod corpus;
+mod fixture_tsv;
 
 use corpus::{corpus_path, load_cases, parse_corpus, Case};
 use sakura_document_codec::{

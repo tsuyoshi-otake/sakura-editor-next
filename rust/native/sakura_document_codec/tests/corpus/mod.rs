@@ -1,7 +1,5 @@
+use crate::fixture_tsv::{fixture_path, for_each_row, parse_hex, read_fixture, UniqueIds};
 use sakura_document_codec::{EncodedEolFormat, EolKind, EolRecord};
-use std::collections::BTreeSet;
-use std::fs::File;
-use std::io::Read;
 use std::path::PathBuf;
 
 const HEADER: &str = "id\tclass\tformats\tstart\tunits\trecords_off\trecords_on";
@@ -36,52 +34,26 @@ impl Case {
 }
 
 pub fn corpus_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/encoded-eol-corpus.tsv")
+    fixture_path("encoded-eol-corpus.tsv")
 }
 
 pub fn load_cases() -> Result<Vec<Case>, String> {
-    let path = corpus_path();
-    let origin = path.display().to_string();
-    let mut input = File::open(&path).map_err(|_| format!("{origin}:1: cannot open corpus"))?;
-    let mut text = String::new();
-    if input.read_to_string(&mut text).is_err() {
-        let line_number = text.split_terminator('\n').count() + 1;
-        return Err(format!("{origin}:{line_number}: cannot read corpus"));
-    }
+    let (origin, text) = read_fixture("encoded-eol-corpus.tsv")?;
     parse_corpus(&text, &origin)
 }
 
 pub fn parse_corpus(text: &str, origin: &str) -> Result<Vec<Case>, String> {
     let mut cases = Vec::new();
-    let mut ids = BTreeSet::new();
-    let mut line_number = 0;
-    let mut saw_header = false;
-    for (index, raw_line) in text.split_terminator('\n').enumerate() {
-        line_number = index + 1;
-        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if !saw_header {
-            if line != HEADER {
-                return Err(format!("{origin}:{line_number}: invalid header"));
-            }
-            saw_header = true;
-            continue;
-        }
-
+    let mut ids = UniqueIds::default();
+    for_each_row(text, origin, HEADER, |line| {
         parse_row(line, &mut ids, &mut cases)
-            .map_err(|reason| format!("{origin}:{line_number}: {reason}"))?;
-    }
-    if !saw_header {
-        return Err(format!("{origin}:{}: missing header", line_number + 1));
-    }
+    })?;
     Ok(cases)
 }
 
 fn parse_row<'a>(
     line: &'a str,
-    ids: &mut BTreeSet<&'a str>,
+    ids: &mut UniqueIds<'a>,
     cases: &mut Vec<Case>,
 ) -> Result<(), String> {
     let fields: Vec<_> = line.split('\t').collect();
@@ -89,16 +61,7 @@ fn parse_row<'a>(
     else {
         return Err("expected seven tab-separated fields".into());
     };
-    if id.is_empty()
-        || !id
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-    {
-        return Err("invalid id".into());
-    }
-    if !ids.insert(id) {
-        return Err(format!("duplicate id: {id}"));
-    }
+    ids.insert(id)?;
     if class.is_empty() {
         return Err("empty class".into());
     }
@@ -158,13 +121,6 @@ fn parse_decimal(text: &str, reason: &str) -> Result<usize, String> {
         return Err(reason.to_owned());
     }
     text.parse().map_err(|_| reason.to_owned())
-}
-
-fn parse_hex(text: &str, reason: &str) -> Result<u32, String> {
-    if !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(reason.to_owned());
-    }
-    u32::from_str_radix(text, 16).map_err(|_| reason.to_owned())
 }
 
 fn parse_unit(token: &str, width: usize) -> Result<u32, String> {
