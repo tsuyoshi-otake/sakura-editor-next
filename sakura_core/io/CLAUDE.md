@@ -76,3 +76,47 @@ all six contexts, and `sakura-encoded-eol-rust-candidate` (MSVC) and
 `sakura-encoded-eol-rust-gnu-candidate` (MinGW) are side-effect-free `candidate-shadow` records.
 The MinGW leg proves that both suites ran with `tools/verify-gtest-suite-executed.py`
 (`.github/CLAUDE.md`).
+
+## UTF-8/CESU-8 Rust candidate (#443)
+
+`DocumentUtf8CodecCandidate.{h,cpp}` is a comparison-only adapter over the Rust
+`sakura_document_codec_utf8_{decode,encode}_{measure,write}_v1` exports. `CUtf8`, `CCesu8`
+and their callers (`CFileLoad`, `CIoBridge`) stay legacy-production: nothing outside tests
+calls the adapter, and linking the archive does not select a backend. The ABI version and the
+typed status are shared by every document-codec candidate in `DocumentCodecAbi.h`; a
+capability adds only its own descriptors, bounds and result.
+
+One call converts one whole buffer. A decode reads UTF-8 or CESU-8 bytes and produces UTF-16
+units; an encode reads units and produces bytes plus a loss flag. `variant` is the `ECodeType`
+number (`CODE_UTF8` 4, `CODE_CESU8` 7) and any other value is refused. The byte rules are the
+frozen behavior of `CUtf8::Utf8ToUni` and `_UnicodeToUTF8`, not a new specification: a decode
+never loses input (a byte it cannot read becomes the unit `0xDC00 + byte`), CESU-8 refuses every
+four-byte form and reads a surrogate pair as two three-byte forms, and an encode maps a lone
+`U+DC00..U+DCFF` back to its byte and any other lone surrogate to `?` with the loss flag set.
+An input is bounded to 2,147,483,647 elements, the `int` length domain of the converters, and a
+longer one is refused before it is read.
+
+Measure and write are independent calls with no receipt between them. A failed call leaves every
+caller byte unchanged, a write with too little capacity writes nothing, and a successful write
+leaves the unused suffix of the array intact. An empty input and an empty array ignore their
+addresses. The result and the output array are written, so the result may share bytes with
+nothing else the call touches and the array with nothing else at all; the request, the buffer
+descriptor and the input are read-only and may share bytes with one another. The check order is
+documented in `rust/native/sakura_native_ffi/src/utf8_codec.rs`; the C++ structs pin the same
+sizes, offsets and wire numbers with `static_assert`.
+
+`Utf8CodecContract` freezes the production converters over
+`rust/native/fixtures/utf8-codec-corpus.tsv`. `Utf8CodecRustCandidate` compares the candidate
+with them and with the corpus: every corpus row at the end of a guard page and at an odd
+address, the recorded golden digests, every byte and byte pair, short sequences and truncated
+forms over boundary alphabets, every BMP unit, the whole 1,048,576-pair high/low surrogate grid,
+seeded random buffers of up to 4,096 elements with ASCII-prefix handoffs, and a replay through
+`CFileLoad::ReadLine` and `CIoBridge::ImplToFile`. The ABI rules (headers, pointers, capacity,
+check order, overlaps) run once per direction, and conversions run with input and output ending
+at a guard page. The injected-panic paths and the acceptance of an input at the 2 GiB bound are
+covered by the Rust unit tests only, because C++ can neither inject a panic nor supply that much
+input.
+
+Known production limit, outside this candidate: `_UnicodeToUTF8` sizes its worst case as three
+bytes per unit in an `int`, which overflows above 715,827,882 units. The candidate has no such
+limit below its own bound, and the suites compare the two only far below it.
