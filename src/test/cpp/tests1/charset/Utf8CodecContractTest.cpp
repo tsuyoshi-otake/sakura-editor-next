@@ -51,7 +51,7 @@ TEST(Utf8CodecContract, CorpusIsWellFormedAndCoversTheRequiredClasses)
 	const auto corpus = LoadCorpus();
 
 	// Adding or removing a row is a deliberate change of these two numbers.
-	EXPECT_EQ(130u, corpus.decode.size());
+	EXPECT_EQ(131u, corpus.decode.size());
 	EXPECT_EQ(68u, corpus.encode.size());
 
 	std::set<std::string> decodeClasses;

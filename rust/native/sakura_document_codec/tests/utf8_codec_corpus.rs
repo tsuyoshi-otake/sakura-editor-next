@@ -323,7 +323,7 @@ fn six_byte_forms() -> Vec<[u8; 6]> {
 fn corpus_is_well_formed_and_covers_the_required_classes() {
     let corpus = load_corpus().expect("the shared corpus is valid");
     // Adding or removing a row is a deliberate change of these numbers.
-    assert_eq!(corpus.decode.len(), 130);
+    assert_eq!(corpus.decode.len(), 131);
     assert_eq!(corpus.encode.len(), 68);
 
     let decode_classes: BTreeSet<_> = corpus
@@ -395,7 +395,7 @@ fn corpus_is_well_formed_and_covers_the_required_classes() {
         ),
     ] {
         let expected = if name == "decode" {
-            [88, 21, 21]
+            [89, 21, 21]
         } else {
             [40, 14, 14]
         };
@@ -442,7 +442,7 @@ fn decode_rows_match_the_candidate_and_the_model_in_every_applicable_variant() {
             compared += 1;
         }
     }
-    assert_eq!(compared, 88 * 2 + 21 + 21);
+    assert_eq!(compared, 89 * 2 + 21 + 21);
 }
 
 #[test]

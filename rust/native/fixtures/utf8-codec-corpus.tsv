@@ -95,6 +95,7 @@ decode-cesu8-pair-then-bmp-utf8	cesu8-pair	decode	utf8	ED A0 BD ED B8 80 E3 81 8
 decode-cesu8-pair-then-bmp-cesu8	cesu8-pair	decode	cesu8	ED A0 BD ED B8 80 E3 81 82	D83D DE00 3042	0
 decode-cesu8-low-then-high	cesu8-lone	decode	both	ED B8 80 ED A0 BD	DCED DCB8 DC80 DCED DCA0 DCBD	0
 decode-cesu8-high-then-high	cesu8-lone	decode	both	ED A0 BD ED A0 BD	DCED DCA0 DCBD DCED DCA0 DCBD	0
+decode-cesu8-low-then-low	cesu8-lone	decode	both	ED B8 80 ED B8 80	DCED DCB8 DC80 DCED DCB8 DC80	0
 decode-cesu8-high-then-bmp	cesu8-lone	decode	both	ED A0 BD E3 81 82	DCED DCA0 DCBD 3042	0
 decode-cesu8-high-then-ascii	cesu8-lone	decode	both	ED A0 BD 41	DCED DCA0 DCBD 0041	0
 decode-cesu8-high-then-two-byte	cesu8-lone	decode	both	ED A0 BD C3 A9	DCED DCA0 DCBD 00E9	0
