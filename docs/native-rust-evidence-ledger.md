@@ -143,3 +143,91 @@ This entry makes no performance claim, says nothing about MSVC rebuild behavior
 (the trace runs on MinGW only), and adopts nothing for production.
 [#441](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/441),
 [#442](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/442)
+
+## 2026-11-26 / #443 A3 UTF-8 and CESU-8 codec candidate (comparison-only)
+
+C++ `CUtf8` and `CCesu8` keep production authority. The Rust UTF-8/CESU-8 codec
+is a `candidate-shadow` provider of the `document-file-codec` domain, and
+nothing outside the tests calls it. The domain now holds two capabilities and
+keeps one production provider per context, so commit `6e14b4ee8` renamed its
+records to `sakura-document-file-codec-cpp-provider` (`legacy-production` in all
+six contexts), `sakura-document-file-codec-rust-candidate` (the four MSVC
+contexts) and `sakura-document-file-codec-rust-gnu-candidate` (the two MinGW
+contexts). They replace the `sakura-encoded-eol-*` records that the A2 entry
+above names; that entry stays as the historical record. The candidate converts
+one whole buffer per call, UTF-8 or CESU-8 bytes to UTF-16 units and back,
+through four checked exports,
+`sakura_document_codec_utf8_decode_{measure,write}_v1` and
+`sakura_document_codec_utf8_encode_{measure,write}_v1`. It takes the `ECodeType`
+variant numbers (4 UTF-8, 7 CESU-8), accepts at most 2^31 - 1 bytes or units per
+call and sets a loss flag only on encode. The native C ABI allowlist grows from
+34 to 38 names. Adopting the codec, adding an ASCII widening kernel or routing a
+caller each need their own review (#267 G2.5); this entry decides nothing of the
+kind.
+
+Correctness is recorded apart from performance. One shared corpus,
+`rust/native/fixtures/utf8-codec-corpus.tsv` (199 rows in 26 classes, 328
+row-and-variant checks), is read by the C++ `Utf8CodecContract` suite (7 tests),
+which holds the production converters to it, and by the safe Rust crate
+`sakura_document_codec` (`forbid(unsafe_code)`). The 19 tests of
+`tests/utf8_codec_corpus.rs` hold the crate to the corpus and to an independent
+scalar model, and each sweep pins how many inputs it covered, among them every
+byte and byte pair (131,584); every unit alone, on either side of an ASCII unit,
+after U+D800 and before U+DC00 (655,360); and every high/low surrogate pair
+(2,097,152). Further sweeps cover boundary and truncation sequences, ASCII
+handoffs at positions 0-130 and seeded random buffers of up to 4,096 bytes or
+units. The 14 FFI tests of the codec cover the ABI layout, successful calls and
+the failure cases, and a failed call leaves the caller's bytes unchanged.
+
+The C++ `Utf8CodecRustCandidate` suite (15 tests) compares the Rust exports with
+the production converters: 263,168 conversions over every byte and byte pair
+(each decoded and encoded back), 211,740 over short and truncated sequences,
+24,726 over every BMP unit before, after and between ASCII units, 4,096
+whole-buffer conversions that cover the 1,048,576-pair surrogate grid in both
+variants, and 4,344 over seeded random buffers with ASCII handoffs. It also
+checks that its summaries and the production converters' summaries over the #426
+input generators both equal the 10 recorded UTF-8 and CESU-8 rows, and replays
+1,270 lines read through `CFileLoad::ReadLine` and 1,378 lines written through
+`CIoBridge::ImplToFile`, including the loss flag. The #426 rows did not change:
+their digest lines moved unchanged into `CodecGoldenCorpus.h`, and the
+`CodecGoldenCorpus` suite still passes.
+
+Sensitivity of the comparison (a local x64 Debug build that was never committed,
+at `6e14b4ee8`): 26 single defects, 13 in the Rust codec, 11 in the C ABI layer
+and 2 in the C++ adapter, were selected one at a time, and
+`Utf8CodecRustCandidate` failed for every one (15 of 15 passed with none
+selected, before and after). Its corpus-row test,
+`CorpusRowsMatchTheFrozenRowsAndProductionAtEveryPlacement`, passed with ten of
+them. Nine are C ABI defects that change no conversion result (short-capacity
+handling, reserved fields, an unknown variant, overlaps and the order of the
+checks), and the suite's ABI tests caught them. The tenth is a codec defect, a
+CESU-8 low-half form accepted as the high half, which only the short-sequence
+and seeded-random tests caught. Commit `a1c52ca18` adds the row
+`decode-cesu8-low-then-low`; with that defect selected, the corpus-row test
+passed without the row and fails with it. The message of that commit says the
+corpus rows alone missed one defect, which holds for the codec defects only.
+
+Execution evidence. MSVC: run 45827115103 (commit `a1c52ca18`) ran the suites in
+Debug and Release; `tools/verify-gtest-suite-executed.py` on the hosted
+`test-results-x64-<configuration>` artifacts reports 7 executed and 0 failed for
+`Utf8CodecContract` and 15 and 0 for `Utf8CodecRustCandidate` in each, with the
+comparison and replay counts above recorded in both, and `CodecGoldenCorpus` ran
+its 3 cases with none failed or skipped. Both Rust test jobs of that run passed
+and matched the 38 allowlisted names with `dumpbin`, and the Debug leg's `test
+inventory verify-runtime` found no missing or unexpected selector (4,982 tests).
+MinGW: run 45827115216 (same commit) executed both suites in both legs through
+the `Verify UTF-8 codec contract execution` and `Verify UTF-8 codec candidate
+execution` steps, 7 and 15 executed with 0 failed in all four, and the GNU nm
+check matched the 38 names in both legs.
+
+Known limit of the production converter, outside this candidate:
+`_UnicodeToUTF8` sizes its worst case as three bytes per unit in an `int`, which
+overflows above 715,827,882 units. #443 first said that the candidate's input
+bound excludes that range; it does not. The candidate has no such limit below
+its own bound, and the suites compare the two only far below it.
+
+This entry makes no performance claim, selects nothing for production and adopts
+nothing. The MinGW job as a whole is advisory (`continue-on-error: true`), so
+its evidence is read per job and step.
+[#443](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/443),
+[#267](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/267)
