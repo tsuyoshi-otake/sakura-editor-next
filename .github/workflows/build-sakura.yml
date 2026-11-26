@@ -117,7 +117,7 @@ jobs:
       uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3
 
     - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: ${{ vars.PYTHON_VERSION || '3.14.3' }}
 
@@ -192,7 +192,7 @@ jobs:
         submodules: true
 
     - name: Set up bootstrap Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: '3.14.3'
 
@@ -435,7 +435,7 @@ jobs:
     # 504 during #123, failing this required job on an outage it had no reason
     # to depend on.
     - name: Set up Python
-      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: ${{ vars.PYTHON_VERSION || '3.14.3' }}
 
