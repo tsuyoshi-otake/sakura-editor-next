@@ -1,6 +1,7 @@
 /*! @file */
 #include "StdAfx.h"
 #include "terminal/window/TerminalLink.h"
+#include "terminal/model/TerminalReflow.h"
 
 #include <algorithm>
 #include <string_view>
@@ -55,7 +56,10 @@ std::optional<TerminalWebLink> DetectTerminalWebLink( const TerminalModel& model
 		const auto* row = GetTerminalRow(model, rowIndex);
 		if( !row || row->cells.size() > kTerminalLinkScanLimit - inspected ) return std::nullopt;
 		inspected += row->cells.size();
-		for( std::size_t column = 0; column < row->cells.size(); ++column ) {
+		// A wrapped row joins up to its last written cell (R5): the gap a
+		// wide cell leaves at the right edge does not reach the URI text.
+		const auto end = row->wrapped ? TerminalRowWrittenEnd(*row) : row->cells.size();
+		for( std::size_t column = 0; column < end; ++column ) {
 			const auto& cell = row->cells[column];
 			if( cell.continuation ) continue;
 			const auto cellText = cell.Text().empty() ? std::wstring_view(L" ") : cell.Text();

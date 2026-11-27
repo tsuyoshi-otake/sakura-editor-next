@@ -3518,6 +3518,13 @@ std::size_t CTerminalTool::VisiblePaneCount() const noexcept
 	return m_impl->closed ? 0 : m_impl->panes.size();
 }
 
+CTerminalWnd* CTerminalTool::RendererForTab( std::uint64_t tabId ) const noexcept
+{
+	if( m_impl->closed ) return nullptr;
+	const auto* pane = m_impl->FindPane(tabId);
+	return pane ? pane->window.get() : nullptr;
+}
+
 bool CTerminalTool::HasTerminalTabsList() const noexcept
 {
 	return !m_impl->closed && !IsEmptyRect(m_impl->paneLayout.tabsBounds);

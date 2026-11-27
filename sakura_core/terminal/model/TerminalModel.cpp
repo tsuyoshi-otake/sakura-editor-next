@@ -1,6 +1,7 @@
 /*! @file */
 #include "StdAfx.h"
 #include "terminal/model/TerminalModel.h"
+#include "terminal/model/TerminalReflow.h"
 #include "terminal/unicode/TerminalGraphemeWidth.h"
 
 #include <algorithm>
@@ -36,22 +37,32 @@ std::size_t ClampScrollback( std::size_t lines ) noexcept
 
 std::size_t TerminalScrollbackChange::Appended() const noexcept
 {
-	return m_appended;
+	std::size_t total = 0;
+	for( const auto& step : m_steps ) total += step.appended;
+	return total;
 }
 
 std::size_t TerminalScrollbackChange::Evicted() const noexcept
 {
-	return m_evicted;
+	std::size_t total = 0;
+	for( const auto& step : m_steps ) total += step.evicted;
+	return total;
 }
 
 bool TerminalScrollbackChange::Cleared() const noexcept
 {
-	return m_cleared;
+	for( const auto& step : m_steps ) {
+		if( step.cleared ) return true;
+	}
+	return false;
 }
 
-bool TerminalScrollbackChange::Changed() const noexcept
+std::shared_ptr<const TerminalReflowLayout> TerminalScrollbackChange::Reflow() const noexcept
 {
-	return m_appended != 0 || m_evicted != 0 || m_cleared;
+	for( auto it = m_steps.rbegin(); it != m_steps.rend(); ++it ) {
+		if( it->reflow ) return it->reflow;
+	}
+	return {};
 }
 
 const TerminalAttributes& TerminalRow::AttributesAt( std::size_t column ) const noexcept
@@ -100,11 +111,14 @@ void TerminalModel::RecycleForBlankRow( TerminalRow& outgoing, const TerminalAtt
 			m_scrollbackHead = (m_scrollbackHead + 1) % m_scrollback.size();
 			m_pendingScrollbackChange.RecordAppended();
 			m_pendingScrollbackChange.RecordEvicted();
+			++m_historyAppendedTotal;
+			++m_historyEvictedTotal;
 			ResetRow(outgoing, attributes);
 			return;
 		}
 		m_scrollback.push_back(std::move(outgoing));
 		m_pendingScrollbackChange.RecordAppended();
+		++m_historyAppendedTotal;
 		outgoing = MakeBlankRow(attributes);
 		return;
 	}
@@ -117,12 +131,15 @@ void TerminalModel::AppendScrollbackRow( TerminalRow&& row )
 	if( m_scrollback.size() < m_scrollbackLimit ) {
 		m_scrollback.push_back(std::move(row));
 		m_pendingScrollbackChange.RecordAppended();
+		++m_historyAppendedTotal;
 		return;
 	}
 	m_scrollback[m_scrollbackHead] = std::move(row);
 	m_scrollbackHead = (m_scrollbackHead + 1) % m_scrollback.size();
 	m_pendingScrollbackChange.RecordAppended();
 	m_pendingScrollbackChange.RecordEvicted();
+	++m_historyAppendedTotal;
+	++m_historyEvictedTotal;
 }
 
 TerminalRow& TerminalModel::RowAt( std::size_t row ) noexcept
@@ -177,57 +194,143 @@ void TerminalModel::Reset()
 	m_alternateScreen = false;
 	m_dirtyRows.assign(m_rowsCount, true);
 	m_pendingScrollbackChange.RecordEvicted(discardedHistory);
+	m_historyEvictedTotal += discardedHistory;
 	m_pendingScrollbackChange.MarkCleared();
 }
 
 void TerminalModel::Resize( std::size_t columns, std::size_t rows )
 {
 	NormalizeRowsOrder();
+	NormalizeScrollbackOrder();
 	columns = std::max<std::size_t>(1, columns);
 	rows = std::max<std::size_t>(1, rows);
-	if( columns != m_columns ) {
+	const bool reflowColumns = columns != m_columns;
+	std::shared_ptr<TerminalReflowLayout> layout;
+	if( reflowColumns ) {
+		++m_layoutGeneration;
+		layout = std::make_shared<TerminalReflowLayout>();
+		layout->oldHistoryRowCount = m_scrollback.size();
+
+		// R1: history and the screen reflow apart.  History rows never move
+		// back to the screen, also not on widening.  When the newest history
+		// line continues on screen row 0, the last output row stays wrapped.
+		const bool historyOpenEnd = !m_scrollback.empty() && m_scrollback.back().wrapped;
+		layout->history = ReflowTerminalRows(std::move(m_scrollback), columns,
+			TerminalAttributes{}, historyOpenEnd);
+		m_scrollback = std::move(layout->history.newRows);
+		m_scrollbackHead = 0;
+
+		// The screen region is the main screen; while the alternate screen
+		// is shown it is the saved main screen (the alternate screen itself
+		// is not reflowed, R4).
+		auto& screen = m_alternateScreen ? m_savedMainRows : m_rows;
+		auto& cursorRow = m_alternateScreen ? m_savedMainCursorRow : m_cursorRow;
+		auto& cursorColumn = m_alternateScreen ? m_savedMainCursorColumn : m_cursorColumn;
+		auto& savedRow = m_alternateScreen ? m_savedMainSavedCursorRow : m_savedCursorRow;
+		auto& savedColumn = m_alternateScreen ? m_savedMainSavedCursorColumn : m_savedCursorColumn;
+		layout->screen = ReflowTerminalRows(std::move(screen), columns,
+			TerminalAttributes{}, false);
+		screen = std::move(layout->screen.newRows);
 		m_columns = columns;
-		const auto resizeColumns = [this, columns]( auto& rowsToResize ) {
-			for( auto& row : rowsToResize ) {
+
+		// R3: positions follow their text, mapped by the cell offset inside
+		// the logical line.  The cursor line reflows too.
+		static_cast<void>(MapReflowedPosition(layout->screen, cursorRow, cursorColumn, columns, false,
+			cursorRow, cursorColumn));
+		static_cast<void>(MapReflowedPosition(layout->screen, savedRow, savedColumn, columns, false,
+			savedRow, savedColumn));
+
+		if( m_alternateScreen ) {
+			for( auto& row : m_rows ) {
 				row.cells.resize(columns);
 				row.cellAttributes.resize(columns);
 				RepairWideCells(row);
 				RebuildAttributeRuns(row);
 			}
-		};
-		resizeColumns(m_rows);
-		resizeColumns(m_scrollback);
-		resizeColumns(m_savedMainRows);
+		}
 	}
-	if( rows != m_rowsCount ) {
+	if( reflowColumns || rows != m_rowsCount ) {
 		// xterm.js Buffer.resize: a shrink drops rows below the cursor first and
 		// only then moves rows off the top, so the cursor and the saved cursor
 		// stay on their lines.  Main-screen rows leaving the top become history;
 		// the alternate screen keeps none.  Growth appends blank rows, as xterm.js
 		// does for a Windows PTY because ConPTY reprints the screen (#374).
-		const auto shrinkScreen = [this, rows]( std::deque<TerminalRow>& screen, std::size_t& cursorRow,
-			std::size_t& savedCursorRow, bool keepsHistory ) {
+		std::deque<std::size_t> reflowRowOrder;
+		if( layout ) {
+			reflowRowOrder.resize((m_alternateScreen ? m_savedMainRows : m_rows).size());
+			for( std::size_t index = 0; index < reflowRowOrder.size(); ++index ) reflowRowOrder[index] = index;
+			layout->screenNewRowGlobal.assign(reflowRowOrder.size(), TerminalReflowLayout::npos);
+		}
+		const auto shrinkScreen = [this, rows, &layout, &reflowRowOrder](
+			std::deque<TerminalRow>& screen, std::size_t& cursorRow,
+			std::size_t& savedCursorRow, bool keepsHistory, bool tracksReflow ) {
 			while( screen.size() > rows ) {
 				if( cursorRow + 1 < screen.size() ) {
+					// A resize that drops rows clears the dropped row's
+					// predecessor flag (R2(d)): the dropped row was its
+					// continuation.
 					screen.pop_back();
+					if( tracksReflow ) {
+						layout->screenNewRowGlobal[reflowRowOrder.back()] = TerminalReflowLayout::npos;
+						reflowRowOrder.pop_back();
+					}
+					if( !screen.empty() ) screen.back().wrapped = false;
 					continue;
 				}
 				TerminalRow outgoing = std::move(screen.front());
 				screen.pop_front();
-				if( keepsHistory ) AppendScrollbackRow(std::move(outgoing));
+				if( keepsHistory ) {
+					if( tracksReflow ) {
+						// During a reflow the scrollback stays linear
+						// (head 0): pushes may overshoot the limit and the
+						// single trim below evicts the logical front once.
+						if( m_scrollbackLimit != 0 ) {
+							m_scrollback.push_back(std::move(outgoing));
+							layout->screenNewRowGlobal[reflowRowOrder.front()] = m_scrollback.size() - 1;
+						}
+					} else {
+						AppendScrollbackRow(std::move(outgoing));
+					}
+				}
+				if( tracksReflow ) reflowRowOrder.pop_front();
 				if( cursorRow > 0 ) --cursorRow;
 				if( savedCursorRow > 0 ) --savedCursorRow;
 			}
 		};
-		shrinkScreen(m_rows, m_cursorRow, m_savedCursorRow, !m_alternateScreen);
+		const bool trackMain = layout != nullptr && !m_alternateScreen;
+		const bool trackSaved = layout != nullptr && m_alternateScreen;
+		shrinkScreen(m_rows, m_cursorRow, m_savedCursorRow, !m_alternateScreen, trackMain);
 		while( m_rows.size() < rows ) m_rows.push_back(MakeBlankRow(m_attributes));
 		if( m_alternateScreen ) {
-			shrinkScreen(m_savedMainRows, m_savedMainCursorRow, m_savedMainSavedCursorRow, true);
+			shrinkScreen(m_savedMainRows, m_savedMainCursorRow, m_savedMainSavedCursorRow, true, trackSaved);
 			while( m_savedMainRows.size() < rows ) m_savedMainRows.push_back(MakeBlankRow(m_savedMainAttributes));
 		}
 		m_rowsCount = rows;
+		if( layout ) {
+			// New globals for the rows that stayed on the screen.
+			const auto base = m_scrollback.size();
+			for( std::size_t index = 0; index < reflowRowOrder.size(); ++index ) {
+				const auto source = reflowRowOrder[index];
+				if( layout->screenNewRowGlobal[source] == TerminalReflowLayout::npos ) {
+					layout->screenNewRowGlobal[source] = base + index;
+				}
+			}
+			// Scrollback-limit enforcement counts as evictions of the reflow.
+			std::size_t reflowEvicted = 0;
+			while( m_scrollback.size() > m_scrollbackLimit ) {
+				m_scrollback.pop_front();
+				++reflowEvicted;
+			}
+			layout->globalShift = reflowEvicted;
+			m_pendingScrollbackChange.SetReflow(layout);
+			// The reflow retires every old history ordinal, keeping both
+			// totals monotonic: retained row i is ordinal
+			// HistoryEvictedTotal() + i + 1 on the new layout.
+			m_historyEvictedTotal = m_historyAppendedTotal;
+			m_historyAppendedTotal = m_historyEvictedTotal
+				+ static_cast<std::uint64_t>(m_scrollback.size());
+		}
 	}
-	SetScrollbackLimit(m_scrollbackLimit);
 	m_cursorColumn = std::min(m_cursorColumn, m_columns - 1);
 	m_cursorRow = std::min(m_cursorRow, m_rowsCount - 1);
 	m_savedMainCursorColumn = std::min(m_savedMainCursorColumn, m_columns - 1);
@@ -253,6 +356,7 @@ void TerminalModel::SetScrollbackLimit( std::size_t lines )
 	while( m_scrollback.size() > m_scrollbackLimit ) m_scrollback.pop_front();
 	m_scrollbackHead = 0;
 	m_pendingScrollbackChange.RecordEvicted(previousSize - m_scrollback.size());
+	m_historyEvictedTotal += previousSize - m_scrollback.size();
 }
 
 void TerminalModel::AppendCodepoint( TerminalCell& cell, char32_t codepoint ) noexcept
@@ -348,7 +452,7 @@ void TerminalModel::Print( char32_t codepoint )
 		if( m_modes.autowrap ) {
 			RowAt(m_cursorRow).wrapped = true;
 			CarriageReturn();
-			LineFeed();
+			LineFeed(true);
 		} else {
 			m_cursorColumn = m_columns - static_cast<std::size_t>(width);
 		}
@@ -386,19 +490,33 @@ void TerminalModel::ExecuteControl( wchar_t control )
 	case L'\a': break;
 	case L'\b': if( m_cursorColumn != 0 ) --m_cursorColumn; break;
 	case L'\t': m_cursorColumn = std::min(m_columns - 1, ((m_cursorColumn / 8) + 1) * 8); break;
-	case L'\n': case L'\v': case L'\f': LineFeed(); break;
+	// An explicit LF/VT/FF starts a new line: the row being left is no
+	// longer an autowrap leader, whether the cursor moves or the screen
+	// scrolls (R2(a)).  The autowrap path calls LineFeed() directly and
+	// keeps its flag.
+	case L'\n': case L'\v': case L'\f': RowAt(m_cursorRow).wrapped = false; LineFeed(); break;
 	case L'\r': CarriageReturn(); break;
 	default: break;
 	}
 }
 
-void TerminalModel::LineFeed()
+void TerminalModel::ClearPreviousRowFlag( std::size_t row ) noexcept
+{
+	if( row != 0 ) {
+		RowAt(row - 1).wrapped = false;
+		return;
+	}
+	if( m_alternateScreen || m_scrollback.empty() ) return;
+	m_scrollback[(m_scrollbackHead + m_scrollback.size() - 1) % m_scrollback.size()].wrapped = false;
+}
+
+void TerminalModel::LineFeed( bool keepsAutowrapLeader )
 {
 	if( m_cursorRow < m_scrollBottom ) {
 		++m_cursorRow;
 		return;
 	}
-	ScrollUp(1);
+	ScrollUp(1, keepsAutowrapLeader);
 }
 
 void TerminalModel::ReverseLineFeed()
@@ -407,7 +525,7 @@ void TerminalModel::ReverseLineFeed()
 	else ScrollDown(1);
 }
 
-void TerminalModel::ScrollUp( std::size_t lines )
+void TerminalModel::ScrollUp( std::size_t lines, bool keepsAutowrapLeader )
 {
 	lines = std::min(lines, m_scrollBottom - m_scrollTop + 1);
 	if( lines == 0 ) return;
@@ -430,6 +548,12 @@ void TerminalModel::ScrollUp( std::size_t lines )
 	auto last = m_rows.begin() + static_cast<std::ptrdiff_t>(m_scrollBottom + 1);
 	std::rotate(first, first + static_cast<std::ptrdiff_t>(lines), last);
 	for( auto row = last - static_cast<std::ptrdiff_t>(lines); row != last; ++row ) ResetRow(*row, m_attributes);
+	// R2(d): the rotate changed which row follows the row above the region
+	// and the row now just above the reset rows (the region's old bottom).
+	// The autowrap path keeps the leader: it set that flag itself.  The
+	// index is guarded so a whole-region scroll cannot wrap a row index.
+	ClearPreviousRowFlag(m_scrollTop);
+	if( !keepsAutowrapLeader && m_scrollBottom >= lines ) RowAt(m_scrollBottom - lines).wrapped = false;
 	MarkDirtyRange(m_scrollTop, m_scrollBottom);
 }
 
@@ -442,6 +566,10 @@ void TerminalModel::ScrollDown( std::size_t lines )
 	const auto last = m_rows.begin() + static_cast<std::ptrdiff_t>(m_scrollBottom + 1);
 	std::rotate(first, last - static_cast<std::ptrdiff_t>(lines), last);
 	for( auto row = first; row != first + static_cast<std::ptrdiff_t>(lines); ++row ) ResetRow(*row, m_attributes);
+	// R2(d): same fork rule as ScrollUp; the old bottom-half rows moved up
+	// and the row at the region bottom lost its successor.
+	ClearPreviousRowFlag(m_scrollTop);
+	RowAt(m_scrollBottom).wrapped = false;
 	MarkDirtyRange(m_scrollTop, m_scrollBottom);
 }
 
@@ -477,9 +605,17 @@ void TerminalModel::ClearCellRange( TerminalRow& row, std::size_t begin, std::si
 void TerminalModel::EraseLine( int mode )
 {
 	auto& row = RowAt(m_cursorRow);
-	if( mode == 0 ) ClearCellRange(row, m_cursorColumn, m_columns);
+	if( mode == 0 ) {
+		ClearCellRange(row, m_cursorColumn, m_columns);
+		// R2(b): erasing the whole line from column 0 makes the cursor row
+		// start a new line, so the previous row's flag is cleared.
+		if( m_cursorColumn == 0 ) ClearPreviousRowFlag(m_cursorRow);
+	}
 	else if( mode == 1 ) ClearCellRange(row, 0, std::min(m_columns, m_cursorColumn + 1));
-	else if( mode == 2 ) ClearCellRange(row, 0, m_columns);
+	else if( mode == 2 ) {
+		ClearCellRange(row, 0, m_columns);
+		ClearPreviousRowFlag(m_cursorRow);
+	}
 	MarkDirty(m_cursorRow);
 }
 
@@ -536,6 +672,10 @@ void TerminalModel::InsertLines( std::size_t count )
 	const auto last = m_rows.begin() + static_cast<std::ptrdiff_t>(m_scrollBottom + 1);
 	std::rotate(first, last - static_cast<std::ptrdiff_t>(count), last);
 	for( auto row = first; row != first + static_cast<std::ptrdiff_t>(count); ++row ) ResetRow(*row, m_attributes);
+	// R2(d): inserted rows change which row follows the row above the
+	// cursor and the region-bottom row's successor.
+	ClearPreviousRowFlag(m_cursorRow);
+	RowAt(m_scrollBottom).wrapped = false;
 	MarkDirtyRange(m_cursorRow, m_scrollBottom);
 }
 
@@ -548,6 +688,12 @@ void TerminalModel::DeleteLines( std::size_t count )
 	const auto last = m_rows.begin() + static_cast<std::ptrdiff_t>(m_scrollBottom + 1);
 	std::rotate(first, first + static_cast<std::ptrdiff_t>(count), last);
 	for( auto row = last - static_cast<std::ptrdiff_t>(count); row != last; ++row ) ResetRow(*row, m_attributes);
+	// R2(d): same fork rule; the region's old bottom row moved up and lost
+	// its successor.  The index is guarded: a delete that reaches row 0
+	// clears the leader above the band through ClearPreviousRowFlag
+	// instead of wrapping a row index.
+	ClearPreviousRowFlag(m_cursorRow);
+	if( m_scrollBottom >= count ) RowAt(m_scrollBottom - count).wrapped = false;
 	MarkDirtyRange(m_cursorRow, m_scrollBottom);
 }
 
@@ -556,15 +702,31 @@ void TerminalModel::EraseDisplay( int mode )
 	if( mode == 0 ) {
 		EraseLine(0);
 		for( auto row = m_cursorRow + 1; row < m_rowsCount; ++row ) ClearCellRange(RowAt(row), 0, m_columns);
+		// R2(c): each erased row was its predecessor's continuation and its
+		// own flag is dead content, so leaders at cursor..last lose their
+		// flag, the last row included.
+		for( auto row = m_cursorRow; row < m_rowsCount; ++row ) RowAt(row).wrapped = false;
 		MarkDirtyRange(m_cursorRow, m_rowsCount - 1);
 	} else if( mode == 1 ) {
 		for( std::size_t row = 0; row < m_cursorRow; ++row ) ClearCellRange(RowAt(row), 0, m_columns);
 		EraseLine(1);
+		// R2(c): rows from the previous row of row 0 through the row above
+		// the cursor lose their flag; the cursor row loses it only when the
+		// erase covered the whole line.
+		ClearPreviousRowFlag(0);
+		for( std::size_t row = 0; row < m_cursorRow; ++row ) RowAt(row).wrapped = false;
+		if( m_cursorColumn + 1 >= m_columns ) RowAt(m_cursorRow).wrapped = false;
 		MarkDirtyRange(0, m_cursorRow);
 	} else if( mode == 2 || mode == 3 ) {
 		for( auto& row : m_rows ) ClearCellRange(row, 0, m_columns);
+		// R2(c): erased row r was row r-1's continuation, so the erased
+		// range 0..last clears the leaders at history-last..last, the last
+		// row's own flag included.
+		ClearPreviousRowFlag(0);
+		for( std::size_t row = 0; row < m_rowsCount; ++row ) RowAt(row).wrapped = false;
 		if( mode == 3 ) {
 			m_pendingScrollbackChange.RecordEvicted(m_scrollback.size());
+			m_historyEvictedTotal += m_scrollback.size();
 			m_scrollback.clear();
 			m_scrollbackHead = 0;
 			m_pendingScrollbackChange.MarkCleared();

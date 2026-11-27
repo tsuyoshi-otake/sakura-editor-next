@@ -577,6 +577,9 @@ struct TerminalInstance::Impl {
 			result.scrollbackChange = model->ConsumeScrollbackChange();
 			result.dirtyRows = model->ConsumeDirtyRows();
 			result.clipboardWrite = model->ConsumeClipboardWrite();
+			result.historyAppendedTotal = model->HistoryAppendedTotal();
+			result.historyEvictedTotal = model->HistoryEvictedTotal();
+			result.layoutGeneration = model->LayoutGeneration();
 		}
 		if (result.sequenceChanged) {
 			const std::lock_guard lock(stateMutex);
@@ -591,6 +594,10 @@ struct TerminalInstance::Impl {
 				AdvanceContentRevision(contentRevision);
 			}
 			result.contentRevision = contentRevision;
+			if (!pendingResizeRecords.empty()) {
+				result.resizeRecords = std::move(pendingResizeRecords);
+				pendingResizeRecords.clear();
+			}
 		}
 		if (parserFailed) {
 			RequestClose(TerminalInstanceCloseReason::HostLost);
@@ -625,15 +632,38 @@ struct TerminalInstance::Impl {
 			}
 			sessionValue = session.get();
 		}
+		TerminalPendingResizeRecord resizeRecord;
+		bool resizeChangedScrollback = false;
 		{
 			const std::lock_guard lock(modelMutex);
 			model->Resize(size.columns, size.rows);
+			// Do NOT consume the resize's scrollback change here: the pane's
+			// resize sink and the next drain both apply it (the drain then
+			// carries the ordered steps).  The capture index only needs the
+			// slim record below, replayed at the resize's own revision.
+			resizeChangedScrollback = model->HasPendingScrollbackChange();
+			resizeRecord.historyAppendedTotal = model->HistoryAppendedTotal();
+			resizeRecord.historyEvictedTotal = model->HistoryEvictedTotal();
+			resizeRecord.layoutGeneration = model->LayoutGeneration();
 		}
-		if (!sessionValue->RequestResize(size)) return { false, ERROR_INVALID_STATE };
+		const bool resizeAccepted = sessionValue->RequestResize(size);
 		{
 			const std::lock_guard lock(stateMutex);
 			AdvanceContentRevision(contentRevision);
+			if (resizeChangedScrollback) {
+				resizeRecord.revision = contentRevision;
+				// Bounded: resize records only live until the next drain.
+				// Past the cap the oldest is dropped and the survivor asks
+				// the index for a full resync rather than guessing across
+				// layouts it never saw.
+				while (pendingResizeRecords.size() >= kMaxPendingResizeRecords) {
+					pendingResizeRecords.erase(pendingResizeRecords.begin());
+					pendingResizeRecords.front().droppedPriorRecords = true;
+				}
+				pendingResizeRecords.push_back(std::move(resizeRecord));
+			}
 		}
+		if (!resizeAccepted) return { false, ERROR_INVALID_STATE };
 		return { true, 0 };
 	}
 
@@ -664,6 +694,9 @@ struct TerminalInstance::Impl {
 			result.scrollbackSize = model->ScrollbackSize();
 			result.scrollbackLimit = model->ScrollbackLimit();
 			result.alternateScreen = model->IsAlternateScreen();
+			result.historyAppendedTotal = model->HistoryAppendedTotal();
+			result.historyEvictedTotal = model->HistoryEvictedTotal();
+			result.layoutGeneration = model->LayoutGeneration();
 		}
 		return result;
 	}
@@ -805,6 +838,12 @@ struct TerminalInstance::Impl {
 	std::unique_ptr<TerminalParser> parser;
 	std::unique_ptr<CTerminalSession> session;
 	std::vector<std::uint8_t> pendingProtocolInput;
+	//! Slim capture-index records of resizes since the last drain, replayed
+	//! through the next drain in content-revision order.  Records live only
+	//! between a resize and a drain, so a small bound suffices; past it the
+	//! oldest is dropped and the survivor requests a full resync.
+	static constexpr std::size_t kMaxPendingResizeRecords = 8;
+	std::vector<TerminalPendingResizeRecord> pendingResizeRecords;
 	std::optional<TerminalInstanceOutcome> outcome;
 	bool protocolInputRejected{};
 	bool startAttempted{};

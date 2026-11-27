@@ -27,6 +27,8 @@
 
 namespace terminal {
 
+class CTerminalWnd;
+
 //! Frame-owned actions exposed to the terminal chrome without coupling it to CEditWnd.
 struct TerminalPanelActions {
 	std::function<void()> closePanel;
@@ -316,6 +318,10 @@ public:
 	[[nodiscard]] std::size_t TabCount() const noexcept;
 	//! Number of native terminal viewports in the selected terminal group.
 	[[nodiscard]] std::size_t VisiblePaneCount() const noexcept;
+	//! The pane renderer bound to `tabId`, or nullptr when the tab has none
+	//! (different group, projection not materialized).  Tests drive the real
+	//! ResizeTab -> resize -> ApplyScrollbackChange chain through this seam.
+	[[nodiscard]] CTerminalWnd* RendererForTab( std::uint64_t tabId ) const noexcept;
 	//! The default VS Code singleTerminal policy hides this list for one instance.
 	[[nodiscard]] bool HasTerminalTabsList() const noexcept;
 	//! Empty when the tabs list is hidden or cannot fit beside an 80 DIP terminal.

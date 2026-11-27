@@ -6,6 +6,7 @@
 */
 #include "StdAfx.h"
 #include "terminal/runtime/TerminalCaptureExtraction.h"
+#include "terminal/model/TerminalReflow.h"
 
 #include <algorithm>
 #include <limits>
@@ -74,8 +75,13 @@ void AppendNormalized( NormalizedText& output, std::wstring_view text )
 NormalizedText ExtractRow( const TerminalRow& row, bool preserveTrailingSpaces )
 {
 	NormalizedText result;
-	result.value.reserve(row.cells.size());
-	for( const auto& cell : row.cells ) {
+	// Under joinWrappedLines a wrapped row contributes up to its last
+	// written cell (R5): the unwritten gap it leaves does not join.
+	const auto end = preserveTrailingSpaces && row.wrapped
+		? TerminalRowWrittenEnd(row) : row.cells.size();
+	result.value.reserve(end);
+	for( std::size_t column = 0; column < end; ++column ) {
+		const auto& cell = row.cells[column];
 		if( cell.continuation ) continue;
 		if( cell.length == 0 ) {
 			result.value.push_back(u' ');

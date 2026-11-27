@@ -129,6 +129,11 @@ public:
 	[[nodiscard]] TerminalSize GetTerminalSize() const noexcept;
 	[[nodiscard]] TerminalViewportDiagnosticSnapshot GetViewportDiagnostic() const noexcept;
 	[[nodiscard]] bool HasSelection() const noexcept;
+	//! The selected text without touching the OS clipboard: the same
+	//! ExtractTerminalSelection a copy would write.  Empty when nothing is
+	//! selected.  Tests use this seam so they never own the clipboard.
+	[[nodiscard]] std::wstring SelectedText() const;
+	[[nodiscard]] const TerminalModel* Model() const noexcept;
 	[[nodiscard]] bool CopySelectionToClipboard();
 	[[nodiscard]] bool PasteFromClipboard();
 

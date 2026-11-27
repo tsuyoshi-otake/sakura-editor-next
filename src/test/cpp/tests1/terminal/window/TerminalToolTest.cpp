@@ -8,6 +8,7 @@
 #include "terminal/tmux/TmuxRuntimeAdapter.h"
 #include "terminal/tmux/TmuxWaitChannelService.h"
 #include "terminal/window/TerminalFontMetrics.h"
+#include "terminal/window/TerminalRenderMapping.h"
 #include "terminal/window/TerminalViewportGeometry.h"
 #include "workbench/panel/CBottomPanelTool.h"
 #include "terminal/model/TerminalModel.h"
@@ -3196,6 +3197,324 @@ TEST(TerminalTool, LongPressNeedsADropTargetAndReleasesAReportingApplicationsPre
 	::SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(40, 40));
 	EXPECT_NE(window, ::GetCapture());
 	tool.Close();
+	::DestroyWindow(parent);
+}
+
+// ---- Phase 17 D1: the resize's scrollback change must reach the pane ----
+
+namespace {
+
+std::wstring PaneRowText( const terminal::TerminalRow& row )
+{
+	std::wstring text;
+	for( const auto& cell : row.cells ) {
+		if( cell.continuation ) continue;
+		if( cell.length != 0 ) text.append(cell.Text());
+	}
+	return text;
+}
+
+void ModelPrint( terminal::TerminalModel& model, std::u32string_view text )
+{
+	for( const auto ch : text ) {
+		if( ch < 32 ) model.ExecuteControl(static_cast<wchar_t>(ch));
+		else model.Print(ch);
+	}
+}
+
+std::wstring PaneTopText( const terminal::CTerminalWnd& pane )
+{
+	const auto top = pane.GetViewportDiagnostic().topRow;
+	const auto* row = terminal::GetTerminalRow(*pane.Model(), top);
+	return row ? PaneRowText(*row) : std::wstring();
+}
+
+} // namespace
+
+// T1a / D1(a): a panel rows-only shrink driven through the real
+// `ResizeTab -> resize -> ApplyScrollbackChange` chain must keep the
+// scrolled pane's top text and its selection text.
+TEST(TerminalTool, PaneRowsShrinkKeepsTheScrolledTopAndSelection)
+{
+	ToolHarness harness;
+	std::string output;
+	for( int line = 0; line < 80; ++line )
+		output += "L" + std::to_string(line) + " filler text padding to one hundred columns of width filler text filler text filler\r\n";
+	harness.scriptedOutput = output;
+	const auto runtime = SharedRuntime(harness);
+	auto dependencies = harness.Dependencies();
+	dependencies.runtimeService = runtime;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(std::move(dependencies));
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 800, 400 }, 96);
+	tool.Activate();
+	PumpToolMessages(tool.GetHwnd());
+	ASSERT_EQ(1u, tool.TabCount());
+	const auto tabId = *tool.ActiveTerminalId();
+	auto* pane = tool.RendererForTab(tabId);
+	ASSERT_NE(nullptr, pane);
+	ASSERT_TRUE(WaitUntil([&] {
+		PumpToolMessages(tool.GetHwnd());
+		return pane->Model() && pane->Model()->ScrollbackSize() > 0;
+	}, 2000ms));
+	const auto panes = VisiblePaneWindows(tool);
+	ASSERT_EQ(1u, panes.size());
+	for( int wheel = 0; wheel < 6; ++wheel )
+		::SendMessageW(panes[0], WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+	const auto before = pane->GetViewportDiagnostic();
+	ASSERT_GT(before.scrollOffset, 0u);
+	const auto topText = PaneTopText(*pane);
+	ASSERT_FALSE(topText.empty());
+	// Select inside the scrolled viewport: the points sit in scrollback space.
+	::SendMessageW(panes[0], WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(8, 40));
+	::SendMessageW(panes[0], WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(240, 80));
+	::SendMessageW(panes[0], WM_LBUTTONUP, 0, MAKELPARAM(240, 80));
+	ASSERT_TRUE(pane->HasSelection());
+	const auto selected = pane->SelectedText();
+	ASSERT_FALSE(selected.empty());
+
+	// A rows-only shrink through the tool's real relayout path.
+	tool.Layout(RECT{ 0, 0, 800, 200 }, 96);
+	PumpToolMessages(tool.GetHwnd());
+	const auto after = PaneTopText(*pane);
+	ASSERT_FALSE(after.empty());
+	EXPECT_EQ(topText, after);
+	EXPECT_EQ(selected, pane->SelectedText());
+	tool.Close();
+	runtime->BeginClose();
+	::DestroyWindow(parent);
+}
+
+// T1 / D1(a): a column reflow through the tool's real relayout path must
+// keep the scrolled pane's top text and its selection text.
+TEST(TerminalTool, PaneColumnReflowKeepsTheScrolledTopAndSelection)
+{
+	ToolHarness harness;
+	std::string output;
+	for( int line = 0; line < 80; ++line )
+		output += "L" + std::to_string(line) + " filler text padding to one hundred columns of width filler text filler text filler\r\n";
+	harness.scriptedOutput = output;
+	const auto runtime = SharedRuntime(harness);
+	auto dependencies = harness.Dependencies();
+	dependencies.runtimeService = runtime;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(std::move(dependencies));
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 800, 400 }, 96);
+	tool.Activate();
+	PumpToolMessages(tool.GetHwnd());
+	ASSERT_EQ(1u, tool.TabCount());
+	const auto tabId = *tool.ActiveTerminalId();
+	auto* pane = tool.RendererForTab(tabId);
+	ASSERT_NE(nullptr, pane);
+	ASSERT_TRUE(WaitUntil([&] {
+		PumpToolMessages(tool.GetHwnd());
+		return pane->Model() && pane->Model()->ScrollbackSize() > 0;
+	}, 2000ms));
+	const auto panes = VisiblePaneWindows(tool);
+	ASSERT_EQ(1u, panes.size());
+	for( int wheel = 0; wheel < 6; ++wheel )
+		::SendMessageW(panes[0], WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+	ASSERT_GT(pane->GetViewportDiagnostic().scrollOffset, 0u);
+	const auto topText = PaneTopText(*pane);
+	ASSERT_FALSE(topText.empty());
+	::SendMessageW(panes[0], WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(8, 40));
+	::SendMessageW(panes[0], WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(240, 80));
+	::SendMessageW(panes[0], WM_LBUTTONUP, 0, MAKELPARAM(240, 80));
+	ASSERT_TRUE(pane->HasSelection());
+	const auto selected = pane->SelectedText();
+	ASSERT_FALSE(selected.empty());
+
+	// Halve the client width: a column reflow through ResizeTab.
+	tool.Layout(RECT{ 0, 0, 400, 400 }, 96);
+	PumpToolMessages(tool.GetHwnd());
+	const auto after = PaneTopText(*pane);
+	ASSERT_FALSE(after.empty());
+	EXPECT_EQ(topText.substr(0, after.size()), after);
+	EXPECT_EQ(selected, pane->SelectedText());
+	tool.Close();
+	runtime->BeginClose();
+	::DestroyWindow(parent);
+}
+
+// T1b / D1(b): a runtime `Resize` whose change is drained once and applied
+// to the pane must keep the same scrolled top text.
+TEST(TerminalTool, RuntimeResizeDrainsIntoThePaneAndAnchors)
+{
+	ToolHarness harness;
+	std::string output;
+	for( int line = 0; line < 80; ++line )
+		output += "L" + std::to_string(line) + " filler text padding to one hundred columns of width filler text filler text filler\r\n";
+	harness.scriptedOutput = output;
+	const auto runtime = SharedRuntime(harness);
+	auto dependencies = harness.Dependencies();
+	dependencies.runtimeService = runtime;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(std::move(dependencies));
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 800, 400 }, 96);
+	tool.Activate();
+	PumpToolMessages(tool.GetHwnd());
+	ASSERT_EQ(1u, tool.TabCount());
+	const auto tabId = *tool.ActiveTerminalId();
+	auto* pane = tool.RendererForTab(tabId);
+	ASSERT_NE(nullptr, pane);
+	const auto instanceId = tool.TerminalProjectionSnapshot().front().instanceId;
+	ASSERT_TRUE(instanceId.IsValid());
+	ASSERT_TRUE(WaitUntil([&] {
+		PumpToolMessages(tool.GetHwnd());
+		return pane->Model() && pane->Model()->ScrollbackSize() > 0;
+	}, 2000ms));
+	const auto panes = VisiblePaneWindows(tool);
+	ASSERT_EQ(1u, panes.size());
+	for( int wheel = 0; wheel < 6; ++wheel )
+		::SendMessageW(panes[0], WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+	ASSERT_GT(pane->GetViewportDiagnostic().scrollOffset, 0u);
+	const auto topText = PaneTopText(*pane);
+	ASSERT_FALSE(topText.empty());
+
+	// A column reflow through the runtime path, drained once and applied
+	// as the pane sink does.
+	const auto instance = runtime->Instance(instanceId);
+	ASSERT_TRUE(instance != nullptr);
+	terminal::TerminalResizeRequest resize;
+	resize.operationId = MakeOperation(7);
+	resize.target = instance->Snapshot().coordinate;
+	resize.size = { static_cast<std::uint16_t>(pane->Model()->Columns() / 2),
+		static_cast<std::uint16_t>(pane->Model()->RowCount()) };
+	ASSERT_EQ(terminal::TerminalRuntimeOperationCode::Succeeded, runtime->Resize(resize).code);
+	const auto drained = runtime->DrainOutput(instanceId);
+	pane->ApplyScrollbackChange(drained.scrollbackChange);
+	const auto after = PaneTopText(*pane);
+	ASSERT_FALSE(after.empty());
+	EXPECT_EQ(topText.substr(0, after.size()), after);
+	tool.Close();
+	runtime->BeginClose();
+	::DestroyWindow(parent);
+}
+
+// T1c / D1(c): two resizes plus output drained at once must apply each
+// renumbering and each append exactly once, in order.
+TEST(TerminalTool, OrderedResizesAndOutputApplyEachStepInOrder)
+{
+	ToolHarness harness;
+	std::string output;
+	for( int line = 0; line < 80; ++line )
+		output += "L" + std::to_string(line) + " filler text padding to one hundred columns of width filler text filler text filler\r\n";
+	harness.scriptedOutput = output;
+	const auto runtime = SharedRuntime(harness);
+	auto dependencies = harness.Dependencies();
+	dependencies.runtimeService = runtime;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(std::move(dependencies));
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 800, 400 }, 96);
+	tool.Activate();
+	PumpToolMessages(tool.GetHwnd());
+	ASSERT_EQ(1u, tool.TabCount());
+	const auto tabId = *tool.ActiveTerminalId();
+	auto* pane = tool.RendererForTab(tabId);
+	ASSERT_NE(nullptr, pane);
+	const auto instanceId = tool.TerminalProjectionSnapshot().front().instanceId;
+	ASSERT_TRUE(instanceId.IsValid());
+	ASSERT_TRUE(WaitUntil([&] {
+		PumpToolMessages(tool.GetHwnd());
+		return pane->Model() && pane->Model()->ScrollbackSize() > 0;
+	}, 2000ms));
+	const auto panes = VisiblePaneWindows(tool);
+	ASSERT_EQ(1u, panes.size());
+	for( int wheel = 0; wheel < 6; ++wheel )
+		::SendMessageW(panes[0], WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+	ASSERT_GT(pane->GetViewportDiagnostic().scrollOffset, 0u);
+	const auto topText = PaneTopText(*pane);
+	ASSERT_FALSE(topText.empty());
+
+	// Two column resizes plus output before a single drain.
+	const auto instance = runtime->Instance(instanceId);
+	ASSERT_TRUE(instance != nullptr);
+	const auto columns = pane->Model()->Columns();
+	const auto rows = pane->Model()->RowCount();
+	terminal::TerminalResizeRequest first;
+	first.operationId = MakeOperation(8);
+	first.target = instance->Snapshot().coordinate;
+	first.size = { static_cast<std::uint16_t>(columns / 2), static_cast<std::uint16_t>(rows) };
+	ASSERT_EQ(terminal::TerminalRuntimeOperationCode::Succeeded, runtime->Resize(first).code);
+	terminal::TerminalResizeRequest second;
+	second.operationId = MakeOperation(9);
+	second.target = instance->Snapshot().coordinate;
+	second.size = { static_cast<std::uint16_t>(columns / 4), static_cast<std::uint16_t>(rows) };
+	ASSERT_EQ(terminal::TerminalRuntimeOperationCode::Succeeded, runtime->Resize(second).code);
+	// More output lands between the resize and the drain.
+	auto* model = runtime->Model(instanceId);
+	ASSERT_NE(nullptr, model);
+	ModelPrint(*model, U"post-resize output line\r\n");
+	const auto drained = runtime->DrainOutput(instanceId);
+	pane->ApplyScrollbackChange(drained.scrollbackChange);
+	const auto after = PaneTopText(*pane);
+	ASSERT_FALSE(after.empty());
+	EXPECT_EQ(topText.substr(0, after.size()), after);
+	tool.Close();
+	runtime->BeginClose();
+	::DestroyWindow(parent);
+}
+
+// Phase 18 item 4: a layout change altering rows AND columns at once,
+// driven through the real `CTerminalTool -> ResizeTab -> instance ->
+// sink` path, must keep the scrolled pane's top text and its selection
+// text (D7's anchor must not read the new row count).
+TEST(TerminalTool, PaneRowsAndColumnsShrinkKeepsTheScrolledTopAndSelection)
+{
+	ToolHarness harness;
+	std::string output;
+	for( int line = 0; line < 80; ++line )
+		output += "L" + std::to_string(line) + " filler text padding to one hundred columns of width filler text filler text filler\r\n";
+	harness.scriptedOutput = output;
+	const auto runtime = SharedRuntime(harness);
+	auto dependencies = harness.Dependencies();
+	dependencies.runtimeService = runtime;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(std::move(dependencies));
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 800, 400 }, 96);
+	tool.Activate();
+	PumpToolMessages(tool.GetHwnd());
+	ASSERT_EQ(1u, tool.TabCount());
+	const auto tabId = *tool.ActiveTerminalId();
+	auto* pane = tool.RendererForTab(tabId);
+	ASSERT_NE(nullptr, pane);
+	ASSERT_TRUE(WaitUntil([&] {
+		PumpToolMessages(tool.GetHwnd());
+		return pane->Model() && pane->Model()->ScrollbackSize() > 0;
+	}, 2000ms));
+	const auto panes = VisiblePaneWindows(tool);
+	ASSERT_EQ(1u, panes.size());
+	for( int wheel = 0; wheel < 6; ++wheel )
+		::SendMessageW(panes[0], WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), 0);
+	ASSERT_GT(pane->GetViewportDiagnostic().scrollOffset, 0u);
+	const auto topText = PaneTopText(*pane);
+	ASSERT_FALSE(topText.empty());
+	::SendMessageW(panes[0], WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(8, 40));
+	::SendMessageW(panes[0], WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(240, 80));
+	::SendMessageW(panes[0], WM_LBUTTONUP, 0, MAKELPARAM(240, 80));
+	ASSERT_TRUE(pane->HasSelection());
+	const auto selected = pane->SelectedText();
+	ASSERT_FALSE(selected.empty());
+
+	// Halve width AND height: rows and columns change in one relayout.
+	tool.Layout(RECT{ 0, 0, 400, 200 }, 96);
+	PumpToolMessages(tool.GetHwnd());
+	const auto after = PaneTopText(*pane);
+	ASSERT_FALSE(after.empty());
+	EXPECT_EQ(topText.substr(0, after.size()), after);
+	EXPECT_EQ(selected, pane->SelectedText());
+	tool.Close();
+	runtime->BeginClose();
 	::DestroyWindow(parent);
 }
 

@@ -558,6 +558,7 @@
     <ClInclude Include="..\sakura_core\terminal\input\SakuraTerminalInputAdapter.h" />
     <ClInclude Include="..\sakura_core\terminal\input\TerminalShortcutPreset.h" />
     <ClInclude Include="..\sakura_core\terminal\model\TerminalModel.h" />
+    <ClInclude Include="..\sakura_core\terminal\model\TerminalReflow.h" />
     <ClInclude Include="..\sakura_core\terminal\unicode\TerminalGraphemeWidth.h" />
     <ClInclude Include="..\sakura_core\terminal\vendor\windows_terminal\src\types\inc\CodepointWidthDetector.hpp" />
     <ClInclude Include="..\sakura_core\terminal\vendor\windows_terminal\src\types\precomp.h" />
@@ -1334,6 +1335,7 @@
     <ClCompile Include="..\sakura_core\terminal\input\SakuraTerminalInputAdapter.cpp" />
     <ClCompile Include="..\sakura_core\terminal\input\TerminalShortcutPreset.cpp" />
     <ClCompile Include="..\sakura_core\terminal\model\TerminalModel.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\model\TerminalReflow.cpp" />
     <ClCompile Include="..\sakura_core\terminal\unicode\TerminalGraphemeWidth.cpp" />
     <ClCompile Include="..\sakura_core\terminal\vendor\windows_terminal\src\types\CodepointWidthDetector.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>

@@ -218,6 +218,13 @@ struct TerminalInstanceSnapshot final {
 	std::size_t scrollbackSize{};
 	std::size_t scrollbackLimit{};
 	bool alternateScreen{};
+	//! Model-owned history ordinals and layout epoch: retained scrollback
+	//! row i is ordinal historyEvictedTotal + i + 1 in layoutGeneration's
+	//! coordinate space.  The capture index derives its coordinates from
+	//! these, independent of who consumed the scrollback change.
+	std::uint64_t historyAppendedTotal{};
+	std::uint64_t historyEvictedTotal{};
+	std::uint64_t layoutGeneration{};
 	std::optional<TerminalInstanceOutcome> outcome;
 	//! True once any Interactive input (keys, paste, send-keys, sendText) was
 	//! accepted. Protocol replies the terminal sends by itself do not count.
@@ -299,6 +306,22 @@ struct TerminalInstanceDependencies final {
 	TerminalTargetCoordinate coordinateBase;
 };
 
+//! The capture-index view of one resize.  The model's scrollback change is
+//! NOT consumed at resize time (the pane's sink and the next drain both
+//! apply it); the index only needs the ordinals and layout epoch taken
+//! under the model lock, replayed through the drain at the resize's own
+//! revision so the index records it in content-revision order.
+struct TerminalPendingResizeRecord final {
+	TerminalContentRevision revision;
+	std::uint64_t historyAppendedTotal{};
+	std::uint64_t historyEvictedTotal{};
+	std::uint64_t layoutGeneration{};
+	//! Set on the oldest retained record when the bounded pending list
+	//! dropped earlier records: the index resyncs instead of guessing
+	//! across layouts it never saw.
+	bool droppedPriorRecords{};
+};
+
 struct TerminalInstanceDrainResult final {
 	bool found{};
 	bool sessionRunning{};
@@ -314,6 +337,13 @@ struct TerminalInstanceDrainResult final {
 	TerminalScrollbackChange scrollbackChange;
 	std::vector<std::size_t> dirtyRows;
 	TerminalContentRevision contentRevision;
+	//! Resize-time scrollback changes waiting for this drain, in the order
+	//! their revisions were allocated.
+	std::vector<TerminalPendingResizeRecord> resizeRecords;
+	//! Model-owned lifetime history totals and layout epoch at drain time.
+	std::uint64_t historyAppendedTotal{};
+	std::uint64_t historyEvictedTotal{};
+	std::uint64_t layoutGeneration{};
 	//! Latest OSC 52 clipboard write decoded during this drain.
 	std::optional<std::wstring> clipboardWrite;
 };

@@ -1827,6 +1827,9 @@
     <ClInclude Include="..\sakura_core\terminal\model\TerminalModel.h">
       <Filter>Cpp Source Files\terminal</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\model\TerminalReflow.h">
+      <Filter>Cpp Source Files\terminal</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\terminal\unicode\TerminalGraphemeWidth.h">
       <Filter>Cpp Source Files\terminal</Filter>
     </ClInclude>
@@ -3940,6 +3943,9 @@
       <Filter>Cpp Source Files\terminal</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\model\TerminalModel.cpp">
+      <Filter>Cpp Source Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\model\TerminalReflow.cpp">
       <Filter>Cpp Source Files\terminal</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\unicode\TerminalGraphemeWidth.cpp">

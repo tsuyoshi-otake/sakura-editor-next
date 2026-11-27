@@ -6,6 +6,7 @@
 */
 #include "StdAfx.h"
 #include "terminal/window/TerminalRenderMapping.h"
+#include "terminal/model/TerminalReflow.h"
 
 #include <algorithm>
 #include <limits>
@@ -165,7 +166,11 @@ std::wstring ExtractTerminalSelection( const TerminalModel& model, TerminalSelec
 		const auto* row = GetTerminalRow(model, rowIndex);
 		if( row == nullptr ) break;
 		const auto begin = rowIndex == anchor.row ? std::min(anchor.column, row->cells.size()) : 0;
-		const auto end = rowIndex == active.row ? std::min(active.column, row->cells.size()) : row->cells.size();
+		// A wrapped row contributes up to its last written cell (R5): the
+		// written space at a wrap point is kept, while the unwritten gap a
+		// wide cell or a short boundary row leaves adds nothing.
+		const auto end = rowIndex == active.row ? std::min(active.column, row->cells.size())
+			: (row->wrapped ? TerminalRowWrittenEnd(*row) : row->cells.size());
 		std::wstring line;
 		for( auto column = begin; column < end; ++column ) {
 			const auto& cell = row->cells[column];
@@ -179,7 +184,7 @@ std::wstring ExtractTerminalSelection( const TerminalModel& model, TerminalSelec
 			if( cell.length == 0 ) line.push_back(L' ');
 			else line.append(cell.Text());
 		}
-		if( rowIndex != active.row ) {
+		if( rowIndex != active.row && !row->wrapped ) {
 			while( !line.empty() && line.back() == L' ' ) line.pop_back();
 		}
 		result += line;

@@ -666,6 +666,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalModelTest.cpp">
       <Filter>Test Files\terminal</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalReflowTest.cpp">
+      <Filter>Test Files\terminal</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalUnicodeTest.cpp">
       <Filter>Test Files\terminal</Filter>
     </ClCompile>
@@ -697,6 +700,9 @@
       <Filter>Test Files\terminal\runtime</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\runtime\TerminalRuntimeServiceTest.cpp">
+      <Filter>Test Files\terminal\runtime</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\runtime\TerminalReflowCaptureTest.cpp">
       <Filter>Test Files\terminal\runtime</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\tmux\TmuxCompatibilityTest.cpp">
@@ -772,6 +778,9 @@
 	  <Filter>Test Files\terminal\window</Filter>
 	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalLinkTest.cpp">
+      <Filter>Test Files\terminal\window</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalReflowPaneTest.cpp">
       <Filter>Test Files\terminal\window</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalWheelInputTest.cpp">

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -74,26 +75,62 @@ struct TerminalRow {
 	const TerminalAttributes& AttributesAt( std::size_t column ) const noexcept;
 };
 
+struct TerminalReflowLayout;
+
 //! One UI-thread-owned mutation of the main-screen scrollback coordinate space.
 //! Appended rows advance an anchored viewport away from the live bottom, while
 //! evicted rows shift every surviving global history coordinate toward zero.
+//! A column reflow renumbers retained rows entirely and carries the layout map.
+//! The change is an ORDERED list of steps: scrollback-count deltas accumulate
+//! into one step until a reflow step is pushed, then a fresh counts step
+//! starts.  Several resizes between two consumes therefore apply each
+//! renumbering exactly once and in order instead of merging into one.
 struct TerminalScrollbackChange final {
 public:
+	//! Either scrollback-count deltas (reflow == nullptr) or one column
+	//! reflow's layout map covering the pre-resize global coordinate space
+	//! (that step's old scrollback + old screen).
+	struct Step final {
+		std::size_t appended{};
+		std::size_t evicted{};
+		bool cleared{};
+		std::shared_ptr<const TerminalReflowLayout> reflow;
+
+		[[nodiscard]] bool IsReflow() const noexcept { return reflow != nullptr; }
+	};
+
+	//! The ordered steps; a consumer applies every one in order.
+	[[nodiscard]] const std::vector<Step>& Steps() const noexcept { return m_steps; }
+	[[nodiscard]] bool Changed() const noexcept { return !m_steps.empty(); }
+	//! Aggregates across every counts step (a reflow step's renumbering
+	//! lives in its layout, not in these totals).
 	[[nodiscard]] std::size_t Appended() const noexcept;
 	[[nodiscard]] std::size_t Evicted() const noexcept;
 	[[nodiscard]] bool Cleared() const noexcept;
-	[[nodiscard]] bool Changed() const noexcept;
+	//! The newest reflow step's layout, when the change holds one.
+	[[nodiscard]] std::shared_ptr<const TerminalReflowLayout> Reflow() const noexcept;
 
 private:
 	friend class TerminalModel;
 
-	void RecordAppended() noexcept { ++m_appended; }
-	void RecordEvicted( std::size_t count = 1 ) noexcept { m_evicted += count; }
-	void MarkCleared() noexcept { m_cleared = true; }
+	void RecordAppended() noexcept { ++Counts().appended; }
+	void RecordEvicted( std::size_t count = 1 ) noexcept
+	{
+		if( count == 0 ) return;
+		Counts().evicted += count;
+	}
+	void MarkCleared() noexcept { Counts().cleared = true; }
+	void SetReflow( std::shared_ptr<const TerminalReflowLayout> layout ) noexcept
+	{
+		m_steps.push_back({ .reflow = std::move(layout) });
+	}
+	Step& Counts() noexcept
+	{
+		if( m_steps.empty() || m_steps.back().IsReflow() ) m_steps.push_back({});
+		return m_steps.back();
+	}
 
-	std::size_t m_appended{};
-	std::size_t m_evicted{};
-	bool m_cleared{};
+	std::vector<Step> m_steps;
 };
 
 class TerminalRowView final {
@@ -175,7 +212,9 @@ public:
 	void InsertLines( std::size_t count );
 	void DeleteLines( std::size_t count );
 	void SetScrollRegion( std::size_t top, std::size_t bottom );
-	void ScrollUp( std::size_t lines );
+	//! An explicit scroll (CSI S) clears the rotated seams; the autowrap
+	//! path passes keepsAutowrapLeader so the flag it just set survives.
+	void ScrollUp( std::size_t lines, bool keepsAutowrapLeader = false );
 	void ScrollDown( std::size_t lines );
 	void ReverseIndex();
 	void SetAlternateScreen( bool enabled );
@@ -207,9 +246,24 @@ public:
 	//! Consumers compare generations around parser drains so a completed frame is
 	//! not lost when the same drain immediately begins the next frame.
 	std::uint64_t SynchronizedOutputCommitGeneration() const noexcept { return m_synchronizedOutputCommitGeneration; }
+	//! Advances on every column reflow: retained history/screen rows were
+	//! renumbered, so every older capture coordinate is stale.
+	std::uint64_t LayoutGeneration() const noexcept { return m_layoutGeneration; }
+	//! Monotonic history ordinals owned by the model, independent of who
+	//! consumed TerminalScrollbackChange.  Retained scrollback row i is
+	//! ordinal HistoryEvictedTotal() + i + 1.  A column reflow retires
+	//! every old ordinal (evicted becomes the old appended total, appended
+	//! becomes evicted + retained rows), so both totals stay monotonic
+	//! across renumbering.
+	std::uint64_t HistoryAppendedTotal() const noexcept { return m_historyAppendedTotal; }
+	std::uint64_t HistoryEvictedTotal() const noexcept { return m_historyEvictedTotal; }
 	TerminalRowView Rows() const noexcept { return { m_rows, m_rowsHead }; }
 	TerminalScrollbackView Scrollback() const noexcept { return { m_scrollback, m_scrollbackHead }; }
 	std::vector<std::size_t> ConsumeDirtyRows();
+	//! Whether an unconsumed scrollback change is pending (peek without
+	//! consuming: a resize must know if it produced one while leaving it
+	//! for the pane and the drain).
+	[[nodiscard]] bool HasPendingScrollbackChange() const noexcept { return m_pendingScrollbackChange.Changed(); }
 	TerminalScrollbackChange ConsumeScrollbackChange() noexcept;
 
 private:
@@ -227,7 +281,13 @@ private:
 	void RepairWideCells( TerminalRow& row );
 	void MarkDirty( std::size_t row ) noexcept;
 	void MarkDirtyRange( std::size_t top, std::size_t bottom ) noexcept;
-	void LineFeed();
+	//! The "previous row" of screen row `row`: row - 1, or the newest
+	//! history row when `row` is 0 on the main screen (none exists on the
+	//! alternate screen).  Clears its `wrapped` flag.
+	void ClearPreviousRowFlag( std::size_t row ) noexcept;
+	//! keepsAutowrapLeader: the autowrap path set the leader flag itself;
+	//! an explicit LF clears it before calling and keeps the seam clears.
+	void LineFeed( bool keepsAutowrapLeader = false );
 	void ReverseLineFeed();
 	void CarriageReturn() noexcept { m_cursorColumn = 0; }
 	void AppendCodepoint( TerminalCell& cell, char32_t codepoint ) noexcept;
@@ -264,6 +324,9 @@ private:
 	TerminalAttributes m_savedMainAttributes;
 	TerminalModes m_modes;
 	std::uint64_t m_synchronizedOutputCommitGeneration{};
+	std::uint64_t m_layoutGeneration{};
+	std::uint64_t m_historyAppendedTotal{};
+	std::uint64_t m_historyEvictedTotal{};
 	std::wstring m_title;
 	std::optional<std::wstring> m_pendingClipboardWrite;
 	bool m_alternateScreen{};

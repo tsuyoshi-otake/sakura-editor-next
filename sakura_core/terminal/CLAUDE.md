@@ -1090,8 +1090,9 @@ at commit 991857a1b; VS Code consumes it as `@xterm/xterm`):
 Not changed by #374:
 
 - The session still starts at 120x30 before the Panel is measured.
-- There is no reflow on a column change. For a Windows PTY, xterm.js enables
-  reflow only for ConPTY builds 21376 and later.
+- A column change truncated/padded cells with no reflow; #445 step 2 added
+  reflow (see "Column reflow keeps history and screen apart"). For a Windows
+  PTY, xterm.js enables reflow only for ConPTY builds 21376 and later.
 - `ScrollUp` does not move the saved cursor the way xterm.js's absolute `savedY`
   does. This divergence predates #374.
 
@@ -1468,3 +1469,170 @@ Verified 2026-11-27 on x64 Debug:
   moved from LINE-001..010 to LINE-004..013, vim's cursor moved from `1,1`
   to `4,1` with the view still at `Top`, and the main screen scrolled into
   scrollback and back to the same view.
+
+## Column reflow keeps history and screen apart (#445 step 2)
+
+On a column change `TerminalModel::Resize` now reflows.
+`terminal/model/TerminalReflow.{h,cpp}` holds the layout engine; the
+model drives it and owns the `wrapped` lifecycle.
+
+Why a separate reflow per buffer: the inbox ConPTY repaints the whole
+screen after every resize (`ConPtyTerminalBackend.cpp` creates the PTY
+with flag 0, not the bundled conpty.dll). xterm.js reflows ONE buffer
+[history + screen] and lets a widen pull history rows back on screen
+(`Buffer.ts` `_reflowLargerAdjustViewport`, `ybase--`). Here the repaint
+then overwrites those rows, deleting history. Two replays through the
+real parser + model verify the split, each counted with a strict marker
+counter (each marker intact only when it exists exactly once, every
+extra copy counted separately). A synthetic ConPTY repaint of 60 marker
+lines over 3 narrow/widen cycles keeps all 60 markers intact with no
+damaged, gone, glued, or extra copies. A real inbox-ConPTY capture
+(cmd.exe, 60 long echoed lines and a partly typed command, resized
+120 -> 40 -> 120 columns, repainting the screen each time) also keeps
+all 60 markers intact exactly once; the only unattributed lines are the
+two `CDEF...END` marker-tail fragments ConPTY itself re-emitted at the
+top of each repaint. The real-capture replay was a one-off check: the
+captured bytes contain local paths, so neither they nor the replay test
+are in the suite.
+
+Rules:
+
+- **Two independent reflows.** History reflows alone, the screen reflows
+  alone; a logical line is a run of rows joined by `wrapped`. History rows
+  NEVER move back to the screen, also not on widening - the "growth
+  appends blank rows" rule of #374 still holds. If the newest history
+  line continues on screen row 0, its last output row stays `wrapped`
+  even when shorter than the width. On screen, that one line then stays
+  split at the old wrap point after a widen. Seen on a real window:
+  after a later narrow had moved its screen part into history, the next
+  widen showed it as one line again. After the screen reflow the #374
+  height rule applies (drop below the cursor first, then top rows to
+  history, blank pad at the bottom). Rows+columns changes take the same
+  path; rows-only changes keep #374 behaviour. Cells move with their
+  attributes; a width-2 grapheme is never split (a non-fitting wide cell
+  starts the next row, the gap stays unwritten, and at 1 column the cell
+  terminates as `Print` clamps it). A one-row line that still fits keeps
+  cells and attributes exactly; new padding has default attributes. The
+  scrollback limit is enforced after the reflow.
+- **`wrapped` lifecycle.** The autowrap path in `Print` sets it, and a
+  reflow sets it on every output row it splits a logical line over
+  (leader-side polarity: our `wrapped` on row N is xterm's `isWrapped` on
+  row N+1). Explicit LF/VT/FF clears the flag of the row being left
+  (`InputHandler.ts` `lineFeed` @ `da9919caf` clears the moved-into row);
+  EL 0 at column 0 and EL 2 clear the previous row's flag (EL 1 does
+  nothing); ED clears leaders over the erased range including the last
+  row, per xterm.js `eraseInDisplay`/`_resetBufferLine`. Fork rule beyond
+  xterm.js (R2(d)):
+  an operation that changes which row follows row P clears P's flag - IL,
+  DL, RI at the region top, CSI T / CSI S / partial-region scrolls, and a
+  resize that drops rows. Exempt: the autowrap path and the full-screen
+  scroll into history (adjacency does not change).
+- **Join rule (R5).** The model owns one rule for rows with
+  `wrapped == true`: a wrapped row contributes cells up to its last
+  written cell; a written space counts, unwritten/erased cells after it
+  do not, a wide cell includes its continuation. Reflow applies it per
+  row: every row of a logical line except the last contributes up to its
+  written end, while the last contributes up to its content end - except
+  that the last history row of a line continuing onto screen row 0 is
+  wrapped too, so it contributes up to its written end as well.
+  Selection copy, `capture-pane -J`, and link detection share it. Copy
+  keeps written spaces at a wrap point now ("hello " + "world" used to
+  copy as "helloworld"). Rows with `wrapped == false` behave as before
+  in every consumer.
+- **Positions follow text (R3).** The cursor, the DECSC saved cursor,
+  and the saved main cursor + saved DECSC while the alternate screen is
+  shown all map by the cell offset inside their logical line. A column
+  inside a row's unwritten tail counts no stream cells: it maps to the
+  boundary at the end of that row's stream piece, never into a later
+  row's text. A half-open boundary (a selection end may sit at
+  column == columns) maps to a boundary after the same cell; a cell
+  position past the content keeps its distance past the content on the
+  line's last output row, clamped to columns - 1; a position whose row
+  moves into history clamps
+  as #374 does. The cursor line is reflowed so its text survives
+  without relying on ConPTY repainting it - a divergence: VS Code sets
+  `reflowCursorLine` only for the bundled conpty.dll
+  (`terminalInstance.ts` L925, `windowsUseConptyDll` defaults true @
+  `b0c938524`), so upstream on the inbox ConPTY keeps the cursor's row
+  out of the reflow.
+- **Alternate screen and limit 0.** The alternate screen is not reflowed
+  (the pre-existing truncate/pad + #374 rule, matching `BufferSet.ts`
+  L47 creating the alternate buffer as `new Buffer(false, ...)` -
+  `Buffer.ts` L315-321 gates the reflow on that constructor flag). While
+  it is shown, history and the saved
+  main screen still reflow apart. With limit 0 there is no history; the
+  screen is still reflowed (xterm.js gates on the buffer flag set at
+  construction, not the count - `Buffer.ts` L315-321) and rows that
+  leave the top are discarded.
+- **Pane (R6).** `TerminalScrollbackChange` is an ordered step list:
+  scrollback-count deltas accumulate into counts steps and each column
+  reflow pushes a `TerminalReflowLayout` step mapping each retained
+  pre-reflow row to its new row + column for a given cell offset.
+  `CTerminalWnd` applies every step in order: a counts step moves the
+  anchor by its appended rows and shifts the selection by its evicted
+  rows; a reflow step renumbers the scrolled top row and the selection
+  origin/anchor/active through the layout (the same text stays at the
+  top, the same cells stay selected; a fully evicted selection clears),
+  keeps a live-bottom pane at offset 0, cancels the link gesture, and
+  repaints fully. A selection endpoint whose row left the retained set
+  clamps to the end of the retained content. Under the alternate screen
+  the layout describes the saved main screen: the offset still remaps
+  through it, and the selection is reset rather than left at stale
+  main-buffer rows. Divergence: xterm.js only clears the selection on a
+  rows change (`SelectionService.ts` L156-162); the published map keeps
+  ours valid.
+- **Capture coordinates (R7).** The index no longer derives history
+  ordinals from who consumed `TerminalScrollbackChange`. The model owns
+  monotonic `HistoryAppendedTotal()` / `HistoryEvictedTotal()`;
+  retained scrollback row i is ordinal `HistoryEvictedTotal() + i + 1`.
+  A column reflow retires every old ordinal (evicted becomes the old
+  appended total, appended becomes evicted + retained rows), so both
+  counters stay monotonic across renumbering.
+  `TerminalInstance::Resize` leaves the resize's change for the pane and
+  the drain, and queues a slim `TerminalPendingResizeRecord` (revision,
+  the two history totals, the layout generation) for the next
+  `DrainOutput`, so the index records rows pushed into history even
+  though `CTerminalTool`/`TerminalTabManager` consume the change too.
+  The pending list is bounded at 8; past the cap the oldest record is
+  dropped and the oldest retained record marks `droppedPriorRecords`,
+  which the index answers with a resync.
+  `LayoutGeneration()` bumps on a column reflow - the one change that
+  renumbers retained rows - and `RecordCaptureChange` answers it with a
+  `TerminalCaptureIndex::ResetScreen` screen-epoch restart, so every
+  cursor from an older layout is rejected with resync, including a
+  capture made between the resize and the next drain. Rows-only shrinks,
+  limit changes and ED 3 keep the same ordinal space (appends get fresh
+  ordinals, evictions advance the base), which is also why
+  `TerminalTabManager::SetScrollbackLimit` consuming the change no longer
+  desynchronizes the index.
+
+Not covered: double-click word selection still does not cross wrapped
+rows, and VS Code's runtime behaviour under a real resize was not
+observed (all upstream claims are from source reads).
+
+Verified 2026-11-28 on x64 Debug:
+
+- The change adds 59 tests across `TerminalReflow` (43),
+  `TerminalReflowCapture` (3), `TerminalReflowPane` (8) and
+  `TerminalTool` (5). The full `*Terminal*:Tmux*:*Capture*` filter
+  passes 729/731; the only skips are two pre-existing unrelated ones.
+- Mutation proofs: reflowing history and the screen as one buffer makes
+  the strict replay counter report damage (intact=0, damaged=12,
+  gone=48, extra=12); making the pane's reflow anchor read the new row
+  count moves the scrolled top row (temporary mutation, restored); and
+  targeted mutations showed three otherwise-weak checks are real
+  behavioural probes (capture join written-end, pane selection remap,
+  reflow dropping a history row).
+- The reflow is linear in retained cells with no resize coalescing.
+  Measured one `Resize` with 100000 history rows: 120 -> 80 columns took
+  10098 ms on x64 Debug and 2123 ms on x64 Release; 80 -> 120 took
+  8535 ms Debug / 2105 ms Release.
+- Live, on a throwaway `-PROF=` instance (posted window messages,
+  `PrintWindow` captures): narrowing the pane to 111 columns and widening
+  it past its start width lost and duplicated nothing in 20 numbered
+  150-column lines (the boundary line stayed split, as above); the
+  scrolled top row stayed on the same line across a narrow and a widen;
+  in 10 alternating resizes while scrolled, every difference between a
+  screen capture and `PrintWindow` matched the noise floor (a 4-px strip
+  at the left edge); and less, vim and main-screen wheel scrolling still
+  worked.

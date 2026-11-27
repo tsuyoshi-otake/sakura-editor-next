@@ -141,8 +141,11 @@ struct CTerminalRuntimeService::Impl final : std::enable_shared_from_this<Impl> 
 
 	struct CaptureState final {
 		std::uint64_t screenEpoch{ 1 };
-		std::uint64_t scrollbackBaseOrdinal{ 1 };
-		std::uint64_t nextHistoryOrdinal{ 1 };
+		//! Last reflow layout generation the index recorded; cursors from a
+		//  different generation are stale because reflow renumbered the rows.
+		std::uint64_t layoutEpoch{};
+		std::uint64_t lastHistoryAppendedTotal{};
+		std::uint64_t lastHistoryEvictedTotal{};
 		std::optional<TerminalCaptureIndex> index;
 	};
 
@@ -473,6 +476,58 @@ struct CTerminalRuntimeService::Impl final : std::enable_shared_from_this<Impl> 
 			: TerminalRuntimeCloseWaitStatus::Closed };
 	}
 
+	// Records one change at `revision`.  History ordinals come from the
+	// model's lifetime totals, so rows pushed by a resize and rows evicted
+	// by a limit change reach the index regardless of who consumed the
+	// TerminalScrollbackChange.
+	void RecordCaptureChange(CaptureState& state, const TerminalInstanceId id,
+		const std::shared_ptr<TerminalInstance>& instance,
+		const bool fullInvalidation, const TerminalContentRevision revision,
+		const std::uint64_t layoutGeneration, const std::uint64_t appendedTotal,
+		const std::uint64_t evictedTotal, const std::vector<std::size_t>& dirtyRows)
+	{
+		const auto rebuildIndex = [&]() {
+			state.index.reset();
+			state.index.emplace(runtimeGeneration, id, instance->InstanceGeneration(),
+				state.screenEpoch, revision, evictedTotal + 1);
+		};
+		if (layoutGeneration != state.layoutEpoch) {
+			// A column reflow renumbered retained rows: every cursor from an
+			// older layout is stale, so the index restarts on a new screen
+			// epoch whose ordinals address the new layout.
+			++state.screenEpoch;
+			state.layoutEpoch = layoutGeneration;
+			const auto current = state.index->CurrentCursor().revision;
+			if (revision.value != current.value + 1
+				|| state.index->ResetScreen(state.screenEpoch, evictedTotal + 1)
+					!= ETerminalCaptureIndexRecordCode::Succeeded) {
+				rebuildIndex();
+			}
+			// The epoch marker makes the new retained set the baseline; the
+			// resize's own pushes need no appended range of their own.
+			state.lastHistoryAppendedTotal = appendedTotal;
+			state.lastHistoryEvictedTotal = evictedTotal;
+			return;
+		}
+		TerminalChangeRecord record;
+		record.revision = revision;
+		record.screenEpoch = state.screenEpoch;
+		AppendDirtyRanges(record.dirtyScreenRanges, dirtyRows);
+		const auto appended = appendedTotal - state.lastHistoryAppendedTotal;
+		if (appended != 0) {
+			record.appendedHistoryBeginOrdinal = state.lastHistoryAppendedTotal + 1;
+			record.appendedHistoryEndOrdinal = appendedTotal;
+		}
+		const auto evicted = evictedTotal - state.lastHistoryEvictedTotal;
+		if (evicted != 0) record.evictedThroughOrdinal = evictedTotal;
+		if (fullInvalidation) record.fullInvalidation = true;
+		state.lastHistoryAppendedTotal = appendedTotal;
+		state.lastHistoryEvictedTotal = evictedTotal;
+		if (state.index->Record(std::move(record)) != ETerminalCaptureIndexRecordCode::Succeeded) {
+			rebuildIndex();
+		}
+	}
+
 	void RecordDrain(const TerminalInstanceId id, const TerminalInstanceDrainResult& drain)
 	{
 		if (!drain.found || !drain.contentRevision.IsValid()) return;
@@ -483,41 +538,26 @@ struct CTerminalRuntimeService::Impl final : std::enable_shared_from_this<Impl> 
 		if (capture == captures.end()) return;
 		auto& state = capture->second;
 		if (!state.index) {
+			// The index starts on the current retained set; every append and
+			// eviction at or before this drain is baseline.
+			state.lastHistoryAppendedTotal = drain.historyAppendedTotal;
+			state.lastHistoryEvictedTotal = drain.historyEvictedTotal;
+			state.layoutEpoch = drain.layoutGeneration;
 			state.index.emplace(runtimeGeneration, id, instance->InstanceGeneration(),
-				state.screenEpoch, drain.contentRevision, state.scrollbackBaseOrdinal);
+				state.screenEpoch, drain.contentRevision, drain.historyEvictedTotal + 1);
 			return;
+		}
+		for (const auto& resize : drain.resizeRecords) {
+			static const std::vector<std::size_t> noDirtyRows;
+			RecordCaptureChange(state, id, instance, resize.droppedPriorRecords, resize.revision,
+				resize.layoutGeneration, resize.historyAppendedTotal,
+				resize.historyEvictedTotal, noDirtyRows);
 		}
 		const auto current = state.index->CurrentCursor().revision;
 		if (drain.contentRevision.value <= current.value) return;
-		TerminalChangeRecord change;
-		change.revision = drain.contentRevision;
-		change.screenEpoch = state.screenEpoch;
-		AppendDirtyRanges(change.dirtyScreenRanges, drain.dirtyRows);
-		const auto appended = drain.scrollbackChange.Appended();
-		if (appended != 0) {
-			change.appendedHistoryBeginOrdinal = state.nextHistoryOrdinal;
-			if (appended > (std::numeric_limits<std::uint64_t>::max)() - state.nextHistoryOrdinal) {
-				change.appendedHistoryEndOrdinal = (std::numeric_limits<std::uint64_t>::max)();
-				state.nextHistoryOrdinal = 0;
-			} else {
-				change.appendedHistoryEndOrdinal = state.nextHistoryOrdinal + appended - 1;
-				state.nextHistoryOrdinal += appended;
-			}
-		}
-		const auto evicted = drain.scrollbackChange.Evicted();
-		if (evicted != 0) {
-			const auto last = state.scrollbackBaseOrdinal + evicted - 1;
-			change.evictedThroughOrdinal = last < state.scrollbackBaseOrdinal ?
-				(std::numeric_limits<std::uint64_t>::max)() : last;
-			state.scrollbackBaseOrdinal = last == (std::numeric_limits<std::uint64_t>::max)()
-				? 0 : last + 1;
-		}
-		if (drain.scrollbackChange.Cleared()) change.fullInvalidation = true;
-		if (state.index->Record(std::move(change)) != ETerminalCaptureIndexRecordCode::Succeeded) {
-			state.index.reset();
-			state.index.emplace(runtimeGeneration, id, instance->InstanceGeneration(),
-				state.screenEpoch, drain.contentRevision, state.scrollbackBaseOrdinal);
-		}
+		RecordCaptureChange(state, id, instance, drain.scrollbackChange.Cleared(), drain.contentRevision,
+			drain.layoutGeneration, drain.historyAppendedTotal, drain.historyEvictedTotal,
+			drain.dirtyRows);
 	}
 
 	[[nodiscard]] TerminalCaptureCursor MakeCursor(const TerminalInstanceId id,
@@ -530,7 +570,7 @@ struct CTerminalRuntimeService::Impl final : std::enable_shared_from_this<Impl> 
 		cursor.instanceGeneration = snapshot.coordinate.instanceGeneration;
 		cursor.screenEpoch = state.screenEpoch;
 		cursor.revision = snapshot.contentRevision;
-		cursor.scrollbackBaseOrdinal = state.scrollbackBaseOrdinal;
+		cursor.scrollbackBaseOrdinal = snapshot.historyEvictedTotal + 1;
 		return cursor;
 	}
 };
@@ -832,6 +872,7 @@ TerminalCaptureResult CTerminalRuntimeService::Capture(const TerminalCaptureRequ
 	TerminalInstanceSnapshot snapshot;
 	std::optional<TerminalCaptureDelta> delta;
 	bool hasIndex{};
+	std::uint64_t recordedLayoutEpoch{};
 	TerminalCaptureCursor earliest;
 	TerminalCaptureCursor next;
 	{
@@ -853,6 +894,7 @@ TerminalCaptureResult CTerminalRuntimeService::Capture(const TerminalCaptureRequ
 			return result;
 		}
 		auto& capture = m_impl->captures[request.target.instanceId];
+		recordedLayoutEpoch = capture.layoutEpoch;
 		if (capture.index) {
 			hasIndex = true;
 			earliest = capture.index->EarliestCursor();
@@ -867,7 +909,7 @@ TerminalCaptureResult CTerminalRuntimeService::Capture(const TerminalCaptureRequ
 		result.coordinates.instanceGeneration = instance->InstanceGeneration();
 		result.coordinates.screenEpoch = capture.screenEpoch;
 		result.coordinates.revision = snapshot.contentRevision;
-		result.coordinates.scrollbackBaseOrdinal = capture.scrollbackBaseOrdinal;
+		result.coordinates.scrollbackBaseOrdinal = snapshot.historyEvictedTotal + 1;
 		result.earliestCursor = earliest;
 		result.nextCursor = next;
 	}
@@ -877,6 +919,15 @@ TerminalCaptureResult CTerminalRuntimeService::Capture(const TerminalCaptureRequ
 		if (since.version != 1 || since.runtimeGeneration != m_impl->runtimeGeneration
 			|| since.instanceId != request.target.instanceId
 			|| since.instanceGeneration != result.coordinates.instanceGeneration) {
+			result.code = TerminalCaptureResultCode::StaleCursor;
+			result.gap = true;
+			result.resyncSnapshot = true;
+			return result;
+		}
+		// A column reflow after the last recorded drain renumbered every
+		// retained row, so a cursor taken before it is stale even though the
+		// index has not observed the new layout yet.
+		if (hasIndex && snapshot.layoutGeneration != recordedLayoutEpoch) {
 			result.code = TerminalCaptureResultCode::StaleCursor;
 			result.gap = true;
 			result.resyncSnapshot = true;
@@ -935,9 +986,13 @@ TerminalCaptureResult CTerminalRuntimeService::Capture(const TerminalCaptureRequ
 				return result;
 			}
 			const auto history = static_cast<std::int64_t>(historySize);
+			const auto firstRow = static_cast<std::int64_t>(firstIndex) - history;
 			extraction.selectedRanges->push_back({
-				static_cast<std::int64_t>(firstIndex) - history,
-				static_cast<std::int64_t>(lastIndex) - history });
+				firstRow, static_cast<std::int64_t>(lastIndex) - history });
+			// Appended history lives at negative coordinates; without an
+			// explicit startLine the extraction window must be widened to
+			// reach it, or the appended rows are clamped away.
+			if (!request.startLine) extraction.startLine = firstRow;
 		}
 	}
 	extraction.joinWrappedLines = request.joinWrappedLines;

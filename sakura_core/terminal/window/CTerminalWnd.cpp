@@ -11,6 +11,7 @@
 
 #include "terminal/input/SakuraTerminalInputAdapter.h"
 #include "terminal/model/TerminalModel.h"
+#include "terminal/model/TerminalReflow.h"
 #include "terminal/window/TerminalBuiltinGlyphRenderer.h"
 #include "terminal/window/TerminalClipboardPaste.h"
 #include "terminal/window/TerminalColorResolver.h"
@@ -1302,37 +1303,129 @@ public:
 	{
 		if( model == nullptr || !change.Changed() ) return;
 		CancelLinkGesture();
-		const auto previousOffset = scrollOffset;
 		const auto totalRows = model->ScrollbackSize() + model->RowCount();
-		const auto maximumOffset = totalRows > visibleRows ? totalRows - visibleRows : 0;
-		const auto anchor = UpdateTerminalViewportAnchor(scrollOffset, change.Appended(), maximumOffset);
-		scrollOffset = anchor.scrollOffset;
+		bool needsFullDirty = false;
 
-		if( change.Cleared() && change.Evicted() == 0 ) {
-			ClearSelection();
-		} else if( change.Evicted() != 0 ) {
-			const auto discarded = change.Evicted();
-			if( HasSelection() && std::max(selectionAnchor.row, selectionActive.row) < discarded ) {
-				ClearSelection();
-			} else {
-				const auto adjust = [discarded]( TerminalSelectionPoint& point ) noexcept {
-					if( point.row < discarded ) {
-						point.row = 0;
-						point.column = 0;
-					} else {
-						point.row -= discarded;
-					}
-				};
-				adjust(selectionOrigin);
-				adjust(selectionAnchor);
-				adjust(selectionActive);
+		// D1: the change is an ordered step list.  Each counts step moves the
+		// anchor by its appended rows and shifts the selection by its evicted
+		// rows; each reflow step renumbers every retained row through its own
+		// layout.  Applying them in order matches several resizes before one
+		// consume.  The anchor math needs every step's own scrollback count:
+		// walked backward from the model's current count, a reflow step's old
+		// space is its recorded one and a counts step's is reconstructed.
+		const auto& steps = change.Steps();
+		std::vector<std::size_t> postHistory(steps.size());
+		{
+			auto history = model->ScrollbackSize();
+			for( auto index = steps.size(); index-- > 0; ) {
+				postHistory[index] = history;
+				const auto& step = steps[index];
+				if( step.IsReflow() ) {
+					history = step.reflow->oldHistoryRowCount;
+				} else if( !step.cleared ) {
+					history = history - step.appended + step.evicted;
+				}
 			}
+		}
+		for( std::size_t index = 0; index < steps.size(); ++index ) {
+			const auto& step = steps[index];
+			const auto maximumOffset = postHistory[index];
+			if( const auto& reflow = step.reflow ) {
+				// R6: a column reflow renumbered every retained row, so the
+				// viewport anchor and the selection remap through the layout's
+				// per-cell offsets instead of the append/evict counters.  The
+				// layout's global space is the main screen's scrollback+screen;
+				// on the alternate screen it still describes the saved main
+				// screen, which is the space a preserved scrollOffset restores.
+				// D7: the top row is scrollback-count minus offset; the layout's
+				// own old count is the pre-resize count regardless of when the
+				// new measurement arrived.
+				if( scrollOffset == 0 ) {
+					scrollOffset = 0;
+				} else {
+					const auto oldTop = reflow->oldHistoryRowCount
+						- std::min(scrollOffset, reflow->oldHistoryRowCount);
+					const auto oldTotal = reflow->oldHistoryRowCount + reflow->screen.oldRowCount;
+					std::size_t newTop = 0, mappedColumn = 0;
+					bool mapped = false;
+					for( auto source = oldTop; source < oldTotal; ++source ) {
+						if( reflow->MapPoint(source, 0, model->Columns(), newTop, mappedColumn) ) {
+							mapped = true;
+							break;
+						}
+					}
+					// Everything visible was evicted or lands past the scroll
+					// range: hold the oldest retained row at the top, the same
+					// clamp UpdateTerminalViewportAnchor uses.
+					scrollOffset = !mapped || newTop > maximumOffset ? maximumOffset : maximumOffset - newTop;
+				}
+				if( HasSelection() ) {
+					if( model->IsAlternateScreen() ) {
+						// D9: the reflow described the saved main screen, so a
+						// selection's pre-reflow rows are stale; R6 allows a
+						// reset rather than a stale offset.
+						ClearSelection();
+					} else {
+						bool anyKept = false;
+						// D12: an endpoint whose content is gone clamps to the
+						// end of the retained content; {0,0} stays only for
+						// rows evicted from the front (the counts path's rule).
+						const auto retainedEnd = TerminalSelectionPoint{
+							totalRows == 0 ? 0 : totalRows - 1, model->Columns() };
+						const auto remap = [&]( TerminalSelectionPoint& point ) {
+							std::size_t row = 0, column = 0;
+							if( reflow->MapPoint(point.row, point.column, model->Columns(), row, column, true) ) {
+								point.row = row;
+								point.column = column;
+								anyKept = true;
+							} else if( point.row < reflow->oldHistoryRowCount ) {
+								point = {};
+							} else {
+								point = retainedEnd;
+								anyKept = true;
+							}
+						};
+						remap(selectionOrigin);
+						remap(selectionAnchor);
+						remap(selectionActive);
+						if( !anyKept ) ClearSelection();
+					}
+				}
+				needsFullDirty = true;
+				continue;
+			}
+
+			const auto anchor = UpdateTerminalViewportAnchor(scrollOffset, step.appended, maximumOffset);
+			const auto offsetBefore = scrollOffset;
+			scrollOffset = anchor.scrollOffset;
+
+			if( step.cleared && step.evicted == 0 ) {
+				ClearSelection();
+			} else if( step.evicted != 0 ) {
+				const auto discarded = step.evicted;
+				if( HasSelection() && std::max(selectionAnchor.row, selectionActive.row) < discarded ) {
+					ClearSelection();
+				} else {
+					const auto adjust = [discarded]( TerminalSelectionPoint& point ) noexcept {
+						if( point.row < discarded ) {
+							point.row = 0;
+							point.column = 0;
+						} else {
+							point.row -= discarded;
+						}
+					};
+					adjust(selectionOrigin);
+					adjust(selectionAnchor);
+					adjust(selectionActive);
+				}
+			}
+			if( offsetBefore != 0 || anchor.retainedContentDiscarded ) needsFullDirty = true;
 		}
 
 		UpdateScrollbar();
 		UpdateCaret();
 		if( window == nullptr || !invalidate ) return;
-		if( previousOffset != 0 || anchor.retainedContentDiscarded ) {
+		if( needsFullDirty ) {
 			MarkNativeFullDirty();
 			::InvalidateRect(window, nullptr, FALSE);
 		} else {
@@ -2568,6 +2661,17 @@ TerminalViewportDiagnosticSnapshot CTerminalWnd::GetViewportDiagnostic() const n
 bool CTerminalWnd::HasSelection() const noexcept
 {
 	return m_impl->HasSelection();
+}
+
+std::wstring CTerminalWnd::SelectedText() const
+{
+	if( !m_impl->model || !m_impl->HasSelection() ) return {};
+	return ExtractTerminalSelection(*m_impl->model, m_impl->selectionAnchor, m_impl->selectionActive);
+}
+
+const TerminalModel* CTerminalWnd::Model() const noexcept
+{
+	return m_impl->model;
 }
 
 bool CTerminalWnd::CopySelectionToClipboard()
