@@ -606,6 +606,7 @@
     <ClInclude Include="..\sakura_core\terminal\window\TerminalLink.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalViewportGeometry.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalScrollbarLayout.h" />
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalWheelInput.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalTabManager.h" />
     <ClInclude Include="..\sakura_core\theme\CThemeService.h" />
     <ClInclude Include="..\sakura_core\theme\CColorThemeRegistry.h" />

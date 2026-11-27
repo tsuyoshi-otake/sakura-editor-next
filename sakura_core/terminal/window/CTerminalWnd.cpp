@@ -22,6 +22,7 @@
 #include "terminal/window/TerminalRenderPlan.h"
 #include "terminal/window/TerminalRenderMapping.h"
 #include "terminal/window/TerminalScrollbarLayout.h"
+#include "terminal/window/TerminalWheelInput.h"
 #include "terminal/window/TerminalNativeFrameBridge.h"
 #include "terminal/TerminalWorkerRetirementService.h"
 #include "theme/CThemeService.h"
@@ -492,6 +493,9 @@ public:
 	int cellHeight{ 16 };
 	std::size_t visibleRows{ 1 };
 	std::size_t scrollOffset{};
+	//! Signed fractional rows left over from sub-notch wheel deltas on
+	//! no-scrollback buffers (xterm.js `_wheelPartialScroll` parity).
+	TerminalWheelAccumulator wheelAccumulator;
 	TerminalSize terminalSize{ 1, 1 };
 	//! True once terminalSize came from a client rectangle with real extent.
 	//! Until then it is only the placeholder a viewport starts with, and it must
@@ -1497,6 +1501,40 @@ public:
 		return modes.mouseButtonTracking || modes.mouseDragTracking || modes.mouseAnyEventTracking;
 	}
 
+	//! The wheel-to-cursor-key conversion applies exactly where the buffer has
+	//! no scrollback: the alternate screen, or the main screen whose scrollback
+	//! limit is 0 (xterm.js `buffer.hasScrollback`, #445 step 1).
+	bool BufferHasNoScrollback() const noexcept
+	{
+		return model && (model->IsAlternateScreen() || model->ScrollbackLimit() == 0);
+	}
+
+	//! Sends one cursor key for a wheel message once a whole row has
+	//! accumulated (xterm.js `_handlePassiveWheel`: one sequence per event,
+	//! SS3 under DECCKM via the vendored encoder). Magnitude is deliberately
+	//! discarded; a multi-notch message still sends one key.
+	void SendWheelCursorKey( int delta, WPARAM keys )
+	{
+		unsigned long linesPerNotch = 3;
+		::SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &linesPerNotch, 0);
+		const TerminalWheelScrollInput input{
+			.delta = delta,
+			.shift = (keys & MK_SHIFT) != 0,
+			.fastModifier = (keys & MK_CONTROL) != 0 || (::GetKeyState(VK_MENU) & 0x8000) != 0,
+			.linesPerNotch = linesPerNotch,
+			.rowHeightPx = static_cast<double>(cellHeight),
+			.paneDpi = static_cast<double>(dpi == 0 ? kDefaultDpi : dpi),
+			.bufferRows = model->RowCount(),
+		};
+		if( TerminalConsumeWheel(wheelAccumulator, input) == 0 ) return;
+		const TerminalKeyEvent event{ .virtualKey = static_cast<std::uint32_t>(delta > 0 ? VK_UP : VK_DOWN) };
+		if( inputAdapter ) {
+			if( const auto encoded = inputAdapter->EncodeKey(event) ) Send(*encoded);
+		} else {
+			Send(EncodeTerminalKey(event));
+		}
+	}
+
 	void DrawUnderline( HDC memory, const RECT& rect, COLORREF color ) noexcept
 	{
 		const RECT underline{ rect.left, std::max(rect.top, rect.bottom - 2), rect.right, rect.bottom };
@@ -2002,6 +2040,7 @@ public:
 			POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 			::ScreenToClient(window, &point);
 			if( MouseReporting() ) SendMouse(delta > 0 ? TerminalMouseAction::WheelUp : TerminalMouseAction::WheelDown, point.x, point.y, 0, GET_KEYSTATE_WPARAM(wParam));
+			else if( BufferHasNoScrollback() ) SendWheelCursorKey(delta, GET_KEYSTATE_WPARAM(wParam));
 			else ScrollLines(delta > 0 ? -3 : 3);
 			return 0;
 		}
@@ -2213,6 +2252,7 @@ void CTerminalWnd::SetModel( TerminalModel* model )
 	m_impl->model = model;
 	m_impl->MarkNativeFullDirty();
 	m_impl->scrollOffset = 0;
+	m_impl->wheelAccumulator = {};
 	m_impl->selectionAnchor = {};
 	m_impl->selectionActive = {};
 	m_impl->UpdateScrollbar();

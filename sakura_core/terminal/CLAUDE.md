@@ -1385,3 +1385,86 @@ Verified 2026-11-14 on x64 Debug with six `TerminalTool` tests:
   terminal opens.
 - Not verified end to end: a real Project restore. It needs a recorded agent
   session and a resumable agent CLI.
+
+## Wheel on a buffer without scrollback (#445 step 1)
+
+`WM_MOUSEWHEEL` routing in `CTerminalWnd` has exactly three branches, in this
+order: while a mouse tracking mode is on the wheel is a `SendMouse` report;
+otherwise, when the buffer has no scrollback (the alternate screen, or the
+main screen whose scrollback limit is 0) the wheel is sent to the application
+as cursor keys; otherwise it scrolls the host viewport.
+
+- **One key per message.** Once the accumulated row amount crosses a whole
+  row, one `VK_UP` / `VK_DOWN` is emitted - never repeated keys for a
+  multi-notch delta (xterm.js `MouseService._handlePassiveWheel`). Direction
+  follows the delta sign: positive (wheel up) sends up.
+- **Delta to rows.** `ticks = delta / WHEEL_DELTA`, and `linesPerNotch` is
+  `SPI_GETWHEELSCROLLLINES`. `pixels = ticks * linesPerNotch * (100/3)`
+  (Chromium's kScrollbarPixelsPerLine; 0 lines per notch yields 0).
+  `amount = pixels * sensitivity / cssRowHeight`, where
+  `cssRowHeight = rowHeightPx * 96 / paneDpi` (`rowHeightPx` is the physical
+  cell height) and `sensitivity` is `scrollSensitivity` (1), or
+  `fastScrollSensitivity * scrollSensitivity` (5) while Alt or Ctrl is held.
+  `|pixels| < 50` scales `amount` by 0.3 (likely-trackpad damping). The signed
+  fraction accumulates in `accumulator.partial`; whole rows are taken by
+  truncation toward zero.
+- **DECCKM applies.** The key goes through
+  `SakuraTerminalInputAdapter::EncodeKey`, which wraps the vendored Windows
+  Terminal `TerminalInput`, so application cursor mode produces `SS3`
+  (`ESC O A`/`B`) and normal mode produces `CSI A`/`B`.
+- **Shift only zeroes the conversion.** The Shift check lives inside
+  `TerminalConsumeWheel` (`input.shift` returns 0), so it applies only on the
+  no-scrollback path. A tracking-mode wheel still reaches `SendMouse`, and a
+  scrollback wheel still reaches `ScrollLines`, whether or not Shift is held.
+- **The row height is a CSS-pixel quantity.** Chromium scales the native
+  delta by the device scale factor and `WheelEvent` divides it back by
+  `devicePixelRatio` (`blink_event_util.cc` L557-570, `wheel_event.cc`
+  `delta_y_ / dpr` @ chromium `f0ea2262`), so the DOM `deltaY` xterm.js sees
+  does not shrink with the display scale. `TerminalConsumeWheel` therefore
+  divides by `cellHeight * 96 / paneDpi` - never by the physical cell height
+  (xterm.js `MouseService.ts` L467-471 @ `da9919caf`). Do not "simplify" this
+  back to physical pixels: at 150% a precision touchpad would need 1.5x the
+  travel per key.
+- **Page mode** (`SPI_GETWHEELSCROLLLINES == WHEEL_PAGESCROLL`) converts
+  ticks * sensitivity * viewport rows without accumulating, and any non-zero
+  page amount still emits a key with the delta's sign - xterm.js early-returns
+  only on exactly zero.
+- **The accumulator** (`TerminalWheelAccumulator` in
+  `terminal/window/TerminalWheelInput.h`) is pane-owned, like xterm.js's
+  `_wheelPartialScroll` per terminal instance. `CTerminalWnd::SetModel` resets
+  it: a model rebind must not carry another terminal's remainder.
+- **DECSET 1007 is ignored.** `SakuraTerminalInputAdapter::SetMode` has an
+  explicit `case 1007: break;`. xterm.js registers no 1007 handler, and the
+  vendored `Mode::AlternateScroll` is unreachable because `EncodeMouse` only
+  runs while tracking is on, where `HandleMouse` returns a report before
+  reaching `ShouldSendAlternateScroll` (vendored `mouseInput.cpp` L383-494).
+- **VS Code reference:**
+  `src/vs/workbench/contrib/terminal/browser/xterm/xtermTerminal.ts`
+  passes `fastScrollSensitivity` and `mouseWheelScrollSensitivity` into the
+  xterm.js options (L275-276 and L611-612); their defaults, 5 and 1, are
+  declared in
+  `src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts`
+  L252-261 - both at microsoft/vscode `b0c938524`. xterm.js alternate scroll
+  itself lives in `src/browser/services/MouseService.ts` @ `da9919caf`.
+- **Out of scope here:** the report-path magnitude (F3 - each sub-notch
+  `WM_MOUSEWHEEL` still produces a full wheel report when tracking is on), the
+  host-scroll distance (still 3 rows per message, unscaled), and the VS Code
+  sensitivity settings: Sakura reads neither
+  `terminal.integrated.mouseWheelScrollSensitivity` nor
+  `terminal.integrated.fastScrollSensitivity`, so both stay at their
+  defaults.
+
+Verified 2026-11-27 on x64 Debug:
+
+- 23 `TerminalWheel*` tests pass; the `*Terminal*` filter passes 630/632 with
+  the two pre-existing skips.
+- Fail-before: 7 of the first 10 routing tests failed on unchanged code (the
+  other 3 are guards). The three tests added in review (192-DPI
+  accumulation, model-rebind reset, page-mode sign) failed before their
+  fixes. Removing `ScrollLines` fails the host-scroll guard (it expects
+  `liveTop - 3` and gets `liveTop`).
+- Live, on a throwaway `-PROF=` instance of the first implementation (before
+  the review fixes), posting three `WM_MOUSEWHEEL` messages per step: less
+  moved from LINE-001..010 to LINE-004..013, vim's cursor moved from `1,1`
+  to `4,1` with the view still at `Top`, and the main screen scrolled into
+  scrollback and back to the same view.

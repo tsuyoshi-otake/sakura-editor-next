@@ -1971,6 +1971,9 @@
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalScrollbarLayout.h">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalWheelInput.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalTabManager.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>

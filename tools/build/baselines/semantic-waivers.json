@@ -3475,7 +3475,6 @@
       "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
       "files": {
         "sakura_core/terminal/window/CTerminalTool.cpp": "sha256:117c8f643e6c0ca75897a9ff389ee101cb944670a97abbd6386f9ca492d4aa7f",
-        "sakura_core/terminal/window/CTerminalWnd.cpp": "sha256:ea0f35769bed949f7aa91a6d4b5eefc4b61817a3bd29221e44d0f0c8a89c26b7",
         "sakura_core/terminal/window/CTerminalWnd.h": "sha256:79b1551e3456ad3f7552976a8c9065be41a270fedc313b9c1d1dbd1dd61bb3b6",
         "sakura_core/terminal/window/TerminalDragDrop.cpp": "sha256:5e612cdd3a39ea89593b79641ccef937ed10f3dc789e8fb0c8534e20fbb71f2b",
         "sakura_core/terminal/window/TerminalDragDrop.h": "sha256:8dc0f0148b7557f070e4dc8de87b810dd934d296e0da95c7d03130834ffc0c2a",
@@ -3516,13 +3515,6 @@
           "evidence_sha256": "sha256:dcd0886304af13466473af33729faa056798a9e5b1fd8914c9d93ae180f276f5",
           "line": 21,
           "path": "sakura_core/terminal/window/CTerminalTool.cpp",
-          "rule_id": "boundary.private_include"
-        },
-        {
-          "column": 11,
-          "evidence_sha256": "sha256:800d20e7377512d4f39d9a9d2b498ca5acffb1ab2f26ece851d3a6fdfe61540d",
-          "line": 18,
-          "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
           "rule_id": "boundary.private_include"
         },
         {
@@ -3687,13 +3679,6 @@
           "rule_id": "resource.stop_required_acquisition"
         },
         {
-          "column": 5,
-          "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
-          "line": 1383,
-          "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
-          "rule_id": "resource.stop_required_acquisition"
-        },
-        {
           "column": 36,
           "evidence_sha256": "sha256:acf746e7641f1cc28a987beb8e7dd09104454ee265b5c4515a2f4574a048e4dd",
           "line": 120,
@@ -3814,10 +3799,6 @@
         }
       ],
       "missing_touched_reductions": [
-        {
-          "baseline_finding_count": 66,
-          "path": "sakura_core/terminal/window/CTerminalWnd.cpp"
-        },
         {
           "baseline_finding_count": 5,
           "path": "sakura_core/terminal/window/CTerminalWnd.h"
@@ -5161,6 +5142,95 @@
         {
           "baseline_finding_count": 15,
           "path": "src/test/cpp/tests1/workbench/OutputServiceProviderConformanceTest.cpp"
+        }
+      ]
+    },
+    {
+      "owner": "tsuyoshi-otake",
+      "reason": "#445 step 1 converts the wheel to cursor keys on buffers without scrollback: the pure TerminalConsumeWheel accumulator in the new TerminalWheelInput.h, the BufferHasNoScrollback/SendWheelCursorKey routing and wheelAccumulator member in CTerminalWnd with its SetModel reset, and an explicit DECSET 1007 ignore in SakuraTerminalInputAdapter. Each new item was reviewed: CTerminalWnd.cpp's boundary.private_include at line 25 is the window-internal include of the new pure helper header, and the line-18 entry is the same earlier finding re-anchored after waivers[18]; boundary.win32_type at line 1516 is the WPARAM argument of the wheel-message helper, the same Win32 shape as the surrounding window code; state.public_mutable_field at line 498 is the accumulator member of the Impl struct, mutable like every other field there; resource.stop_required_acquisition at line 1387 is the earlier waived item re-anchored four lines down by the new member. The test files' private_include items are the fixture includes of the unit under test (CTerminalWnd.h and the pure header), and their win32_type items are the WPARAM of the Wheel() helper and the HWND member that drive real window messages. The missing reductions are earlier debt in files this change touched; reducing them would widen a wheel-routing fix. Track the pre-existing ratchet debt in #389 and reject later unreviewed changes to these files.",
+      "tracking_issue": 389,
+      "created": "2026-11-27",
+      "expires": "2027-02-07",
+      "baseline_source_commit": "c75077c10c90cfe68332762ab9fc561f16b9fb82",
+      "files": {
+        "sakura_core/terminal/input/SakuraTerminalInputAdapter.cpp": "sha256:915d3ead502dd8c453ad50ec5c1ce67113663ff5f3416450d10f34209a909d8e",
+        "sakura_core/terminal/window/CTerminalWnd.cpp": "sha256:8af8e10caed144d70a665c0fd6dee1bc261bb0b33bdfab35ba208da141191743",
+        "src/test/cpp/tests1/terminal/window/TerminalWheelInputTest.cpp": "sha256:4b4e82e8be9028d6444ae9e5e42bfee4adf717b7465550fad1c1446604aeaa45",
+        "src/test/cpp/tests1/terminal/window/TerminalWheelRoutingTest.cpp": "sha256:0d05b4a1e32313aed6a184f9a9997d447678b4fb6be639726b5afc7aa511f177"
+      },
+      "new_findings": [
+        {
+          "column": 11,
+          "evidence_sha256": "sha256:800d20e7377512d4f39d9a9d2b498ca5acffb1ab2f26ece851d3a6fdfe61540d",
+          "line": 18,
+          "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
+          "rule_id": "boundary.private_include"
+        },
+        {
+          "column": 11,
+          "evidence_sha256": "sha256:39fab6ce12e38f3356dca297c49b872de20d0816961bc84d3a0f47bb9966ac49",
+          "line": 25,
+          "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
+          "rule_id": "boundary.private_include"
+        },
+        {
+          "column": 11,
+          "evidence_sha256": "sha256:39fab6ce12e38f3356dca297c49b872de20d0816961bc84d3a0f47bb9966ac49",
+          "line": 3,
+          "path": "src/test/cpp/tests1/terminal/window/TerminalWheelInputTest.cpp",
+          "rule_id": "boundary.private_include"
+        },
+        {
+          "column": 11,
+          "evidence_sha256": "sha256:591f5e36a787d31f6a1a712011b03d800b3b5f3502c899bbdc25c26923c64ab9",
+          "line": 3,
+          "path": "src/test/cpp/tests1/terminal/window/TerminalWheelRoutingTest.cpp",
+          "rule_id": "boundary.private_include"
+        },
+        {
+          "column": 38,
+          "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+          "line": 1516,
+          "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
+          "rule_id": "boundary.win32_type"
+        },
+        {
+          "column": 25,
+          "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+          "line": 47,
+          "path": "src/test/cpp/tests1/terminal/window/TerminalWheelRoutingTest.cpp",
+          "rule_id": "boundary.win32_type"
+        },
+        {
+          "column": 2,
+          "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+          "line": 67,
+          "path": "src/test/cpp/tests1/terminal/window/TerminalWheelRoutingTest.cpp",
+          "rule_id": "boundary.win32_type"
+        },
+        {
+          "column": 5,
+          "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
+          "line": 1387,
+          "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
+          "rule_id": "resource.stop_required_acquisition"
+        },
+        {
+          "column": 27,
+          "evidence_sha256": "sha256:711e5848d52efd61e0d6e45d06a0a9c125ed6bcc11cf49fab2680a1c46d4eb70",
+          "line": 498,
+          "path": "sakura_core/terminal/window/CTerminalWnd.cpp",
+          "rule_id": "state.public_mutable_field"
+        }
+      ],
+      "missing_touched_reductions": [
+        {
+          "baseline_finding_count": 1,
+          "path": "sakura_core/terminal/input/SakuraTerminalInputAdapter.cpp"
+        },
+        {
+          "baseline_finding_count": 66,
+          "path": "sakura_core/terminal/window/CTerminalWnd.cpp"
         }
       ]
     }

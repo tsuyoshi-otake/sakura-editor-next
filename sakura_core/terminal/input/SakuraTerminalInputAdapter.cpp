@@ -115,7 +115,7 @@ void SakuraTerminalInputAdapter::SetMode( int mode, bool enabled ) noexcept
 	case 1004: m_impl->input.SetInputMode(Mode::FocusEvent, enabled); break;
 	case 1005: m_impl->input.SetInputMode(Mode::Utf8MouseEncoding, enabled); break;
 	case 1006: m_impl->input.SetInputMode(Mode::SgrMouseEncoding, enabled); break;
-	case 1007: m_impl->input.SetInputMode(Mode::AlternateScroll, enabled); break;
+	case 1007: break; // xterm.js has no DECSET 1007 handling; CTerminalWnd owns the wheel conversion (#445), so the vendored Mode::AlternateScroll is unreachable.
 	case 1034: m_impl->input.SetInputMode(Mode::SendC1, enabled); break;
 	case 9001: break; // Explicitly disabled in Impl regardless of remote output.
 	default: break;
