@@ -223,7 +223,8 @@ bool CTextArea::DetectWidthOfLineNumberArea( bool bRedraw )
 		CMyRect			rc;
 		SetAreaLeft(nViewAlignLeftNew);
 		pView->GetClientRect( &rc );
-		int nCxVScroll = ::GetSystemMetrics( SM_CXVSCROLL ); // 垂直スクロールバーの横幅
+		const int nCxVScroll = workbench::controls::OverlayScrollbarThickness(
+			windowDpi ); // 垂直スクロールバーの横幅
 		m_nViewCx = rc.Width() - nCxVScroll - GetAreaLeft(); // 表示域の幅
 		// 2008.05.27 nasukoji	表示域の桁数も算出する（右端カーソル移動時の表示場所ずれへの対処）
 		// m_nViewColNum = CLayoutInt(t_max(0, m_nViewCx - 1) / pView->GetTextMetrics().GetHankakuDx());	// 表示域の桁数

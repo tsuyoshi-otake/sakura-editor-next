@@ -250,6 +250,20 @@ public:
 	//! no source text is dropped and the next turn starts at the viewport top.
 	[[nodiscard]] EditViewPaintQuantumSnapshot BeginPaintQuantum(
 		const EditViewPaintViewport& viewport) noexcept;
+	//! Chooses the layout line this turn starts at; call it after
+	//! BeginPaintQuantum.  The saved cursor is resumed only when no row above it
+	//! is invalid.  Otherwise it is dropped and the turn starts at
+	//! `firstInvalidLine`: the turn that yielded invalidated everything from the
+	//! cursor row to the bottom of the view, so the cursor row is still reached.
+	//! A cursor at draw column zero has painted nothing of its row; it is dropped
+	//! too, so that the row is drawn from its start, wrap indent included.
+	[[nodiscard]] std::int64_t ResolvePaintStart(
+		std::int64_t firstInvalidLine) noexcept;
+	//! Ends a turn.  Returns the cursor the next turn must continue from, or
+	//! nothing when the turn did not yield.  A cursor equal to the one this turn
+	//! resumed made no progress; it is dropped, so a paint can never reschedule
+	//! itself forever.
+	[[nodiscard]] std::optional<EditViewPaintCursor> FinishPaintTurn() noexcept;
 	[[nodiscard]] std::optional<EditViewPaintCursor> PaintCursor() const noexcept;
 	[[nodiscard]] bool IsPaintCursorFor(std::int64_t layoutLine) const noexcept;
 	[[nodiscard]] bool HasPaintContinuation() const noexcept
@@ -313,6 +327,8 @@ private:
 	std::uint64_t m_lastCommittedPaintBoundary = 0;
 	std::optional<EditViewPaintViewport> m_paintViewport;
 	std::optional<EditViewPaintCursor> m_paintCursor;
+	//! The cursor the running turn resumed from, to tell whether it advanced.
+	std::optional<EditViewPaintCursor> m_resumedPaintCursor;
 	std::size_t m_paintQuantumRemaining = 0;
 	std::size_t m_paintQuantumConsumed = 0;
 };

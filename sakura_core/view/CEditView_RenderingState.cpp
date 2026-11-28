@@ -450,6 +450,7 @@ EditViewPaintQuantumSnapshot CEditViewRenderState::BeginPaintQuantum(
 		m_paintViewport = viewport;
 		m_paintCursor.reset();
 	}
+	m_resumedPaintCursor.reset();
 	m_paintQuantumRemaining = kPaintQuantum;
 	m_paintQuantumConsumed = 0;
 	return {
@@ -457,6 +458,33 @@ EditViewPaintQuantumSnapshot CEditViewRenderState::BeginPaintQuantum(
 		.consumed = m_paintQuantumConsumed,
 		.remaining = m_paintQuantumRemaining,
 	};
+}
+
+std::int64_t CEditViewRenderState::ResolvePaintStart(
+	const std::int64_t firstInvalidLine) noexcept
+{
+	if( !m_paintCursor ) {
+		return firstInvalidLine;
+	}
+	if( firstInvalidLine < m_paintCursor->layoutLine ) {
+		m_paintCursor.reset();
+		return firstInvalidLine;
+	}
+	const std::int64_t cursorLine = m_paintCursor->layoutLine;
+	if( m_paintCursor->drawColumn == 0 ) {
+		m_paintCursor.reset();
+	}
+	m_resumedPaintCursor = m_paintCursor;
+	return cursorLine;
+}
+
+std::optional<EditViewPaintCursor> CEditViewRenderState::FinishPaintTurn() noexcept
+{
+	if( m_paintCursor && m_resumedPaintCursor == m_paintCursor ) {
+		m_paintCursor.reset();
+	}
+	m_resumedPaintCursor.reset();
+	return m_paintCursor;
 }
 
 std::optional<EditViewPaintCursor> CEditViewRenderState::PaintCursor() const noexcept
@@ -510,6 +538,7 @@ void CEditViewRenderState::CancelPaintContinuation() noexcept
 {
 	m_paintViewport.reset();
 	m_paintCursor.reset();
+	m_resumedPaintCursor.reset();
 	m_paintQuantumRemaining = 0;
 	m_paintQuantumConsumed = 0;
 }

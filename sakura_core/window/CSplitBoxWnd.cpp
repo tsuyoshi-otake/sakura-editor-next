@@ -20,6 +20,17 @@
 #include "apiwrap/DarkMode.h"
 #include "config/system_constants.h"
 #include "theme/CThemeService.h"
+#include "workbench/controls/COverlayScrollbar.h"
+
+namespace {
+
+//! エディターのスクロールバーと同じ太さを、親ウィンドウの DPI で求める (#447)。
+int ScrollbarThicknessFor( HWND hwnd ) noexcept
+{
+	return workbench::controls::OverlayScrollbarThickness( ::GetDpiForWindow( hwnd ) );
+}
+
+} // namespace
 
 CSplitBoxWnd::CSplitBoxWnd()
 : CWnd(L"::CSplitBoxWnd")
@@ -61,8 +72,8 @@ HWND CSplitBoxWnd::Create( HINSTANCE hInstance, HWND hwndParent, int bVertical )
 
 	m_bVertical = bVertical;
 	/* システムマトリックスの取得 */
-	nCyHScroll = ::GetSystemMetrics( SM_CYHSCROLL );	/* 水平スクロールバーの高さ */
-	nCxVScroll = ::GetSystemMetrics( SM_CXVSCROLL );	/* 垂直スクロールバーの幅 */
+	nCyHScroll = ScrollbarThicknessFor( hwndParent );	/* 水平スクロールバーの高さ */
+	nCxVScroll = nCyHScroll;	/* 垂直スクロールバーの幅 */
 
 	/* 親ウィンドウのクライアント領域のサイズを取得 */
 	::GetClientRect( GetParentHwnd(), &rc );
@@ -164,7 +175,7 @@ LRESULT CSplitBoxWnd::OnLButtonDown( HWND hwnd, [[maybe_unused]] UINT uMsg, [[ma
 		::SetROP2( hdc, R2_XORPEN );
 		::SetBkMode( hdc, TRANSPARENT );
 		::GetClientRect( ::GetParent( GetParentHwnd() ), &rc );
-		nCyHScroll = ::GetSystemMetrics( SM_CYHSCROLL );	/* 水平スクロールバーの高さ */
+		nCyHScroll = ScrollbarThicknessFor( GetParentHwnd() );	/* 水平スクロールバーの高さ */
 		rc.bottom -= nCyHScroll;
 
 		rc2.left = -1;
@@ -220,7 +231,7 @@ LRESULT CSplitBoxWnd::OnMouseMove( HWND hwnd, [[maybe_unused]] UINT uMsg, [[mayb
 	}
 	if( m_bVertical ){
 		::GetClientRect( ::GetParent( GetParentHwnd() ), &rc );
-		nCyHScroll = ::GetSystemMetrics( SM_CYHSCROLL );	/* 水平スクロールバーの高さ */
+		nCyHScroll = ScrollbarThicknessFor( GetParentHwnd() );	/* 水平スクロールバーの高さ */
 		rc.bottom -= nCyHScroll;
 
 		::GetCursorPos( &po );
@@ -273,7 +284,7 @@ LRESULT CSplitBoxWnd::OnMouseMove( HWND hwnd, [[maybe_unused]] UINT uMsg, [[mayb
 		}
 	}else{
 		::GetClientRect( ::GetParent( GetParentHwnd() ), &rc );
-		nCxVScroll = ::GetSystemMetrics( SM_CXVSCROLL );	/* 垂直スクロールバーの幅 */
+		nCxVScroll = ScrollbarThicknessFor( GetParentHwnd() );	/* 垂直スクロールバーの幅 */
 		rc.right -= nCxVScroll;
 
 		::GetCursorPos( &po );
@@ -344,7 +355,7 @@ LRESULT CSplitBoxWnd::OnLButtonUp( HWND hwnd, [[maybe_unused]] UINT uMsg, [[mayb
 	}
 	if( m_bVertical ){
 		::GetClientRect( ::GetParent( GetParentHwnd() ), &rc );
-		nCyHScroll = ::GetSystemMetrics( SM_CYHSCROLL );	/* 水平スクロールバーの高さ */
+		nCyHScroll = ScrollbarThicknessFor( GetParentHwnd() );	/* 水平スクロールバーの高さ */
 		rc.bottom -= nCyHScroll;
 
 		hdc = ::GetDC( ::GetParent( GetParentHwnd() ) );
@@ -369,7 +380,7 @@ LRESULT CSplitBoxWnd::OnLButtonUp( HWND hwnd, [[maybe_unused]] UINT uMsg, [[mayb
 
 	}else{
 		::GetClientRect( ::GetParent( GetParentHwnd() ), &rc );
-		nCxVScroll = ::GetSystemMetrics( SM_CXVSCROLL );	/* 垂直スクロールバーの幅 */
+		nCxVScroll = ScrollbarThicknessFor( GetParentHwnd() );	/* 垂直スクロールバーの幅 */
 		rc.right -= nCxVScroll;
 
 		hdc = ::GetDC( ::GetParent( GetParentHwnd() ) );
@@ -404,7 +415,7 @@ LRESULT CSplitBoxWnd::OnLButtonDblClk( [[maybe_unused]] HWND hwnd, [[maybe_unuse
 	int			nCyHScroll;
 	if( m_bVertical ){
 		::GetClientRect( GetParentHwnd(), &rc );
-		nCyHScroll = ::GetSystemMetrics( SM_CYHSCROLL );	/* 水平スクロールバーの高さ */
+		nCyHScroll = ScrollbarThicknessFor( GetParentHwnd() );	/* 水平スクロールバーの高さ */
 		rc.bottom -= nCyHScroll;
 
 		/* 親ウィンドウに、メッセージをポストする */
@@ -412,7 +423,7 @@ LRESULT CSplitBoxWnd::OnLButtonDblClk( [[maybe_unused]] HWND hwnd, [[maybe_unuse
 	}
 	else{
 		::GetClientRect( GetParentHwnd(), &rc );
-		nCyHScroll = ::GetSystemMetrics( SM_CYHSCROLL );	/* 水平スクロールバーの高さ */
+		nCyHScroll = ScrollbarThicknessFor( GetParentHwnd() );	/* 水平スクロールバーの高さ */
 		rc.bottom -= nCyHScroll;
 
 		/* 親ウィンドウに、メッセージをポストする */

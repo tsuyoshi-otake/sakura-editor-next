@@ -203,5 +203,91 @@ TEST(CEditViewRenderState, PartialCommitLeavesDamageUntilCursorCompletes)
 	EXPECT_FALSE(state.Snapshot().damage.HasPending());
 }
 
+constexpr EditViewPaintViewport kDenseViewport{
+	.contentGeneration = 1,
+	.layoutEpoch = 1,
+	.layoutTop = 0,
+	.layoutBottom = 47,
+	.viewLeftColumn = 0,
+	.viewRightColumn = 877,
+};
+
+//! Leaves the state as a first turn that ran out of work inside row 32.
+void YieldInsideRow32(CEditViewRenderState& state)
+{
+	(void)state.BeginPaintQuantum(kDenseViewport);
+	ASSERT_EQ(0, state.ResolvePaintStart(0));
+	state.SavePaintCursor(32, 64, 448);
+	ASSERT_TRUE(state.FinishPaintTurn().has_value());
+}
+
+TEST(CEditViewRenderState, PaintTurnResumesTheCursorRowWhenNothingAboveIsInvalid)
+{
+	CEditViewRenderState state(kSurfaceId + 7);
+	ASSERT_TRUE(state.Open("workbench.editor.pane", true).Accepted());
+	YieldInsideRow32(state);
+
+	(void)state.BeginPaintQuantum(kDenseViewport);
+	EXPECT_EQ(32, state.ResolvePaintStart(32));
+	EXPECT_TRUE(state.IsPaintCursorFor(32));
+
+	(void)state.BeginPaintQuantum(kDenseViewport);
+	EXPECT_EQ(32, state.ResolvePaintStart(40));
+	EXPECT_TRUE(state.IsPaintCursorFor(32));
+}
+
+TEST(CEditViewRenderState, PaintTurnStartsAtAnInvalidRowAboveTheCursor)
+{
+	CEditViewRenderState state(kSurfaceId + 8);
+	ASSERT_TRUE(state.Open("workbench.editor.pane", true).Accepted());
+	YieldInsideRow32(state);
+
+	(void)state.BeginPaintQuantum(kDenseViewport);
+	EXPECT_EQ(3, state.ResolvePaintStart(3));
+	EXPECT_FALSE(state.HasPaintContinuation());
+	EXPECT_FALSE(state.FinishPaintTurn().has_value());
+}
+
+TEST(CEditViewRenderState, PaintTurnDrawsAnUntouchedCursorRowFromItsStart)
+{
+	CEditViewRenderState state(kSurfaceId + 9);
+	ASSERT_TRUE(state.Open("workbench.editor.pane", true).Accepted());
+	(void)state.BeginPaintQuantum(kDenseViewport);
+	state.SavePaintCursor(31, 0, 0);
+
+	(void)state.BeginPaintQuantum(kDenseViewport);
+	EXPECT_EQ(31, state.ResolvePaintStart(31));
+	EXPECT_FALSE(state.HasPaintContinuation());
+}
+
+TEST(CEditViewRenderState, PaintTurnThatAdvancesIsContinuedFromItsNewCursor)
+{
+	CEditViewRenderState state(kSurfaceId + 10);
+	ASSERT_TRUE(state.Open("workbench.editor.pane", true).Accepted());
+	YieldInsideRow32(state);
+
+	(void)state.BeginPaintQuantum(kDenseViewport);
+	(void)state.ResolvePaintStart(32);
+	state.CompletePaintCursor();
+	state.SavePaintCursor(44, 17, 119);
+	const auto continuation = state.FinishPaintTurn();
+	ASSERT_TRUE(continuation.has_value());
+	EXPECT_EQ(44, continuation->layoutLine);
+}
+
+//! A turn that leaves its resumed cursor untouched would invalidate the same
+//! row again and again; the editor once spun a full core this way (#447).
+TEST(CEditViewRenderState, PaintTurnWithoutProgressIsNotRescheduled)
+{
+	CEditViewRenderState state(kSurfaceId + 11);
+	ASSERT_TRUE(state.Open("workbench.editor.pane", true).Accepted());
+	YieldInsideRow32(state);
+
+	(void)state.BeginPaintQuantum(kDenseViewport);
+	(void)state.ResolvePaintStart(32);
+	EXPECT_FALSE(state.FinishPaintTurn().has_value());
+	EXPECT_FALSE(state.HasPaintContinuation());
+}
+
 } // namespace
 } // namespace editor::rendering

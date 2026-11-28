@@ -778,7 +778,11 @@ CColor3Setting CEditView::GetColorIndex(
 									cLineStr.GetLength(),
 									pInfo->m_nPosInLogic
 								);
-		if( pcLayoutNext && pcLayoutNext->GetLogicOffset() <= pInfo->m_nPosInLogic ){
+		// Advance only onto a wrap row of this logical line. The next logical
+		// line starts at offset zero, so an offset test alone would count one
+		// row per scanned character and leave the row reference off screen.
+		if( pcLayoutNext && pcLayoutNext->GetLogicOffset() != 0
+			&& pcLayoutNext->GetLogicOffset() <= pInfo->m_nPosInLogic ){
 			nLineNumScan++;
 			pInfo->m_pDispPos->SetLayoutLineRef(nLineNumScan);
 			pcLayoutNext = pcLayoutNext->GetNextLayout();
@@ -1650,9 +1654,11 @@ bool CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 	// A paint turn owns an explicit, document-size-independent quantum.  The
 	// cursor is keyed to the complete visible viewport rather than the current
 	// invalidation rectangle: the next asynchronous paint may be narrower while
-	// it still belongs to the same retained surface.
+	// it still belongs to the same retained surface.  A turn that paints only the
+	// line-number gutter takes no part in it.
 	std::optional<editor::rendering::EditViewPaintCursor> paintCursor;
-	if( m_pRenderState ){
+	const bool paintsText = pPs->rcPaint.right > GetTextArea().GetAreaLeft();
+	if( m_pRenderState && paintsText ){
 		const auto renderSnapshot = m_pRenderState->Snapshot();
 		const editor::rendering::EditViewPaintViewport viewport{
 			.contentGeneration = renderSnapshot.surface.contentGeneration,
@@ -1663,10 +1669,9 @@ bool CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 			.viewRightColumn = static_cast<std::int64_t>(GetTextArea().GetRightCol()),
 		};
 		(void)m_pRenderState->BeginPaintQuantum(viewport);
+		nLayoutLine = CLayoutInt(m_pRenderState->ResolvePaintStart(
+			static_cast<std::int64_t>(nLayoutLine)));
 		paintCursor = m_pRenderState->PaintCursor();
-		if( paintCursor ){
-			nLayoutLine = CLayoutInt(paintCursor->layoutLine);
-		}
 	}
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -1835,21 +1840,18 @@ bool CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 	if (traceFirstContentWork) {
 		CStartupTrace::Mark(CStartupTrace::Event::FirstContentPaintFinishEnd);
 	}
-	if( m_pRenderState && m_pRenderState->HasPaintContinuation() ){
+	if( m_pRenderState && paintsText ){
 		// Continue through the ordinary asynchronous paint queue.  There is no
 		// timer, wait, or nested UpdateWindow call: user input remains responsive
-		// while the saved cursor consumes one explicit quantum per paint.
-		const auto continuation = m_pRenderState->PaintCursor();
-		if( continuation ){
-			const int y = GetTextArea().GenerateYPx(
+		// while the saved cursor consumes one explicit quantum per paint.  No row
+		// below the cursor has been painted either, so the next turn must receive
+		// everything from the cursor row down (WS_CLIPCHILDREN protects the bars).
+		if( const auto continuation = m_pRenderState->FinishPaintTurn() ){
+			RECT remainder{};
+			::GetClientRect(GetHwnd(), &remainder);
+			remainder.top = GetTextArea().GenerateYPx(
 				CLayoutInt(continuation->layoutLine));
-			RECT continuationRect{
-				GetTextArea().GetAreaLeft(),
-				y,
-				GetTextArea().GetAreaRight(),
-				y + nLineHeight,
-			};
-			::InvalidateRect(GetHwnd(), &continuationRect, FALSE);
+			::InvalidateRect(GetHwnd(), &remainder, FALSE);
 		}
 	}
 	return true;
@@ -1881,6 +1883,9 @@ bool CEditView::DrawLogicLine(
 
 	//DispPosを保存しておく
 	pInfo->m_sDispPosBegin = *pInfo->m_pDispPos;
+	// A resumed row already carries its saved draw column, but the selection
+	// highlight measures from column zero.
+	pInfo->m_sDispPosBegin.ResetDrawCol();
 	const auto paintCursor = m_pRenderState
 		? m_pRenderState->PaintCursor()
 		: std::optional<editor::rendering::EditViewPaintCursor>{};

@@ -72,7 +72,9 @@ BOOL CEditView::CreateScrollBar()
 		// VS Code 風オーバーレイに任せる。
 		(void)m_cOverlayVScrollBar.Create( GetHwnd(), m_hwndVScrollBar,
 			[this]( int position ){
-				const auto scrolled = OnVScroll( SB_THUMBPOSITION, position * m_nVScrollRate );
+				// 要求位置を直接渡す。OnVScroll の SB_THUMBPOSITION は隠し control の
+				// nTrackPos を読み直すが、追跡していない control では現在位置になる (#447)。
+				const auto scrolled = ScrollAtV( CLayoutInt( position * m_nVScrollRate ) );
 				if( !ApiWrap::GetKeyState_Shift() ){
 					SyncScrollV( scrolled );
 				}

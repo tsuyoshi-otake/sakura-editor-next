@@ -16,6 +16,16 @@ using workbench::controls::NormalizeOverlayScrollbarModel;
 using workbench::controls::OverlayScrollbarModel;
 using workbench::controls::ResolveOverlayScrollbarColors;
 
+TEST(OverlayScrollbarThicknessTest, IsTheListScrollbarSizeScaledLikeMulDiv)
+{
+	EXPECT_EQ(10U, workbench::controls::kOverlayScrollbarThicknessDip);
+	for (const unsigned int dpi : { 96U, 120U, 144U, 168U, 192U }) {
+		EXPECT_EQ(::MulDiv(10, static_cast<int>(dpi), 96),
+			workbench::controls::OverlayScrollbarThickness(dpi)) << dpi;
+	}
+	EXPECT_EQ(10, workbench::controls::OverlayScrollbarThickness(0U));
+}
+
 TEST(OverlayScrollbarModelTest, NormalizesNegativeExtentsAndOffset)
 {
 	const auto model = NormalizeOverlayScrollbarModel(OverlayScrollbarModel{ -1, -2, -3 });

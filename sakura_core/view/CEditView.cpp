@@ -1088,11 +1088,10 @@ void CEditView::OnSize( int cx, int cy )
 	int	nVSplitHeight = 0;	/* 垂直分割ボックスの高さ */
 	int	nHSplitWidth  = 0;	/* 水平分割ボックスの幅 */
 
-	//スクロールバーのサイズ基準値を取得
-	int nCxHScroll = ::GetSystemMetrics( SM_CXHSCROLL );
-	int nCyHScroll = ::GetSystemMetrics( SM_CYHSCROLL );
-	int nCxVScroll = ::GetSystemMetrics( SM_CXVSCROLL );
-	int nCyVScroll = ::GetSystemMetrics( SM_CYVSCROLL );
+	//スクロールバーのサイズ基準値を取得 (エクスプローラーなどと同じ太さ)
+	const int nCxVScroll = workbench::controls::OverlayScrollbarThickness(
+		::GetDpiForWindow( GetHwnd() ) );
+	const int nCyHScroll = nCxVScroll;
 
 	struct ChildPlacement final {
 		HWND window{};
@@ -1121,7 +1120,7 @@ void CEditView::OnSize( int cx, int cy )
 	/* 垂直スクロールバー */
 	if( nullptr != m_hwndVScrollBar ){
 		addPlacement( m_hwndVScrollBar, cx - nCxVScroll, nVSplitHeight,
-			nCxVScroll, cy - nCyVScroll - nVSplitHeight );
+			nCxVScroll, cy - nCyHScroll - nVSplitHeight );
 	}
 	/* 水平スクロールバー */
 	if( nullptr != m_hwndHScrollBar ){
@@ -1130,9 +1129,9 @@ void CEditView::OnSize( int cx, int cy )
 	}
 
 	/* サイズボックス */
-	addPlacement( m_hwndSizeBox, cx - nCxVScroll, cy - nCyHScroll, nCxHScroll, nCyVScroll );
+	addPlacement( m_hwndSizeBox, cx - nCxVScroll, cy - nCyHScroll, nCxVScroll, nCyHScroll );
 	addPlacement( m_hwndSizeBoxPlaceholder, cx - nCxVScroll, cy - nCyHScroll,
-		nCxHScroll, nCyVScroll );
+		nCxVScroll, nCyHScroll );
 
 	HDWP defer = placementCount > 0 ? ::BeginDeferWindowPos( placementCount ) : nullptr;
 	bool deferred = defer != nullptr;

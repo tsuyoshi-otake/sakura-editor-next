@@ -16,8 +16,6 @@ namespace workbench::controls {
 namespace {
 
 constexpr wchar_t kOverlayScrollbarClass[] = L"SakuraWorkbenchOverlayScrollbar";
-//! The reserved hit area and slider share the list scrollbar's 10-DIP width.
-constexpr int kOverlayWidthDip = 10;
 constexpr int kMinimumThumbDip = 20;
 
 } // namespace
@@ -267,12 +265,12 @@ void COverlayScrollbar::Update()
 			SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
 	}
 	else if (IsHorizontal()) {
-		const int overlayHeight = std::min(ScaleDip(kOverlayWidthDip), clientHeight);
+		const int overlayHeight = std::min(OverlayScrollbarThickness(m_dpi), clientHeight);
 		::SetWindowPos(m_window, HWND_TOP, static_cast<int>(client.left),
 			static_cast<int>(client.bottom) - overlayHeight, clientWidth, overlayHeight,
 			SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
 	} else {
-		const int overlayWidth = std::min(ScaleDip(kOverlayWidthDip), clientWidth);
+		const int overlayWidth = std::min(OverlayScrollbarThickness(m_dpi), clientWidth);
 		::SetWindowPos(m_window, HWND_TOP, static_cast<int>(client.right) - overlayWidth,
 			static_cast<int>(client.top), overlayWidth, clientHeight,
 			SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);

@@ -679,7 +679,9 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
   scrollbar while its neighbours draw the VS Code one. The control reads the
   target's own `SB_VERT` `SCROLLINFO` and asks it to scroll through one
   callback, which is the only view-specific part (a TreeView walks visible
-  items; a LISTBOX takes `LB_SETTOPINDEX`).
+  items; a LISTBOX takes `LB_SETTOPINDEX`). Its thickness is
+  `OverlayScrollbarThickness` (10 DIP), which the editor views also use for the
+  strips they reserve (#447, [`../view/CLAUDE.md`](../view/CLAUDE.md)).
 - An owner-drawn LISTBOX binds to the overlay through
   `workbench/controls/ListBoxOverlayScrolling` (#407).
   - It uses `ExplicitModel` with `SetHideNativeBar(true)`.

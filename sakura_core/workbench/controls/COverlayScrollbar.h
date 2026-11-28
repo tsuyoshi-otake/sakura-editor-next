@@ -28,6 +28,17 @@
 
 namespace workbench::controls {
 
+//! The one bar thickness of the workbench: VS Code's list and tree scrollbar.
+//! The Explorer, the other lists and the editor views all use it (#447).
+inline constexpr unsigned int kOverlayScrollbarThicknessDip = 10;
+
+//! That thickness at a window DPI, rounded like MulDiv. Zero means 96 DPI.
+//! The editor reserves this strip for each bar and the overlay paints all of it.
+[[nodiscard]] constexpr int OverlayScrollbarThickness(unsigned int dpi) noexcept
+{
+	return static_cast<int>((kOverlayScrollbarThicknessDip * (dpi == 0 ? 96u : dpi) + 48u) / 96u);
+}
+
 //! Theme tokens the overlay paints with, mapped by the owning view from its own
 //! palette so this component never depends on a particular palette type.
 struct OverlayScrollbarColors {
