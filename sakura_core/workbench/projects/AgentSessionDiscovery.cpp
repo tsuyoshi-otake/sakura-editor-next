@@ -11,7 +11,11 @@
 #include "platform/process/WindowsExecutableResolver.h"
 
 #include <algorithm>
+#include <exception>
 #include <filesystem>
+#include <future>
+#include <iterator>
+#include <memory>
 #include <set>
 #include <utility>
 
@@ -188,9 +192,10 @@ std::size_t PromoteRequired(std::vector<DirectoryFile>& files, const AgentSessio
 	return static_cast<std::size_t>(firstOther - files.begin());
 }
 
-void DiscoverClaudeCode(const std::wstring_view folder, const AgentSessionDiscoveryRoots& roots,
+bool DiscoverClaudeCode(const std::wstring_view folder, const AgentSessionDiscoveryRoots& roots,
 	const AgentSessionDiscoveryLimits& limits, const HANDLE stop, std::vector<AgentSessionRecord>& output)
 {
+	if (roots.claudeConfigDirectory.empty()) return false;
 	const auto directory = JoinPath(JoinPath(roots.claudeConfigDirectory, L"projects"),
 		ClaudeCodeProjectDirectoryName(folder));
 	std::size_t budget = limits.maximumDirectoryEntries;
@@ -217,6 +222,7 @@ void DiscoverClaudeCode(const std::wstring_view folder, const AgentSessionDiscov
 			if (counted) ++accepted;
 		}
 	}
+	return !IsStopped(stop);
 }
 
 std::map<std::wstring, std::wstring> ReadCodexIndex(const std::wstring& path, const std::size_t maximumBytes)
@@ -227,10 +233,10 @@ std::map<std::wstring, std::wstring> ReadCodexIndex(const std::wstring& path, co
 	return ParseCodexSessionIndex(slices->tail.empty() ? slices->head : slices->tail);
 }
 
-void DiscoverCodex(const std::wstring_view folder, const AgentSessionDiscoveryRoots& roots,
+bool DiscoverCodex(const std::wstring_view folder, const AgentSessionDiscoveryRoots& roots,
 	const AgentSessionDiscoveryLimits& limits, const HANDLE stop, std::vector<AgentSessionRecord>& output)
 {
-	if (roots.codexHome.empty()) return;
+	if (roots.codexHome.empty()) return false;
 	const auto names = ReadCodexIndex(JoinPath(roots.codexHome, L"session_index.jsonl"),
 		limits.maximumCodexIndexBytes);
 	// sessions\YYYY\MM\DD\rollout-<timestamp>-<id>.jsonl
@@ -239,7 +245,7 @@ void DiscoverCodex(const std::wstring_view folder, const AgentSessionDiscoveryRo
 	for (const auto& year : ListDirectory(JoinPath(roots.codexHome, L"sessions"), true, budget)) {
 		for (const auto& month : ListDirectory(year.path, true, budget)) {
 			for (const auto& day : ListDirectory(month.path, true, budget)) {
-				if (IsStopped(stop)) return;
+				if (IsStopped(stop)) return false;
 				for (auto& file : ListDirectory(day.path, false, budget)) {
 					if (file.name.starts_with(L"rollout-") && EndsWithInsensitive(file.name, L".jsonl")) {
 						files.push_back(std::move(file));
@@ -276,11 +282,13 @@ void DiscoverCodex(const std::wstring_view folder, const AgentSessionDiscoveryRo
 			if (counted) ++accepted;
 		}
 	}
+	return !IsStopped(stop);
 }
 
-void DiscoverPi(const std::wstring_view folder, const AgentSessionDiscoveryRoots& roots,
+bool DiscoverPi(const std::wstring_view folder, const AgentSessionDiscoveryRoots& roots,
 	const AgentSessionDiscoveryLimits& limits, const HANDLE stop, std::vector<AgentSessionRecord>& output)
 {
+	if (roots.piAgentDirectory.empty()) return false;
 	const auto directory = JoinPath(JoinPath(roots.piAgentDirectory, L"sessions"),
 		PiSessionDirectoryName(folder));
 	std::size_t budget = limits.maximumDirectoryEntries;
@@ -309,21 +317,22 @@ void DiscoverPi(const std::wstring_view folder, const AgentSessionDiscoveryRoots
 			if (counted) ++accepted;
 		}
 	}
+	return !IsStopped(stop);
 }
 
-void DiscoverDevin(const std::wstring_view folder, const AgentSessionDiscoveryRoots& roots,
+bool DiscoverDevin(const std::wstring_view folder, const AgentSessionDiscoveryRoots& roots,
 	const AgentSessionDiscoveryLimits& limits, const HANDLE stop, std::vector<AgentSessionRecord>& output)
 {
-	if (roots.devinExecutable.empty()) return;
+	if (roots.devinExecutable.empty()) return false;
 	std::error_code error;
-	if (!std::filesystem::is_directory(std::filesystem::path(folder), error)) return;
+	if (!std::filesystem::is_directory(std::filesystem::path(folder), error)) return false;
 	platform::process::BoundedProcessRequest request(roots.devinExecutable, std::wstring(folder),
 		{ L"list", L"--format", L"json" });
 	request.SetTimeoutMilliseconds(limits.devinTimeoutMilliseconds);
 	request.SetMaximumStandardOutputBytes(limits.devinMaximumOutputBytes);
 	request.SetMaximumStandardErrorBytes(64u * 1024u);
 	const auto result = platform::process::RunBoundedProcess(request, stop);
-	if (!result.Succeeded() || result.ExitCode() != 0) return;
+	if (!result.Succeeded() || result.ExitCode() != 0) return false;
 	const auto& bytes = result.StandardOutput();
 	auto sessions = ParseDevinSessionList(
 		std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), folder);
@@ -338,6 +347,23 @@ void DiscoverDevin(const std::wstring_view folder, const AgentSessionDiscoveryRo
 		}
 		output.push_back(std::move(session));
 	}
+	return true;
+}
+
+//! One provider's sessions for a folder. true when the list is complete; false
+//! when the provider is off, its CLI failed, or `stop` cut it short.
+using ProviderDiscovery = bool (*)(std::wstring_view, const AgentSessionDiscoveryRoots&,
+	const AgentSessionDiscoveryLimits&, HANDLE, std::vector<AgentSessionRecord>&);
+
+ProviderDiscovery DiscoveryFor(const EAgentSessionProvider provider) noexcept
+{
+	switch (provider) {
+	case EAgentSessionProvider::ClaudeCode: return &DiscoverClaudeCode;
+	case EAgentSessionProvider::Codex: return &DiscoverCodex;
+	case EAgentSessionProvider::Devin: return &DiscoverDevin;
+	case EAgentSessionProvider::Pi: return &DiscoverPi;
+	}
+	return nullptr;
 }
 
 } // namespace
@@ -377,13 +403,11 @@ std::optional<std::vector<AgentSessionRecord>> DiscoverAgentSessions(
 {
 	std::vector<AgentSessionRecord> sessions;
 	if (!platform::IsAbsoluteWindowsPath(folder)) return sessions;
-	using Provider = void (*)(std::wstring_view, const AgentSessionDiscoveryRoots&,
-		const AgentSessionDiscoveryLimits&, HANDLE, std::vector<AgentSessionRecord>&);
-	for (const Provider provider : { &DiscoverClaudeCode, &DiscoverCodex, &DiscoverPi, &DiscoverDevin }) {
+	for (const ProviderDiscovery provider : { &DiscoverClaudeCode, &DiscoverCodex, &DiscoverPi, &DiscoverDevin }) {
 		if (IsStopped(stop)) return std::nullopt;
 		// A provider that throws (allocation) keeps the records it already
 		// produced and never prevents the remaining providers from running.
-		try { provider(folder, roots, limits, stop, sessions); }
+		try { (void)provider(folder, roots, limits, stop, sessions); }
 		catch (...) {}
 	}
 	if (IsStopped(stop)) return std::nullopt;
@@ -392,6 +416,65 @@ std::optional<std::vector<AgentSessionRecord>> DiscoverAgentSessions(
 	} catch (...) {
 		return std::vector<AgentSessionRecord>{};
 	}
+}
+
+AgentSessionProbeAnswers RunAgentSessionProbes(const std::span<const AgentSessionProviderProbe> probes,
+	const std::chrono::milliseconds window)
+{
+	// Declared before the futures, whose destructors join threads that still
+	// wait on this event.
+	const std::unique_ptr<void, decltype(&::CloseHandle)> stop(
+		::CreateEventW(nullptr, TRUE, FALSE, nullptr), &::CloseHandle);
+	std::vector<AgentSessionRecord> sessions;
+	std::vector<EAgentSessionProvider> answered;
+	if (!stop) return { .sessions = std::move(sessions), .answered = std::move(answered) };
+	std::vector<std::pair<EAgentSessionProvider,
+		std::future<std::optional<std::vector<AgentSessionRecord>>>>> running;
+	running.reserve(probes.size());
+	std::vector<bool> inTime(probes.size(), false);
+	const auto deadline = std::chrono::steady_clock::now() + window;
+	for (const auto& probe : probes) {
+		try {
+			running.emplace_back(probe.provider, std::async(std::launch::async, probe.run, stop.get()));
+		} catch (const std::exception&) {}	// no thread for it, so no answer
+	}
+	// Only a result that arrived before the stop is known to be complete.
+	for (std::size_t index = 0; index < running.size(); ++index) {
+		inTime[index] = running[index].second.wait_until(deadline) == std::future_status::ready;
+	}
+	(void)::SetEvent(stop.get());
+	for (std::size_t index = 0; index < running.size(); ++index) {
+		try {
+			auto result = running[index].second.get();	// prompt once stopped
+			if (!inTime[index] || !result) continue;
+			sessions.insert(sessions.end(), std::make_move_iterator(result->begin()),
+				std::make_move_iterator(result->end()));
+			answered.push_back(running[index].first);
+		} catch (const std::exception&) {}	// a probe that failed gave no answer
+	}
+	return { .sessions = std::move(sessions), .answered = std::move(answered) };
+}
+
+AgentSessionProbeAnswers DiscoverAgentSessionsWithin(const std::wstring_view folder,
+	const AgentSessionDiscoveryRoots& roots, const AgentSessionDiscoveryLimits& limits,
+	const std::span<const EAgentSessionProvider> providers, const std::chrono::milliseconds window)
+{
+	std::vector<AgentSessionProviderProbe> probes;
+	if (platform::IsAbsoluteWindowsPath(folder)) {
+		probes.reserve(providers.size());
+		for (const auto provider : providers) {
+			const auto discover = DiscoveryFor(provider);
+			if (discover == nullptr) continue;
+			// The references stay valid: every probe returns before this does.
+			probes.push_back({ .provider = provider, .run = [discover, folder, &roots, &limits](
+				const HANDLE stop) -> std::optional<std::vector<AgentSessionRecord>> {
+				std::vector<AgentSessionRecord> sessions;
+				if (!discover(folder, roots, limits, stop, sessions)) return std::nullopt;
+				return sessions;
+			} });
+		}
+	}
+	return RunAgentSessionProbes(probes, window);
 }
 
 } // namespace workbench::projects

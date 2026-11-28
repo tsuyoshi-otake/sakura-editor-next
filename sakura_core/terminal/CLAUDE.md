@@ -1241,6 +1241,12 @@ back into it. Each re-observation is bounded by the tab count.
 - A row's identity is `terminal-instance:<TerminalInstanceId>`, never a PID or a
   title. The tab ID only routes a double-click back to `SelectTerminal`, after
   `ActivateBuiltinWorkbenchView(Terminal)` reveals the Panel.
+- Session restore (#448) is the one consumer of PIDs.
+  `CTerminalTool::AgentProcesses(tabId)` returns the job-verified processes of
+  the tab's resolved agent kind, oldest first (unknown creation time last), so
+  the workbench can find the live session record that agent writes. A
+  title-only agent has none. See
+  [`../workbench/CLAUDE.md`](../workbench/CLAUDE.md), "Agent session restore".
 - The tracker is window-owned on purpose. #402's checklist names a
   runtime-owned registry, but in Phase A nothing outside this window reads it.
   The shared registry belongs to Phase C, which aggregates other windows'

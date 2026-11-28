@@ -11,9 +11,12 @@
 
 #include "workbench/projects/AgentSessionHistory.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -66,5 +69,34 @@ struct AgentSessionDiscoveryLimits final {
 [[nodiscard]] std::optional<std::vector<AgentSessionRecord>> DiscoverAgentSessions(
 	std::wstring_view folder, const AgentSessionDiscoveryRoots& roots,
 	const AgentSessionDiscoveryLimits& limits, HANDLE stop);
+
+//! One provider's session list. nullopt means no complete list: the provider
+//! is off, its CLI failed, or `stop` was signalled. It must return promptly
+//! once `stop` is set.
+using AgentSessionProbe = std::function<std::optional<std::vector<AgentSessionRecord>>(HANDLE stop)>;
+
+struct AgentSessionProviderProbe final {
+	const EAgentSessionProvider provider{};
+	const AgentSessionProbe run;
+};
+
+struct AgentSessionProbeAnswers final {
+	const std::vector<AgentSessionRecord> sessions;	//! from the providers that answered
+	const std::vector<EAgentSessionProvider> answered;	//! their list is complete
+};
+
+//! Runs every probe at once and waits at most `window` for all of them
+//! together. A probe still running then is stopped and gives no answer; the
+//! ones that finished keep theirs. Returns after every probe has returned.
+[[nodiscard]] AgentSessionProbeAnswers RunAgentSessionProbes(
+	std::span<const AgentSessionProviderProbe> probes, std::chrono::milliseconds window);
+
+//! #448: the record path of a window close or workspace switch. Lists
+//! `providers` for `folder` concurrently under one `window`, without merging
+//! or truncating across providers.
+[[nodiscard]] AgentSessionProbeAnswers DiscoverAgentSessionsWithin(
+	std::wstring_view folder, const AgentSessionDiscoveryRoots& roots,
+	const AgentSessionDiscoveryLimits& limits, std::span<const EAgentSessionProvider> providers,
+	std::chrono::milliseconds window);
 
 } // namespace workbench::projects

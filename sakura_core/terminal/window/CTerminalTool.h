@@ -307,6 +307,10 @@ public:
 	//! it finds; false returns the event-maintained state without touching
 	//! any process.
 	[[nodiscard]] std::vector<TerminalAgentPresenceRecord> AgentPresence( bool refresh );
+	//! The processes of the agent `tabId` hosts, oldest first, from the last job
+	//! observation (AgentPresence(true) refreshes it); empty when only the title
+	//! names the agent.
+	[[nodiscard]] std::vector<TerminalBackendJobProcess> AgentProcesses( std::uint64_t tabId ) const;
 	//! Called on the UI thread after an event changed which terminals host an
 	//! agent. The sink must not re-enter this tool synchronously except through
 	//! AgentPresence(false). Cleared by Close().

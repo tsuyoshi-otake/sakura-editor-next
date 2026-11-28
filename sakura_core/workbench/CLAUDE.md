@@ -415,18 +415,59 @@ and lifecycle rules as the rest of the native workbench.
     terminal and the workspace lifecycle.
   - Recording: `PersistLiveAgentSessions` runs inside `CloseWorkbench` and
     before a workspace switch commits the outgoing identity — the last
-    points where the outgoing terminal projection is still attached. The
-    presence record's `startedUnixSeconds` anchors each agent: the earliest
-    agent-process creation time, or the first instant a title-only presence
-    resolved (`TerminalAgentPresenceTracker::StartedUnixSeconds`). A session
-    Sakura resumed is remembered per tab (`m_resumedAgentSessions`) as a
-    known identity, pruned to live tabs; a hand-started agent is inferred
-    only when the newest unclaimed session of its provider has activity at
-    or after its anchor — the same arbitration the catch-up rule uses —
-    otherwise nothing is recorded for it. The model never guesses.
-  - Inference needs the folder's session list, so a bounded worker
-    discovery runs inside the record path: a 1 s Devin cap and a 1.5 s
-    deadline, abandoned rather than allowed to stall a close or switch.
+    points where the outgoing terminal projection is still attached.
+    `RecordLiveAgentSessionsByTab` takes three sources of identity, in this
+    order across all agents:
+    1. The **live record** (#448): the session the running CLI itself says it
+       is in now.
+    2. The **known identity**: a session Sakura resumed, remembered per tab
+       (`m_resumedAgentSessions`, pruned to live tabs). It counts only when
+       there is no live record. A CLI can leave that session without
+       restarting (`/clear`, `/new`), so it never overrides a live record.
+    3. **Inference**, for an agent with neither: the newest unclaimed session
+       of its provider with activity at or after the agent's anchor, the
+       same arbitration the catch-up rule uses. The anchor is the presence
+       record's `startedUnixSeconds`: the earliest agent-process creation
+       time, or the first instant a title-only presence resolved
+       (`TerminalAgentPresenceTracker::StartedUnixSeconds`).
+
+    A session is claimed once, and inference passes over claimed ones. When a
+    provider's list is complete and lacks an agent's live identity, that
+    agent claims nothing, so its tab is at most a shell leaf: neither the
+    known nor an inferred session replaces it. The model never guesses.
+  - Live records (`AgentSessionLiveRecord`, formats verified 2026-11-28). The
+    reader gets every job-verified process of the tab's resolved agent,
+    oldest first (`CTerminalTool::AgentProcesses`); the first process with a
+    matching record answers.
+    - Claude Code writes `<claude config>\sessions\<pid>.json` with
+      `sessionId` and `procStart` (the process creation FILETIME as a
+      string), rewrites it on `/clear`, and removes it on exit. A record for
+      another `pid` or `procStart` is ignored.
+    - Devin 3000.12.57 writes the holder's pid into
+      `%APPDATA%\devin\cli\session_locks\<session-id>.lock`. The holder keeps
+      the byte range locked, so `ReadFile` fails with
+      `ERROR_LOCK_VIOLATION`; the pid is read through a mapped view. The TUI
+      `devin.exe` holds no lock, its ACP child does, and `/new` replaces
+      that child. Locks are never removed and a released one keeps the old
+      pid, so a lock counts only when written at or after the process
+      started; the newest such write wins.
+    - Limitation: Codex and Pi have no verified live record (Codex's
+      `thread-writer-locks` are empty), and a title-only agent has no
+      process to match. A Codex or Pi agent that Sakura resumed and that then
+      switched sessions is still recorded with the resumed session.
+  - Discovery at record time: `PlanAgentSessionRecordDiscovery` asks only the
+    providers whose list can change the result — to check a live identity, or
+    to infer an agent with no usable identity — and marks live and known
+    identities as required so the per-provider limit cannot hide one.
+    `DiscoverAgentSessionsWithin` runs those providers at once under one
+    1500 ms window. A provider still running at the deadline is stopped; one
+    that finished keeps its answer. A stopped, failed, or disabled provider
+    gives no answer: a live identity of that provider is then recorded
+    unchecked (the restore plan checks every record again), and nothing is
+    inferred for it. The close or switch waits on this one window. Before
+    #448 the providers ran one after another under 1.5 s and a timeout
+    discarded every result, so a close cut `devin list` (383–563 ms) off and
+    lost the Devin session.
   - Restoring: `BeginAgentSessionRestore` runs once per workspace identity
     — startup and folder opens through `RecordCurrentWorkspaceAfterReady`,
     a `.code-workspace` switch at its commit point. It loads the record for
@@ -511,7 +552,9 @@ and lifecycle rules as the rest of the native workbench.
     bound, the plan's every branch (collapse, shell-only drop, weights,
     active fallback, cap), dispatch through the install seam, the
     service's load/save/conflict/fail-closed paths, and the presence
-    anchor.
+    anchor. `AgentSessionHistoryTest.cpp` covers the live-record readers
+    (including a Devin lock held with `LockFileEx`) and the concurrent
+    discovery window with a stalled provider.
 - **Session management menu (#408, fork extension).** A right click on a
   Sessions row selects it and opens its menu; Shift+F10 opens the focused
   row's. Each entry acts on the session the menu was opened for, even when

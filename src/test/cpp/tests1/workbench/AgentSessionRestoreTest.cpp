@@ -44,6 +44,14 @@ LiveAgentSessionSource Agent(const std::wstring_view name, const std::int64_t st
 		.startedUnixSeconds = started };
 }
 
+//! A live agent whose own live record names `live`.
+LiveAgentSessionSource LiveAgent(const std::wstring_view name, const std::wstring_view live,
+	std::optional<std::wstring> known = std::nullopt, const std::uint64_t tab = 0)
+{
+	return { .name = std::wstring(name), .knownSessionIdentity = std::move(known),
+		.liveSessionIdentity = std::wstring(live), .startedUnixSeconds = 100, .tabId = tab };
+}
+
 std::vector<AgentSessionRecord> Sessions(std::initializer_list<AgentSessionRecord> list)
 {
 	return { list };
@@ -259,6 +267,112 @@ TEST(AgentSessionRestore, RecordLiveAgentSessionsByTabPairsEachClaimWithItsTab)
 	// The unclaimed agent produces no entry; the caller records its tab as a
 	// shell leaf.
 	EXPECT_EQ(2U, claims.size());
+}
+
+TEST(AgentSessionRestore, RecordTakesTheLiveSessionOverTheOneSakuraResumed)
+{
+	// #448: `/clear` moved the resumed CLI to another session without
+	// restarting it. Neither the resumed identity nor the most recently active
+	// session is what the terminal is in.
+	const auto sessions = Sessions({
+		Session(EAgentSessionProvider::ClaudeCode, L"resumed", 300),
+		Session(EAgentSessionProvider::ClaudeCode, L"after-clear", 200),
+	});
+	const std::vector<LiveAgentSessionSource> agents{ LiveAgent(L"Claude Code",
+		L"claude-code:after-clear", std::wstring(L"claude-code:resumed")) };
+	EXPECT_EQ((std::vector<std::wstring>{ L"claude-code:after-clear" }),
+		RecordIdentities(agents, sessions));
+	// The live record needs no session history at all.
+	EXPECT_EQ((std::vector<std::wstring>{ L"claude-code:after-clear" }),
+		RecordIdentities(agents, {}));
+}
+
+TEST(AgentSessionRestore, RecordNeverPutsAnOlderSessionInPlaceOfAnUnlistedLiveOne)
+{
+	// The CLI moved to a session it has not written yet. Its provider answered
+	// without it, so neither the resumed session nor the newest one is recorded.
+	const auto sessions = Sessions({
+		Session(EAgentSessionProvider::ClaudeCode, L"resumed", 300),
+		Session(EAgentSessionProvider::ClaudeCode, L"other", 400),
+	});
+	const std::vector<LiveAgentSessionSource> agents{ LiveAgent(L"Claude Code",
+		L"claude-code:unwritten", std::wstring(L"claude-code:resumed"), 7) };
+	const std::vector<EAgentSessionProvider> claudeAnswered{ EAgentSessionProvider::ClaudeCode };
+	EXPECT_TRUE(RecordLiveAgentSessionsByTab(agents, sessions,
+		kMaximumAgentSessionRestoreSessions, claudeAnswered).empty());
+
+	// A provider that did not answer cannot deny what the agent says.
+	const std::vector<EAgentSessionProvider> devinAnswered{ EAgentSessionProvider::Devin };
+	const auto claims = RecordLiveAgentSessionsByTab(agents, {},
+		kMaximumAgentSessionRestoreSessions, devinAnswered);
+	ASSERT_EQ(1u, claims.size());
+	EXPECT_EQ(7u, claims.front().tabId);
+	EXPECT_EQ(L"claude-code:unwritten", claims.front().identity);
+}
+
+TEST(AgentSessionRestore, RecordKeepsALiveSessionItsProviderLists)
+{
+	const auto sessions = Sessions({ Session(EAgentSessionProvider::Devin, L"ninth-tamarind", 10) });
+	const std::vector<EAgentSessionProvider> answered{ EAgentSessionProvider::Devin };
+	// Listed is enough: the start anchor only matters for inference.
+	const auto claims = RecordLiveAgentSessionsByTab(
+		std::vector<LiveAgentSessionSource>{ LiveAgent(L"Devin", kDevin, std::nullopt, 3) },
+		sessions, kMaximumAgentSessionRestoreSessions, answered);
+	ASSERT_EQ(1u, claims.size());
+	EXPECT_EQ(kDevin, claims.front().identity);
+}
+
+TEST(AgentSessionRestore, RecordIgnoresALiveIdentityThatDoesNotFitTheAgent)
+{
+	// Another provider's identity and an invalid one leave the resumed session
+	// in charge, as if the agent had said nothing.
+	const std::vector<LiveAgentSessionSource> agents{
+		LiveAgent(L"Codex", kClaude, std::wstring(kCodex), 1),
+		LiveAgent(L"Claude Code", L"claude-code:a b", std::wstring(kClaude), 2),
+	};
+	EXPECT_EQ((std::vector<std::wstring>{ kCodex, kClaude }), RecordIdentities(agents, {}));
+}
+
+TEST(AgentSessionRestore, RecordLetsLiveIdentitiesClaimBeforeKnownAndInferredOnes)
+{
+	const auto sessions = Sessions({
+		Session(EAgentSessionProvider::ClaudeCode, L"live", 400),
+		Session(EAgentSessionProvider::ClaudeCode, L"unclaimed", 300),
+	});
+	// The hand-started agent takes the newest session nobody named; the agent
+	// still remembered under the live one gets nothing.
+	const std::vector<LiveAgentSessionSource> agents{
+		Agent(L"Claude Code", 100, std::wstring(L"claude-code:live")),
+		Agent(L"Claude Code", 100),
+		LiveAgent(L"Claude Code", L"claude-code:live", std::nullopt, 9),
+	};
+	const auto claims = RecordLiveAgentSessionsByTab(agents, sessions);
+	ASSERT_EQ(2u, claims.size());
+	EXPECT_EQ(9u, claims[0].tabId);
+	EXPECT_EQ(L"claude-code:live", claims[0].identity);
+	EXPECT_EQ(L"claude-code:unclaimed", claims[1].identity);
+}
+
+TEST(AgentSessionRestore, PlanDiscoveryAsksOnlyForProvidersThatCanChangeTheRecord)
+{
+	// Nothing to check and nothing to infer: no provider is asked.
+	const auto none = PlanAgentSessionRecordDiscovery(std::vector<LiveAgentSessionSource>{
+		Agent(L"Codex", 100, std::wstring(kCodex)),
+		Agent(L"Devin", 0),			// no anchor, so nothing can be inferred
+		Agent(L"Copilot", 100),		// keeps no resumable sessions
+	});
+	EXPECT_TRUE(none.providers.empty());
+	EXPECT_EQ((std::vector<std::wstring>{ kCodex }), none.requiredIdentities);
+
+	const auto some = PlanAgentSessionRecordDiscovery(std::vector<LiveAgentSessionSource>{
+		Agent(L"Pi", 100),
+		LiveAgent(L"Claude Code", L"claude-code:after-clear", std::wstring(kClaude)),
+		Agent(L"Codex", 100, std::wstring(kCodex)),
+	});
+	EXPECT_EQ((std::vector<EAgentSessionProvider>{ EAgentSessionProvider::ClaudeCode,
+		EAgentSessionProvider::Pi }), some.providers);
+	EXPECT_EQ((std::vector<std::wstring>{ L"claude-code:after-clear", kClaude, kCodex }),
+		some.requiredIdentities);
 }
 
 TEST(AgentSessionRestore, RestoreEntryLookupReplacesAndRemovesPerFolder)

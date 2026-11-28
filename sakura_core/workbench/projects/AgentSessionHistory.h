@@ -134,9 +134,13 @@ inline constexpr std::size_t kMaximumAgentSessionTitleLength = 160;
 //! file. The session list reads it before the transcript's custom-title.
 [[nodiscard]] std::optional<std::string> BuildClaudeCodeCustomTitleSidecar(std::wstring_view title);
 //! Claude Code `sessions\<pid>.json`: the session a running CLI process owns.
+//! The CLI rewrites it when it switches session.
 struct ClaudeCodeLiveSession final {
-	std::wstring sessionId;
-	std::uint32_t processId{};
+	const std::wstring sessionId;
+	const std::uint32_t processId{};
+	//! `procStart`, the creation FILETIME of the process the record was written
+	//! for; nullopt when the record has no readable one.
+	const std::optional<std::uint64_t> processStart{};
 };
 [[nodiscard]] std::optional<ClaudeCodeLiveSession> ParseClaudeCodeLiveSession(std::string_view json);
 

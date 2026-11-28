@@ -87,6 +87,23 @@ TEST(TerminalAgentPresence, TheEarliestCreatedAgentProcessWinsOverLaterAgentsAnd
 	EXPECT_FALSE(tracker.Presence(1));
 }
 
+TEST(TerminalAgentPresence, AgentProcessesAreTheResolvedAgentsOwnOldestFirst)
+{
+	TerminalAgentPresenceTracker tracker;
+	EXPECT_TRUE(tracker.AgentProcesses(1).empty());
+	// Devin's TUI started its child later; the codex it ran is not Devin's.
+	EXPECT_TRUE(tracker.ApplyJobObservation(1, Observation({ Process(30, 300, L"devin.exe"),
+		Process(40, 0, L"devin.exe"), Process(35, 350, L"codex.exe"), Process(20, 200, L"devin.exe") })));
+	const auto processes = tracker.AgentProcesses(1);
+	std::vector<std::uint32_t> ids;
+	for (const auto& process : processes) ids.push_back(process.processId);
+	EXPECT_EQ((std::vector<std::uint32_t>{ 20, 30, 40 }), ids);
+	// A presence only the title proves has no process.
+	EXPECT_TRUE(tracker.ApplyJobObservation(1, std::nullopt));
+	EXPECT_TRUE(tracker.ApplyTitle(1, L"Gemini"));
+	EXPECT_TRUE(tracker.AgentProcesses(1).empty());
+}
+
 TEST(TerminalAgentPresence, TrackerReportsOnlyResolvedPresenceChanges)
 {
 	TerminalAgentPresenceTracker tracker;

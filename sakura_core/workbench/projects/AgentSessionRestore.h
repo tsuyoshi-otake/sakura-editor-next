@@ -50,6 +50,11 @@ struct LiveAgentSessionSource final {
 	//! AgentSessionIdentity (`<provider>:<id>`). It is trusted, never inferred,
 	//! but only counts while it names the provider the live agent still is.
 	std::optional<std::wstring> knownSessionIdentity;
+	//! The session the running agent says it is in right now, read from its own
+	//! live record (ReadLiveAgentSessionIdentity). A CLI can move to another
+	//! session without restarting, so this replaces `knownSessionIdentity`
+	//! while it names the provider the live agent still is.
+	const std::optional<std::wstring> liveSessionIdentity{};
 	//! When the agent process started: the observed creation time of the
 	//! presence-owning process, or the moment a title-only agent's presence was
 	//! first resolved. 0 or negative means the anchor is unknown, in which case
@@ -72,20 +77,41 @@ struct RecordedAgentSessionClaim final {
 	std::wstring identity;
 };
 
+//! What recording these agents needs from session discovery.
+struct AgentSessionRecordDiscovery final {
+	//! The providers whose session list recording would use: to check a live
+	//! identity, or to infer an agent that nothing else identifies. Empty means
+	//! no discovery can change the result.
+	const std::vector<EAgentSessionProvider> providers;
+	//! Every live and known identity that fits its agent, so that a discovery
+	//! bound cannot hide one from the check.
+	const std::vector<std::wstring> requiredIdentities;
+};
+
+[[nodiscard]] AgentSessionRecordDiscovery PlanAgentSessionRecordDiscovery(
+	std::span<const LiveAgentSessionSource> agents);
+
 //! The session identities to record for one folder, each paired with the
 //! source's tab id so the caller can place the identity on a layout leaf.
 //!
-//! Known identities go first in input order. Then, per provider, every other
-//! live agent claims the newest session whose last activity is at or after the
-//! agent's start anchor; the agent that started latest claims first (the same
-//! arbitration CountAgentsAwaitingSessionHistory uses), and a session covers
-//! at most one agent, including one already named by a known identity. An
-//! agent with no qualifying unclaimed session produces no claim; the caller
-//! records that tab as a plain shell leaf.
+//! Live identities go first in input order, and each replaces that agent's
+//! known identity. A provider in `answeredProviders` completed its discovery:
+//! when `sessions` then lacks an agent's live identity, nothing can resume that
+//! session, so the agent produces no claim at all -- an older session must not
+//! stand in for it. A provider that did not answer cannot deny a live identity.
+//!
+//! Known identities of the remaining agents go next in input order. Then, per
+//! provider, every agent with neither claims the newest unclaimed session
+//! whose last activity is at or after the agent's start anchor; the agent that
+//! started latest claims first (the same arbitration
+//! CountAgentsAwaitingSessionHistory uses). A session covers at most one
+//! agent. An agent without a claim is recorded by the caller as a plain shell
+//! leaf.
 [[nodiscard]] std::vector<RecordedAgentSessionClaim> RecordLiveAgentSessionsByTab(
 	std::span<const LiveAgentSessionSource> agents,
 	std::span<const AgentSessionRecord> sessions,
-	std::size_t maximum = kMaximumAgentSessionRestoreSessions);
+	std::size_t maximum = kMaximumAgentSessionRestoreSessions,
+	std::span<const EAgentSessionProvider> answeredProviders = {});
 
 //! Orientation of a persisted split node: Horizontal puts children side by
 //! side, Vertical stacks them top to bottom (TerminalPaneOrientation).

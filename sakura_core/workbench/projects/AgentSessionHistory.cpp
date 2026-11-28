@@ -626,7 +626,16 @@ std::optional<ClaudeCodeLiveSession> ParseClaudeCodeLiveSession(const std::strin
 	if (!(number >= 1.0) || number > 4294967295.0 || number != static_cast<double>(static_cast<std::uint32_t>(number))) {
 		return std::nullopt;
 	}
-	return ClaudeCodeLiveSession{ std::move(sessionId), static_cast<std::uint32_t>(number) };
+	std::optional<std::uint64_t> processStart;
+	const auto start = StringField(object, "procStart");
+	// At most 19 digits, which cannot overflow; a FILETIME has 18.
+	if (!start.empty() && start.size() <= 19
+		&& std::ranges::all_of(start, [](const wchar_t digit) { return digit >= L'0' && digit <= L'9'; })) {
+		std::uint64_t ticks = 0;
+		for (const wchar_t digit : start) ticks = ticks * 10 + static_cast<std::uint64_t>(digit - L'0');
+		processStart = ticks;
+	}
+	return ClaudeCodeLiveSession{ std::move(sessionId), static_cast<std::uint32_t>(number), processStart };
 }
 
 std::optional<std::string> BuildCodexRenameRequests(const std::wstring_view id, const std::wstring_view title)

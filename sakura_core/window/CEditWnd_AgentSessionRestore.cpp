@@ -16,6 +16,7 @@
 #include "workbench/IWorkbenchRuntime.h"
 #include "workbench/layout/WorkbenchIds.h"
 #include "workbench/projects/AgentSessionDiscovery.h"
+#include "workbench/projects/AgentSessionLiveRecord.h"
 #include "workbench/projects/AgentSessionRestore.h"
 #include "workbench/projects/AgentSessionRestoreService.h"
 #include "workbench/projects/CProjectsPage.h"
@@ -84,7 +85,7 @@ void CEditWnd::PersistLiveAgentSessions(const std::wstring_view folder) noexcept
 	auto* const service = m_workbenchRuntime->AgentSessionRestore();
 	if (service == nullptr) return;
 	std::vector<LiveAgentSessionSource> agents;
-	bool inferenceNeeded = false;
+	AgentSessionDiscoveryRoots roots;
 	{
 		try {
 			// A tab that is gone can no longer host the session it was resumed
@@ -97,77 +98,60 @@ void CEditWnd::PersistLiveAgentSessions(const std::wstring_view folder) noexcept
 				it = std::find(liveTabs.begin(), liveTabs.end(), it->first) == liveTabs.end()
 					? m_resumedAgentSessions.erase(it) : std::next(it);
 			}
-			for (const auto& record : m_terminalTool->AgentPresence(true)) {
-				LiveAgentSessionSource agent{
-					.name = std::wstring(terminal::TerminalAgentDisplayName(record.kind)),
-					.startedUnixSeconds = record.startedUnixSeconds,
-					.tabId = record.tabId,
-				};
-				const auto known = m_resumedAgentSessions.find(record.tabId);
-				if (known != m_resumedAgentSessions.end()) {
-					agent.knownSessionIdentity = known->second;
+			const auto present = m_terminalTool->AgentPresence(true);
+			if (!present.empty()) roots = ResolveAgentSessionDiscoveryRoots();
+			const auto liveRoots = ResolveAgentLiveSessionRoots(roots);
+			for (const auto& record : present) {
+				const std::wstring name(terminal::TerminalAgentDisplayName(record.kind));
+				std::optional<std::wstring> known;
+				if (const auto found = m_resumedAgentSessions.find(record.tabId);
+					found != m_resumedAgentSessions.end()) {
+					known = found->second;
 				}
-				// Only a session-capable provider whose known identity is
-				// missing or unusable can need session data for inference;
-				// discovery is skipped entirely otherwise.
-				bool covered = false;
-				if (agent.knownSessionIdentity && IsValidAgentSessionIdentity(*agent.knownSessionIdentity)) {
-					const auto provider = AgentSessionIdentityProvider(*agent.knownSessionIdentity);
-					covered = provider
-						&& AgentSessionProviderDisplayName(*provider) == agent.name;
+				// The running CLI's own record outranks the identity it was
+				// resumed with: it may have switched sessions since (#448).
+				std::vector<AgentProcessCoordinates> processes;
+				for (const auto& process : m_terminalTool->AgentProcesses(record.tabId)) {
+					processes.push_back({ .processId = process.processId,
+						.creationTime = process.creationTime });
 				}
-				if (!covered) {
-					for (const auto provider : { EAgentSessionProvider::ClaudeCode,
-						EAgentSessionProvider::Codex, EAgentSessionProvider::Devin,
-						EAgentSessionProvider::Pi }) {
-						if (AgentSessionProviderDisplayName(provider) == agent.name) {
-							inferenceNeeded = true;
-							break;
-						}
+				std::optional<std::wstring> live;
+				for (const auto provider : { EAgentSessionProvider::ClaudeCode,
+					EAgentSessionProvider::Codex, EAgentSessionProvider::Devin,
+					EAgentSessionProvider::Pi }) {
+					if (AgentSessionProviderDisplayName(provider) == name) {
+						live = ReadLiveAgentSessionIdentity(provider, processes, liveRoots);
 					}
 				}
-				agents.push_back(std::move(agent));
+				agents.push_back({ .name = name, .knownSessionIdentity = std::move(known),
+					.liveSessionIdentity = std::move(live),
+					.startedUnixSeconds = record.startedUnixSeconds, .tabId = record.tabId });
 			}
 		} catch (...) {
 			agents.clear();
-			inferenceNeeded = false;
 		}
 	}
-	std::vector<AgentSessionRecord> sessions;
-	if (inferenceNeeded) {
-		// "Newest session activity" wants fresh data even at close, but the
-		// transition must stay bounded and discovery belongs off the UI thread:
-		// it runs on a worker with a tight Devin cap and is abandoned at a
-		// fixed deadline. Whatever it did not finish simply records nothing --
-		// never a guess, never an unbounded stall.
-		const HANDLE stop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
-		if (stop != nullptr) {
-			try {
-				auto discovery = std::async(std::launch::async,
-					[folder = std::wstring(folder), stop] {
-						AgentSessionDiscoveryLimits limits;
-						limits.devinTimeoutMilliseconds = 1000;
-						return DiscoverAgentSessions(folder,
-							ResolveAgentSessionDiscoveryRoots(), limits, stop);
-					});
-				if (discovery.wait_for(std::chrono::milliseconds(1500)) == std::future_status::ready) {
-					if (auto result = discovery.get()) sessions = std::move(*result);
-				} else {
-					::SetEvent(stop);
-					// The discovery contract joins promptly once stop is set;
-					// the future's destructor would wait either way.
-					try { (void)discovery.get(); } catch (...) {}
-				}
-			} catch (...) {
-			}
-			::CloseHandle(stop);
-		}
+	// Discovery only checks live identities and infers the unidentified, and
+	// the close or switch must stay bounded: the providers that can change the
+	// result run together under one window, and one that misses it loses only
+	// its own answer.
+	std::optional<AgentSessionProbeAnswers> discovered;
+	try {
+		const auto plan = PlanAgentSessionRecordDiscovery(agents);
+		AgentSessionDiscoveryLimits limits;
+		limits.requiredIdentities = plan.requiredIdentities;
+		discovered.emplace(DiscoverAgentSessionsWithin(folder, roots, limits,
+			plan.providers, std::chrono::milliseconds(1500)));
+	} catch (const std::exception&) {
 	}
 	try {
 		// Each claim names the tab it landed on, so the layout can put the
 		// identity on that tab's leaf; a live agent that ends up unclaimed is
 		// recorded as a plain shell leaf, never guessed (#415 Phase 3).
-		const auto claims = RecordLiveAgentSessionsByTab(agents, sessions);
+		const auto claims = discovered
+			? RecordLiveAgentSessionsByTab(agents, discovered->sessions,
+				kMaximumAgentSessionRestoreSessions, discovered->answered)
+			: RecordLiveAgentSessionsByTab(agents, {});
 		std::unordered_map<std::uint64_t, std::wstring> claimsByTab;
 		for (const auto& claim : claims) claimsByTab[claim.tabId] = claim.identity;
 		std::unordered_map<std::uint64_t, std::wstring> tabDirectories;

@@ -75,8 +75,9 @@ enum class TerminalAgentKind : std::uint8_t {
 //! Window-local presence per terminal tab. It holds only the agent processes
 //! of the last job observation, the title-derived kind, and the bounded session
 //! title, so its size is bounded by the tab count times
-//! kMaximumObservedJobProcesses. Process IDs are kept solely to filter exit
-//! hints, never as an identity.
+//! kMaximumObservedJobProcesses. Process IDs filter exit hints, and the
+//! resolved agent's job-verified processes locate the live session record the
+//! agent writes (#448). A PID is never a row's identity.
 //!
 //! A tab's agent is the earliest-created agent process in its job (the
 //! outermost one, so Claude Code running `codex` as a tool is still Claude
@@ -112,6 +113,9 @@ public:
 	[[nodiscard]] std::optional<std::int64_t> StartedUnixSeconds( std::uint64_t tabId ) const noexcept;
 	//! The agent processes whose exit could change this tab's presence.
 	[[nodiscard]] std::vector<std::uint32_t> AgentProcessIds( std::uint64_t tabId ) const;
+	//! The processes of the tab's resolved agent, oldest first (unknown creation
+	//! time last); empty for a presence only the title proves.
+	[[nodiscard]] std::vector<TerminalBackendJobProcess> AgentProcesses( std::uint64_t tabId ) const;
 
 private:
 	struct TabState final {

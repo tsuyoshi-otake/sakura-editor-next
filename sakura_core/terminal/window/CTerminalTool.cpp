@@ -3492,6 +3492,11 @@ std::vector<TerminalAgentPresenceRecord> CTerminalTool::AgentPresence( bool refr
 	return result;
 }
 
+std::vector<TerminalBackendJobProcess> CTerminalTool::AgentProcesses( std::uint64_t tabId ) const
+{
+	return m_impl->closed ? std::vector<TerminalBackendJobProcess>{} : m_impl->agentPresence.AgentProcesses(tabId);
+}
+
 void CTerminalTool::SetAgentPresenceSink( std::function<void()> sink )
 {
 	if( m_impl->closed ) return;

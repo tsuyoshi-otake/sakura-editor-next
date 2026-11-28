@@ -414,6 +414,15 @@ std::optional<AgentSessionRestoreLayout> DecodeRestoreLayout(const JsoncValue::O
 	return layout;
 }
 
+//! Whether `identity` is valid and names the product the live agent still is.
+bool IdentityFitsAgent(const std::optional<std::wstring>& identity,
+	const LiveAgentSessionSource& agent)
+{
+	if (!identity) return false;
+	const auto provider = AgentSessionIdentityProvider(*identity);
+	return provider && AgentSessionProviderDisplayName(*provider) == agent.name;
+}
+
 } // namespace
 
 std::optional<EAgentSessionProvider> AgentSessionIdentityProvider(
@@ -429,41 +438,76 @@ std::optional<EAgentSessionProvider> AgentSessionIdentityProvider(
 	return std::nullopt;
 }
 
+AgentSessionRecordDiscovery PlanAgentSessionRecordDiscovery(
+	const std::span<const LiveAgentSessionSource> agents)
+{
+	std::vector<EAgentSessionProvider> providers;
+	std::vector<std::wstring> required;
+	for (const auto provider : kProviders) {
+		const auto name = AgentSessionProviderDisplayName(provider);
+		bool needed = false;
+		for (const auto& agent : agents) {
+			if (agent.name != name) continue;
+			const bool live = IdentityFitsAgent(agent.liveSessionIdentity, agent);
+			const bool known = IdentityFitsAgent(agent.knownSessionIdentity, agent);
+			if (live) required.push_back(*agent.liveSessionIdentity);
+			if (known) required.push_back(*agent.knownSessionIdentity);
+			if (live || (!known && agent.startedUnixSeconds > 0)) needed = true;
+		}
+		if (needed) providers.push_back(provider);
+	}
+	return { .providers = std::move(providers), .requiredIdentities = std::move(required) };
+}
+
 std::vector<RecordedAgentSessionClaim> RecordLiveAgentSessionsByTab(
 	const std::span<const LiveAgentSessionSource> agents,
 	const std::span<const AgentSessionRecord> sessions,
-	const std::size_t maximum)
+	const std::size_t maximum,
+	const std::span<const EAgentSessionProvider> answeredProviders)
 {
 	if (maximum == 0) return {};
 	std::vector<RecordedAgentSessionClaim> recorded;
-	const auto claim = [&recorded, maximum](const std::uint64_t tabId,
-		const std::wstring_view identity) {
-		if (recorded.size() == maximum) return false;
-		for (const auto& claim : recorded) {
-			if (claim.identity == identity) return true;
-		}
-		recorded.push_back({ .tabId = tabId, .identity = std::wstring(identity) });
-		return true;
+	const auto isClaimed = [&recorded](const std::wstring_view identity) {
+		return std::ranges::any_of(recorded, [identity](const auto& claim) {
+			return claim.identity == identity;
+		});
 	};
-	// Sessions Sakura resumed are known, not inferred; they claim first so a
+	const auto claim = [&recorded, &isClaimed, maximum](const std::uint64_t tabId,
+		const std::wstring_view identity) {
+		if (recorded.size() == maximum || isClaimed(identity)) return;
+		recorded.push_back({ .tabId = tabId, .identity = std::wstring(identity) });
+	};
+	// What a running agent says about itself beats what Sakura remembers: the
+	// CLI may have moved to another session since Sakura resumed it.
+	for (const auto& agent : agents) {
+		if (!IdentityFitsAgent(agent.liveSessionIdentity, agent)) continue;
+		const auto& identity = *agent.liveSessionIdentity;
+		const bool answered = std::ranges::find(answeredProviders,
+			*AgentSessionIdentityProvider(identity)) != answeredProviders.end();
+		if (answered && std::ranges::none_of(sessions, [&identity](const auto& session) {
+			return AgentSessionIdentity(session) == identity;
+		})) {
+			continue;	// nothing can resume it, and nothing else may replace it
+		}
+		claim(agent.tabId, identity);
+	}
+	// Sessions Sakura resumed are known, not inferred; they claim next so a
 	// hand-started agent of the same provider cannot take their identity.
 	for (const auto& agent : agents) {
-		if (!agent.knownSessionIdentity || !IsValidAgentSessionIdentity(*agent.knownSessionIdentity)) {
+		if (IdentityFitsAgent(agent.liveSessionIdentity, agent)
+			|| !IdentityFitsAgent(agent.knownSessionIdentity, agent)) {
 			continue;
 		}
-		const auto provider = AgentSessionIdentityProvider(*agent.knownSessionIdentity);
-		if (provider && AgentSessionProviderDisplayName(*provider) == agent.name) {
-			(void)claim(agent.tabId, *agent.knownSessionIdentity);
-		}
+		claim(agent.tabId, *agent.knownSessionIdentity);
 	}
 	for (const auto provider : kProviders) {
 		const auto name = AgentSessionProviderDisplayName(provider);
 		std::vector<const LiveAgentSessionSource*> inferable;
 		for (const auto& agent : agents) {
 			if (agent.name != name || agent.startedUnixSeconds <= 0) continue;
-			if (agent.knownSessionIdentity && IsValidAgentSessionIdentity(*agent.knownSessionIdentity)
-				&& AgentSessionIdentityProvider(*agent.knownSessionIdentity) == provider) {
-				continue;	// already recorded above
+			if (IdentityFitsAgent(agent.liveSessionIdentity, agent)
+				|| IdentityFitsAgent(agent.knownSessionIdentity, agent)) {
+				continue;	// settled above
 			}
 			inferable.push_back(&agent);
 		}
@@ -476,7 +520,8 @@ std::vector<RecordedAgentSessionClaim> RecordLiveAgentSessionsByTab(
 		});
 		std::vector<const AgentSessionRecord*> candidates;
 		for (const auto& session : sessions) {
-			if (session.provider == provider && session.lastActivityUnixSeconds > 0) {
+			if (session.provider == provider && session.lastActivityUnixSeconds > 0
+				&& !isClaimed(AgentSessionIdentity(session))) {
 				candidates.push_back(&session);
 			}
 		}
@@ -490,7 +535,7 @@ std::vector<RecordedAgentSessionClaim> RecordLiveAgentSessionsByTab(
 			// earlier-started agent may still claim it, so `next` advances on
 			// a successful claim alone.
 			if (candidates[next]->lastActivityUnixSeconds >= agent->startedUnixSeconds) {
-				(void)claim(agent->tabId, AgentSessionIdentity(*candidates[next]));
+				claim(agent->tabId, AgentSessionIdentity(*candidates[next]));
 				++next;
 			}
 		}

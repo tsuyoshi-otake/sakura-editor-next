@@ -331,4 +331,22 @@ std::vector<std::uint32_t> TerminalAgentPresenceTracker::AgentProcessIds(
 	return result;
 }
 
+std::vector<TerminalBackendJobProcess> TerminalAgentPresenceTracker::AgentProcesses(
+	const std::uint64_t tabId ) const
+{
+	std::vector<TerminalBackendJobProcess> result;
+	const auto found = m_tabs.find(tabId);
+	if( found == m_tabs.end() || !found->second.resolved ) return result;
+	for( const auto& process : found->second.agentProcesses ) {
+		if( TerminalAgentKindFromImageFileName(process.imageFileName) == found->second.resolved ) {
+			result.push_back(process);
+		}
+	}
+	std::stable_sort(result.begin(), result.end(), []( const auto& left, const auto& right ) {
+		// 0 means unknown, so it never counts as the oldest.
+		return left.creationTime != 0 && (right.creationTime == 0 || left.creationTime < right.creationTime);
+	});
+	return result;
+}
+
 } // namespace terminal

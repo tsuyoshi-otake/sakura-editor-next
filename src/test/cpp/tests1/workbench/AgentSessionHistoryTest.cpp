@@ -7,14 +7,17 @@
 
 #include "workbench/projects/AgentSessionDiscovery.h"
 #include "workbench/projects/AgentSessionHistory.h"
+#include "workbench/projects/AgentSessionLiveRecord.h"
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -48,6 +51,11 @@ std::string JsonPath(const std::wstring_view path)
 	return result;
 }
 
+constexpr std::uint64_t FileTimeTicks(const std::int64_t unixSeconds)
+{
+	return static_cast<std::uint64_t>(unixSeconds) * 10000000ULL + 116444736000000000ULL;
+}
+
 void WriteFile(const std::filesystem::path& path, const std::string_view content, const std::int64_t unixSeconds)
 {
 	std::filesystem::create_directories(path.parent_path());
@@ -61,7 +69,7 @@ void WriteFile(const std::filesystem::path& path, const std::string_view content
 		FILE_ATTRIBUTE_NORMAL, nullptr);
 	ASSERT_NE(INVALID_HANDLE_VALUE, file);
 	ULARGE_INTEGER value{};
-	value.QuadPart = static_cast<std::uint64_t>(unixSeconds) * 10000000ULL + 116444736000000000ULL;
+	value.QuadPart = FileTimeTicks(unixSeconds);
 	FILETIME time{};
 	time.dwLowDateTime = value.LowPart;
 	time.dwHighDateTime = value.HighPart;
@@ -154,6 +162,54 @@ public:
 
 	HANDLE handle;
 };
+
+//! A Devin session lock the way a running Devin holds it: the whole byte range
+//! stays locked, so ReadFile through any other handle fails.
+class HeldDevinLock final {
+public:
+	explicit HeldDevinLock(const std::filesystem::path& path)
+		: handle(::CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL, nullptr))
+		, locked(Lock(handle))
+	{
+	}
+	~HeldDevinLock() { if (handle != INVALID_HANDLE_VALUE) ::CloseHandle(handle); }
+	HeldDevinLock(const HeldDevinLock&) = delete;
+	HeldDevinLock& operator=(const HeldDevinLock&) = delete;
+
+	const HANDLE handle;
+	const bool locked;
+
+private:
+	static bool Lock(const HANDLE file)
+	{
+		OVERLAPPED range{};
+		return file != INVALID_HANDLE_VALUE && ::LockFileEx(file,
+			LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD, MAXDWORD, &range) != FALSE;
+	}
+};
+
+//! The error of a plain read of `path` through a handle of its own.
+DWORD PlainReadError(const std::filesystem::path& path)
+{
+	const HANDLE file = ::CreateFileW(path.c_str(), GENERIC_READ,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (file == INVALID_HANDLE_VALUE) return ::GetLastError();
+	char byte = 0;
+	DWORD read = 0;
+	const DWORD error = ::ReadFile(file, &byte, 1, &read, nullptr) != FALSE ? ERROR_SUCCESS : ::GetLastError();
+	::CloseHandle(file);
+	return error;
+}
+
+std::string ClaudeLiveRecord(const std::uint32_t processId, const std::wstring_view sessionId,
+	const std::uint64_t processStart)
+{
+	return R"({"pid":)" + std::to_string(processId) + R"(,"sessionId":")" + Utf8(sessionId)
+		+ R"(","cwd":"C:\\repo","procStart":")" + std::to_string(processStart) + R"(","kind":"interactive"})";
+}
 
 } // namespace
 
@@ -620,6 +676,171 @@ TEST(AgentSessionHistory, ClaudeCodeLiveSessionMarkersNeedAValidIdAndProcessId)
 		std::string_view(R"({"pid":4242,"sessionId":"a b"})") }) {
 		EXPECT_FALSE(ParseClaudeCodeLiveSession(json).has_value()) << json;
 	}
+}
+
+// #448: procStart tells the record of this process from one an earlier holder
+// of the pid left behind. An unreadable value does not discard the record.
+TEST(AgentSessionHistory, ClaudeCodeLiveSessionMarkersCarryTheProcessStartWhenReadable)
+{
+	const auto live = ParseClaudeCodeLiveSession(ClaudeLiveRecord(4242, kClaudeId, 134'123'456'789'012'345ULL));
+	ASSERT_TRUE(live.has_value());
+	EXPECT_EQ(std::optional<std::uint64_t>(134'123'456'789'012'345ULL), live->processStart);
+
+	for (const std::string_view start : { std::string_view(""), std::string_view(R"(,"procStart":"")"),
+		std::string_view(R"(,"procStart":"12a")"), std::string_view(R"(,"procStart":"-1")"),
+		std::string_view(R"(,"procStart":"11111111111111111111")"),
+		std::string_view(R"(,"procStart":1000)") }) {
+		const auto marker = ParseClaudeCodeLiveSession(
+			R"({"pid":4242,"sessionId":"abc")" + std::string(start) + "}");
+		ASSERT_TRUE(marker.has_value()) << start;
+		EXPECT_FALSE(marker->processStart.has_value()) << start;
+	}
+}
+
+TEST(AgentSessionHistory, LiveClaudeCodeSessionIsReadFromTheRecordOfTheRunningProcess)
+{
+	TemporaryAgentHomes homes;
+	const AgentLiveSessionRoots roots{ .claudeConfigDirectory = homes.roots.claudeConfigDirectory,
+		.devinStateDirectory = {} };
+	const auto record = std::filesystem::path(roots.claudeConfigDirectory) / L"sessions" / L"4242.json";
+	const auto read = [&roots](const std::vector<AgentProcessCoordinates>& processes) {
+		return ReadLiveAgentSessionIdentity(EAgentSessionProvider::ClaudeCode, processes, roots);
+	};
+	const std::wstring first = std::wstring(L"claude-code:") + kClaudeId;
+	const std::wstring second = L"claude-code:1f1e2d3c-4b5a-4968-8776-655443322110";
+
+	EXPECT_FALSE(read({ { 4242, 1000 } }).has_value());	// no record yet
+	WriteFile(record, ClaudeLiveRecord(4242, kClaudeId, 1000), 1'700'000'000);
+	EXPECT_EQ(std::optional(first), read({ { 4242, 1000 } }));
+	// /clear keeps the process and rewrites the session it names.
+	WriteFile(record, ClaudeLiveRecord(4242, L"1f1e2d3c-4b5a-4968-8776-655443322110", 1000), 1'700'000'100);
+	EXPECT_EQ(std::optional(second), read({ { 4242, 1000 } }));
+
+	// Another process had this pid when the record was written.
+	EXPECT_FALSE(read({ { 4242, 999 } }).has_value());
+	// An unknown creation time cannot contradict the record.
+	EXPECT_EQ(std::optional(second), read({ { 4242, 0 } }));
+	// A launcher without a record leaves the answer to its child.
+	EXPECT_EQ(std::optional(second), read({ { 4000, 5 }, { 4242, 1000 } }));
+	EXPECT_FALSE(read({}).has_value());
+
+	// A record that names another pid is not this file's process.
+	WriteFile(record.parent_path() / L"4244.json", ClaudeLiveRecord(4242, kClaudeId, 1000), 1'700'000'000);
+	EXPECT_FALSE(read({ { 4244, 1000 } }).has_value());
+
+	// Codex and Pi keep no live record, and an empty root turns a provider off.
+	for (const auto provider : { EAgentSessionProvider::Codex, EAgentSessionProvider::Pi,
+		EAgentSessionProvider::Devin }) {
+		const std::vector<AgentProcessCoordinates> processes{ { 4242, 1000 } };
+		EXPECT_FALSE(ReadLiveAgentSessionIdentity(provider, processes, roots).has_value());
+	}
+}
+
+TEST(AgentSessionHistory, LiveDevinSessionIsReadFromTheLockTheRunningProcessHolds)
+{
+	TemporaryAgentHomes homes;
+	const AgentLiveSessionRoots roots{ .claudeConfigDirectory = {},
+		.devinStateDirectory = (homes.base / L"devin" / L"cli").wstring() };
+	const auto locks = std::filesystem::path(roots.devinStateDirectory) / L"session_locks";
+	constexpr std::int64_t start = 1'700'000'000;
+	// The TUI (4999) holds no lock; its ACP child (5000) holds the session's.
+	const std::vector<AgentProcessCoordinates> processes{
+		{ 4999, FileTimeTicks(start) }, { 5000, FileTimeTicks(start + 1) } };
+	const auto read = [&roots](const std::vector<AgentProcessCoordinates>& agent) {
+		return ReadLiveAgentSessionIdentity(EAgentSessionProvider::Devin, agent, roots);
+	};
+
+	EXPECT_FALSE(read(processes).has_value());	// no lock directory
+	// Locks are never removed: this one was left by an earlier pid 5000.
+	WriteFile(locks / L"stale-session.lock", "5000", start - 100);
+	EXPECT_FALSE(read(processes).has_value());
+
+	WriteFile(locks / L"older-session.lock", "5000", start + 10);
+	WriteFile(locks / L"current-session.lock", "5000", start + 20);
+	WriteFile(locks / L"other-process.lock", "6000", start + 30);
+	WriteFile(locks / L"not a session.lock", "5000", start + 40);
+	WriteFile(locks / L"garbled.lock", "5000x", start + 50);
+	const HeldDevinLock held(locks / L"current-session.lock");
+	ASSERT_TRUE(held.locked);
+	// The precondition of this test: a plain read of a held lock fails.
+	ASSERT_EQ(static_cast<DWORD>(ERROR_LOCK_VIOLATION), PlainReadError(locks / L"current-session.lock"));
+	EXPECT_EQ(std::optional<std::wstring>(L"devin:current-session"), read(processes));
+
+	// Without a start time an old lock could not be told apart.
+	EXPECT_FALSE(read({ { 5000, 0 } }).has_value());
+	// A pid no lock names, and a process that started after every write.
+	EXPECT_FALSE(read({ { 7000, FileTimeTicks(start) } }).has_value());
+	EXPECT_FALSE(read({ { 5000, FileTimeTicks(start + 1000) } }).has_value());
+}
+
+// #448: at window close one provider that does not return must not discard what
+// the others already found.
+TEST(AgentSessionDiscovery, AStalledProviderLosesOnlyItsOwnAnswer)
+{
+	using Answer = std::optional<std::vector<AgentSessionRecord>>;
+	const std::vector<AgentSessionProviderProbe> probes{
+		// Returns only when stopped, so its list must be ignored.
+		{ .provider = EAgentSessionProvider::Devin, .run = [](const HANDLE stop) -> Answer {
+			(void)::WaitForSingleObject(stop, 30'000);
+			return std::vector<AgentSessionRecord>{ { EAgentSessionProvider::Devin, L"late" } };
+		} },
+		{ .provider = EAgentSessionProvider::ClaudeCode, .run = [](HANDLE) -> Answer {
+			return std::vector<AgentSessionRecord>{ { EAgentSessionProvider::ClaudeCode, kClaudeId } };
+		} },
+		{ .provider = EAgentSessionProvider::Codex, .run = [](HANDLE) -> Answer { return std::nullopt; } },
+		{ .provider = EAgentSessionProvider::Pi,
+			.run = [](HANDLE) -> Answer { throw std::runtime_error("probe failed"); } },
+	};
+	const auto started = std::chrono::steady_clock::now();
+	const auto answers = RunAgentSessionProbes(probes, std::chrono::milliseconds(500));
+	EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(10));
+	EXPECT_EQ((std::vector<EAgentSessionProvider>{ EAgentSessionProvider::ClaudeCode }), answers.answered);
+	ASSERT_EQ(1U, answers.sessions.size());
+	EXPECT_EQ(std::wstring(L"claude-code:") + kClaudeId, AgentSessionIdentity(answers.sessions[0]));
+}
+
+TEST(AgentSessionDiscovery, ProbesRunTogetherUnderOneWindow)
+{
+	using Answer = std::optional<std::vector<AgentSessionRecord>>;
+	ManualResetEvent first(false);
+	ManualResetEvent second(false);
+	// Each waits for the other to start, which only concurrent probes can do.
+	const auto meet = [](const HANDLE mine, const HANDLE theirs, const HANDLE stop) -> Answer {
+		(void)::SetEvent(mine);
+		const HANDLE handles[] = { theirs, stop };
+		if (::WaitForMultipleObjects(2, handles, FALSE, 30'000) != WAIT_OBJECT_0) return std::nullopt;
+		return std::vector<AgentSessionRecord>{};
+	};
+	const std::vector<AgentSessionProviderProbe> probes{
+		{ .provider = EAgentSessionProvider::ClaudeCode,
+			.run = [&](const HANDLE stop) { return meet(first.handle, second.handle, stop); } },
+		{ .provider = EAgentSessionProvider::Devin,
+			.run = [&](const HANDLE stop) { return meet(second.handle, first.handle, stop); } },
+	};
+	const auto answers = RunAgentSessionProbes(probes, std::chrono::seconds(10));
+	EXPECT_EQ((std::vector<EAgentSessionProvider>{ EAgentSessionProvider::ClaudeCode,
+		EAgentSessionProvider::Devin }), answers.answered);
+	EXPECT_TRUE(RunAgentSessionProbes({}, std::chrono::seconds(10)).answered.empty());
+}
+
+TEST(AgentSessionDiscovery, DiscoveryWithinAWindowAsksOnlyTheListedProviders)
+{
+	TemporaryAgentHomes homes;
+	const auto folder = homes.folder.wstring();
+	WriteFile(homes.ClaudeProject() / (std::wstring(kClaudeId) + L".jsonl"),
+		ClaudeTranscript(folder, "Claude"), 2'000);
+	WriteFile(homes.PiSessions() / (std::wstring(kPiId) + L".jsonl"), PiSession(kPiId, folder, "Pi"), 2'500);
+	// These roots name no Devin executable, so Devin cannot answer.
+	const std::vector<EAgentSessionProvider> asked{ EAgentSessionProvider::ClaudeCode,
+		EAgentSessionProvider::Devin };
+	const auto answers = DiscoverAgentSessionsWithin(folder, homes.roots, {}, asked, std::chrono::seconds(30));
+	EXPECT_EQ((std::vector<EAgentSessionProvider>{ EAgentSessionProvider::ClaudeCode }), answers.answered);
+	ASSERT_EQ(1U, answers.sessions.size());
+	EXPECT_EQ(std::wstring(L"claude-code:") + kClaudeId, AgentSessionIdentity(answers.sessions[0]));
+
+	const auto relative = DiscoverAgentSessionsWithin(L"repo", homes.roots, {}, asked, std::chrono::seconds(30));
+	EXPECT_TRUE(relative.answered.empty());
+	EXPECT_TRUE(relative.sessions.empty());
 }
 
 TEST(AgentSessionHistory, CodexRenameRequestsAndRepliesFollowTheAppServerProtocol)

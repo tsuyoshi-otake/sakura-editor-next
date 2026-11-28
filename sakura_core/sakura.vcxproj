@@ -645,6 +645,7 @@
 	<ClInclude Include="..\sakura_core\workbench\projects\ProjectsListPane.h" />
 	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionHistory.h" />
 	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionDiscovery.h" />
+	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionLiveRecord.h" />
 	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionViewStateService.h" />
 	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionRestore.h" />
 	<ClInclude Include="..\sakura_core\workbench\projects\AgentSessionRestoreService.h" />
@@ -1426,6 +1427,7 @@
 	<ClCompile Include="..\sakura_core\workbench\projects\ProjectsListPane.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionHistory.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionDiscovery.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionLiveRecord.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionViewStateService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionRestore.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\projects\AgentSessionRestoreService.cpp" />
